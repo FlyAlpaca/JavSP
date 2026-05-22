@@ -144,7 +144,7 @@ class DownloadProgressBar(tqdm):
 def request_get(url, cookies={}, timeout=None, delay_raise=False):
     """获取指定url的原始请求"""
     if timeout is None:
-        timeout = Cfg().network.timeout.seconds
+        timeout = Cfg().network.timeout.total_seconds()
 
     r = requests.get(
         url, headers=headers, proxies=read_proxy(), cookies=cookies, timeout=timeout
@@ -160,7 +160,7 @@ def request_get(url, cookies={}, timeout=None, delay_raise=False):
 def request_post(url, data, cookies={}, timeout=None, delay_raise=False):
     """向指定url发送post请求"""
     if timeout is None:
-        timeout = Cfg().network.timeout.seconds
+        timeout = Cfg().network.timeout.total_seconds()
     r = requests.post(
         url,
         data=data,

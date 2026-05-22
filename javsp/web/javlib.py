@@ -35,12 +35,12 @@ def init_network_cfg():
             try:
                 resp = request.get(url, delay_raise=True)
                 if resp.status_code == 200:
-                    request.timeout = Cfg().network.timeout.seconds
+                    request.timeout = Cfg().network.timeout.total_seconds()
                     return url
             except Exception as e:
                 logger.debug(f"Fail to connect to '{url}': {e}")
     logger.warning('无法绕开JavLib的反爬机制')
-    request.timeout = Cfg().network.timeout.seconds
+    request.timeout = Cfg().network.timeout.total_seconds()
     return permanent_url
 
 
