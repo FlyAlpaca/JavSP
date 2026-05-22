@@ -13,16 +13,16 @@ format = "v{base}.{distance}"
 
 [tool.poetry.dependencies]
 python = "<3.15,>=3.10"
-curl_cffi = "^0.7"
-colorama = "0.4.4"
+curl_cffi = "^0.15"
+colorama = "^0.4.6"
 pillow = ">=12.0"
 pretty-errors = "1.2.19"
 requests = "^2.32"
-tqdm = "4.59.0"
+tqdm = "^4.67"
 # https://stackoverflow.com/questions/446209/possible-values-from-sys-platform
 pywin32 = {version = "^306", markers = "sys_platform == 'win32'"}
 pywin32-ctypes = {version = "^0.2.2", markers = "sys_platform == 'win32'"}
-cryptography = "^42.0.5"
+cryptography = "^48.0"
 pycryptodome = "^3.20.0"
 lxml = {extras = ["html-clean"], version = "^6.0"}
 confz = "^2.0.1"
@@ -47,10 +47,10 @@ priority = "primary"
 
 
 [tool.poetry.group.dev.dependencies]
-pytest = "^8.1.1"
+pytest = "^9.0"
 flake8 = "^7.0.0"
-cx-freeze = "^7.2.2"
-types-lxml = "^2024.4.14"
+cx-freeze = "^8.5"
+types-lxml = "^2026.2"
 types-pillow = "^10.2.0"
 
 [build-system]
