@@ -38,10 +38,10 @@ jobs:
       - name: Install poetry
         run: pipx install poetry
 
-      - name: Setup Python 3.10
-        uses: actions/setup-python@v5
+      - name: Setup Python 3.14
+        uses: actions/setup-python@v6
         with:
-          python-version: '3.10'
+          python-version: '3.14'
           cache: 'poetry'
 
       - name: Setup dynamic versioning
@@ -60,7 +60,7 @@ jobs:
           echo "VERSION=`poetry run python tools/version.py`" >> $GITHUB_ENV
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: JavSP-${{ env.VERSION }}-${{ matrix.os }}
           path: dist

@@ -1,4 +1,4 @@
-FROM python:3.12-slim AS builder
+FROM python:3.14-slim AS builder
 
 WORKDIR /app
 
@@ -16,7 +16,7 @@ RUN poetry self add poetry-dynamic-versioning && \
     rm -rf /app/.git
 
 
-FROM python:3.12-slim as runner
+FROM python:3.14-slim as runner
 
 WORKDIR /app
 
