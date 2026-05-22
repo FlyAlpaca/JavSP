@@ -21,7 +21,6 @@ class Scanner(BaseConfig):
 
 
 class CrawlerID(str, Enum):
-    airav = "airav"
     avsox = "avsox"
     avwiki = "avwiki"
     dl_getchu = "dl_getchu"
