@@ -29,6 +29,7 @@ build_exe = {
     "includes": includes,
     "excludes": ["unittest"],
     "packages": packages,
+    "silent": True,
 }
 
 javsp = Executable(
