@@ -20,7 +20,7 @@ pretty-errors = "1.2.19"
 requests = "^2.32"
 tqdm = "^4.67"
 # https://stackoverflow.com/questions/446209/possible-values-from-sys-platform
-pywin32 = {version = "^306", markers = "sys_platform == 'win32'"}
+pywin32 = {version = "^311", markers = "sys_platform == 'win32'"}
 pywin32-ctypes = {version = "^0.2.2", markers = "sys_platform == 'win32'"}
 cryptography = "^48.0"
 pycryptodome = "^3.20.0"
