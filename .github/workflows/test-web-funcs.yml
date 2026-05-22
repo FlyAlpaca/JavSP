@@ -25,17 +25,17 @@ jobs:
       PYTEST_ADDOPTS: "-rA --color=yes --tb=long --showlocals"
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
       with:
         submodules: 'true'
 
     - name: Install poetry
       run: pipx install poetry
 
-    - name: Setup Python 3.10
-      uses: actions/setup-python@v5
+    - name: Setup Python 3.14
+      uses: actions/setup-python@v6
       with:
-        python-version: '3.10'
+        python-version: '3.14'
         cache: 'poetry'
     - name: Setup dynamic versioning
       run: poetry self add poetry-dynamic-versioning
@@ -55,7 +55,7 @@ jobs:
       run: |
         poetry run pytest unittest/test_crawlers.py
     - name: Upload log as artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       if: ${{ always() }}
       with:
         name: JavSP-web-funcs.log
