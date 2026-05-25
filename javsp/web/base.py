@@ -69,7 +69,7 @@ class Request:
             self.__post = requests.post
             self.__head = requests.head
         else:
-            self.scraper = curl_requests.Session(impersonate="chrome110")
+            self.scraper = curl_requests.Session(impersonate="chrome")
             self.__get = self._scraper_monitor(self.scraper.get)
             self.__post = self._scraper_monitor(self.scraper.post)
             self.__head = self._scraper_monitor(self.scraper.head)
@@ -245,15 +245,17 @@ def is_connectable(url, timeout=3):
 
 
 def urlretrieve(url, filename=None, reporthook=None, headers=None):
+    if headers is None:
+        headers = {}
+    else:
+        headers = headers.copy()
     if "arzon" in url:
         headers["Referer"] = "https://www.arzon.jp/"
-    """使用requests实现urlretrieve"""
-    # https://blog.csdn.net/qq_38282706/article/details/80253447
     with contextlib.closing(
         requests.get(url, headers=headers, proxies=read_proxy(), stream=True)
     ) as r:
         header = r.headers
-        with open(filename, "wb+") as fp:
+        with open(filename, "wb") as fp:
             bs = 1024
             size = -1
             blocknum = 0
@@ -283,7 +285,8 @@ def download(url, output_path, desc=None):
     if not desc:
         desc = url.split("/")[-1]
     referrer = headers.copy()
-    referrer["referer"] = url[: url.find("/", 8) + 1]  # 提取base_url部分
+    slash_pos = url.find("/", 8)
+    referrer["referer"] = url[: slash_pos + 1] if slash_pos != -1 else url + "/"
     with DownloadProgressBar(
         unit="B", unit_scale=True, miniters=1, desc=desc, leave=False
     ) as t:
