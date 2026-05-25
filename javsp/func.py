@@ -50,7 +50,9 @@ def select_folder(default_dir=""):
         exit(1)
     window = Tk()
     window.withdraw()
-    window.iconbitmap(resource_path("image/JavSP.ico"))
+    ico_path = resource_path("image/JavSP.ico")
+    if os.path.isfile(ico_path):
+        window.iconbitmap(ico_path)
     path = filedialog.askdirectory(initialdir=default_dir)
     if path != "":
         return os.path.normpath(path)
@@ -249,7 +251,7 @@ def check_update(allow_check=True, auto_update=True):
                 elif enable_msg_head:
                     changelog.append(line)
             print_header(titles, changelog)
-        except:
+        except Exception:
             print_header(titles)
         # 尝试自动更新
         if auto_update:
@@ -283,20 +285,28 @@ def download_update(rel_info):
         )
         download(down_url, asset_name, desc=desc)
         if os.path.exists(asset_name):
-            # 备份原有的程序
             basepath, ext = os.path.splitext(sys.executable)
             backup_name = basepath + "_backup" + ext
             if os.path.exists(backup_name):
                 os.remove(backup_name)
-            os.rename(sys.executable, backup_name)
-            # 解压下载的zip文件
+            try:
+                os.rename(sys.executable, backup_name)
+            except OSError:
+                shutil.copy2(sys.executable, backup_name)
             with zipfile.ZipFile(asset_name, "r") as zip_ref:
-                zip_ref.extractall()
+                for member in zip_ref.infolist():
+                    member_path = os.path.join(".", member.filename)
+                    if not os.path.abspath(member_path).startswith(
+                        os.path.abspath(".")
+                    ):
+                        logger.warning(
+                            f"跳过不安全的解压路径: {member.filename}"
+                        )
+                        continue
+                    zip_ref.extract(member)
             logger.info("更新完成，启动新版本程序...")
             args = [sys.executable] + sys.argv[1:]
-            p = subprocess.Popen(args, start_new_session=True)
-            p.wait()
-            p.terminate()
+            subprocess.Popen(args, start_new_session=True)
             sys.exit(0)
 
 
