@@ -17,7 +17,10 @@ try:
 except ImportError:
     CURL_CFFI_AVAILABLE = False
 
-sys.stdout.reconfigure(encoding="utf-8")
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8")
 
 import colorama
 import pretty_errors
@@ -51,7 +54,7 @@ from javsp.web.base import download
 from javsp.web.exceptions import *
 from javsp.web.translate import translate_movie_info
 
-from javsp.config import Cfg, CrawlerID
+from javsp.config import Cfg, UseJavDBCover
 from javsp.prompt import prompt
 
 actressAliasMap = {}
@@ -137,16 +140,16 @@ def parallel_crawler(movie: Movie, tqdm_bar=None):
                     break
 
     # 根据影片的数据源获取对应的抓取器
-    crawler_mods: list[CrawlerID] = Cfg().crawler.selection[movie.data_src]
+    crawler_mods: list[str] = Cfg().crawler.selection[movie.data_src]
 
-    all_info = {i.value: MovieInfo(movie) for i in crawler_mods}
+    all_info = {i: MovieInfo(movie) for i in crawler_mods}
     # 番号为cid但同时也有有效的dvdid时，也尝试使用普通模式进行抓取
     if movie.data_src == "cid" and movie.dvdid:
         crawler_mods = crawler_mods + Cfg().crawler.selection.normal
         for i in all_info.values():
             i.dvdid = None
         for i in Cfg().crawler.selection.normal:
-            all_info[i.value] = MovieInfo(movie.dvdid)
+            all_info[i] = MovieInfo(movie.dvdid)
     thread_pool = []
     for mod_partial, info in all_info.items():
         mod = f"javsp.web.{mod_partial}"
@@ -163,9 +166,13 @@ def parallel_crawler(movie: Movie, tqdm_bar=None):
         thread_pool.append(th)
     # 等待所有线程结束
     timeout = Cfg().network.retry * Cfg().network.timeout.total_seconds()
+    deadline = time.monotonic() + timeout
     for th in thread_pool:
         th: threading.Thread
-        th.join(timeout=timeout)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        th.join(timeout=remaining)
     # 根据抓取结果更新影片类型判定
     if movie.data_src == "cid" and movie.dvdid:
         titles = [all_info[i].title for i in Cfg().crawler.selection[movie.data_src]]
@@ -563,10 +570,17 @@ def RunNormalMode(all_movies):
             inner_bar.set_description("下载封面图片")
             if Cfg().summarizer.cover.highres:
                 cover_dl = download_cover(
-                    movie.info.covers, movie.fanart_file, movie.info.big_covers
+                    movie.info.covers,
+                    movie.fanart_file,
+                    movie.info.big_covers,
+                    movie_id=movie.dvdid or movie.cid or "",
                 )
             else:
-                cover_dl = download_cover(movie.info.covers, movie.fanart_file)
+                cover_dl = download_cover(
+                    movie.info.covers,
+                    movie.fanart_file,
+                    movie_id=movie.dvdid or movie.cid or "",
+                )
             check_step(cover_dl, "下载封面图片失败")
             cover, pic_path = cover_dl
             # 确保实际下载的封面的url与即将写入到movie.info中的一致
@@ -588,30 +602,28 @@ def RunNormalMode(all_movies):
                 )
                 inner_bar.set_description("下载剧照")
                 if movie.info.preview_pics:
-                    extrafanartdir = movie.save_dir + "/extrafanart"
-                    os.mkdir(extrafanartdir)
-                    for id, pic_url in enumerate(movie.info.preview_pics):
-                        inner_bar.set_description(
-                            f"Downloading extrafanart {id} from url: {pic_url}"
-                        )
+                    extrafanartdir = os.path.join(movie.save_dir, "extrafanart")
+                    os.makedirs(extrafanartdir, exist_ok=True)
+                    for idx, pic_url in enumerate(movie.info.preview_pics):
+                        inner_bar.set_description(f"下载剧照 {idx}")
 
-                        fanart_destination = f"{extrafanartdir}/{id}.png"
+                        fanart_destination = os.path.join(extrafanartdir, f"{idx}.png")
                         try:
                             info = download(pic_url, fanart_destination)
                             if valid_pic(fanart_destination):
-                                filesize = get_fmt_size(pic_path)
-                                width, height = get_pic_size(pic_path)
+                                filesize = get_fmt_size(fanart_destination)
+                                width, height = get_pic_size(fanart_destination)
                                 elapsed = time.strftime(
                                     "%M:%S", time.gmtime(info["elapsed"])
                                 )
                                 speed = get_fmt_size(info["rate"]) + "/s"
                                 logger.info(
-                                    f"已下载剧照{pic_url} {id}.png: {width}x{height}, {filesize} [{elapsed}, {speed}]"
+                                    f"已下载剧照{pic_url} {idx}.png: {width}x{height}, {filesize} [{elapsed}, {speed}]"
                                 )
                             else:
-                                check_step(False, f"下载剧照{id}: {pic_url}失败")
-                        except:
-                            check_step(False, f"下载剧照{id}: {pic_url}失败")
+                                logger.warning(f"下载剧照{idx}失败: {pic_url}")
+                        except Exception as e:
+                            logger.warning(f"下载剧照{idx}失败: {pic_url}, {e}")
                         time.sleep(scrape_interval)
                 check_step(True)
 
@@ -631,15 +643,15 @@ def RunNormalMode(all_movies):
             ] and Cfg().crawler.sleep_after_scraping > Duration(0):
                 time.sleep(Cfg().crawler.sleep_after_scraping.total_seconds())
             return_movies.append(movie)
-        # except Exception as e:
-        #     logger.debug(e, exc_info=True)
-        #     logger.error(f'整理失败: {e}')
+        except Exception as e:
+            logger.error(f"整理失败: {e}")
+            logger.debug(e, exc_info=True)
         finally:
             inner_bar.close()
     return return_movies
 
 
-def download_cover(covers, fanart_path, big_covers=[]):
+def download_cover(covers, fanart_path, big_covers=[], movie_id=""):
     """下载封面图片"""
     # 优先下载高清封面
     for url in big_covers:
@@ -673,7 +685,7 @@ def download_cover(covers, fanart_path, big_covers=[]):
                     break
             except Exception as e:
                 logger.debug(e, exc_info=True)
-    logger.error(f"下载封面图片失败")
+    logger.error(f"下载封面图片失败: {movie_id}")
     logger.debug("big_covers:" + str(big_covers) + ", covers" + str(covers))
     return None
 
@@ -700,7 +712,11 @@ def entry():
     try:
         Cfg()
     except ValidationError as e:
-        print(e.errors())
+        for err in e.errors():
+            loc = " → ".join(str(l) for l in err["loc"])
+            msg = err["msg"]
+            print(f"配置错误 [{loc}]: {msg}")
+        input("按回车键退出...")
         exit(1)
 
     global actressAliasMap
@@ -721,7 +737,7 @@ def entry():
     import_crawlers()
     os.chdir(root)
 
-    print(f"扫描影片文件...")
+    print("扫描影片文件...")
     recognized = scan_movies(root)
     movie_count = len(recognized)
     recognize_fail = []
@@ -735,4 +751,11 @@ def entry():
 
 
 if __name__ == "__main__":
-    entry()
+    try:
+        entry()
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc()
+        input(f"程序发生错误: {e}\n按回车键退出...")
+        sys.exit(1)
