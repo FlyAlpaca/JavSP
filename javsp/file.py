@@ -51,7 +51,7 @@ def scan_movies(root: str) -> list[Movie]:
                     file.lower().endswith(".nfo")
                     for file in os.listdir(os.path.join(dirpath, name))
                 ):
-                    print(f"skip file {name}")
+                    logger.info(f"跳过已有NFO的文件夹: {name}")
                     dirnames.remove(name)
 
         for file in filenames:
@@ -202,7 +202,8 @@ def replace_illegal_chars(name):
         }
         for c, rep in charmap.items():
             name = name.replace(c, rep)
-    elif platform == "darwin":  # MAC OS X
+    elif platform == "darwin":
+        name = name.replace("/", "／")
         name = name.replace(":", "：")
     else:  # 其余都当做Linux处理
         name = name.replace("/", "／")
