@@ -129,8 +129,11 @@ dmypy.json
 
 # hook script generated for pyinstaller
 ver_hook.py
+# version file generated for cx_freeze builds
+javsp/VERSION
 # cached data
 *.cache.json
 
 .idea
 .vscode
+.trae

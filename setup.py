@@ -13,6 +13,12 @@ include_files: list[tuple[str, str]] = [
     (f"{proj_root}/image", "image"),
 ]
 
+# 如果有 VERSION 文件（CI 构建时写入），将其打入产物以支持版本识别
+version_file_src = f"{proj_root}/javsp/VERSION"
+version_file_dst = "javsp/VERSION"
+if os.path.exists(version_file_src):
+    include_files.append((version_file_src, version_file_dst))
+
 includes = []
 
 for file in os.listdir("javsp/web"):

@@ -52,6 +52,10 @@ jobs:
         run: |
           poetry install
 
+      - name: Write VERSION file for frozen build
+        shell: bash
+        run: poetry run python tools/version.py > javsp/VERSION
+
       - name: Build with Cx_Freeze
         run: poetry run python setup.py build_exe -b dist
 
