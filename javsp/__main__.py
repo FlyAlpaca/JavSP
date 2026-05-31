@@ -44,6 +44,7 @@ for handler in root_logger.handlers:
 logger = logging.getLogger("main")
 
 
+from javsp.__version__ import __version__
 from javsp.lib import resource_path
 from javsp.nfo import write_nfo
 from javsp.file import *
@@ -728,7 +729,7 @@ def entry():
     colorama.init(autoreset=True)
 
     # 检查更新
-    version_info = "JavSP " + getattr(sys, "javsp_version", "未知版本/从代码运行")
+    version_info = f"JavSP {__version__}"
     logger.debug(version_info.center(60, "="))
     check_update(Cfg().other.check_update, Cfg().other.auto_update)
     root = get_scan_dir(Cfg().scanner.input_directory)

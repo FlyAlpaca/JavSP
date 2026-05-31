@@ -14,7 +14,8 @@ from datetime import datetime, timezone
 from packaging import version
 from colorama import Style
 from pathlib import Path
-import importlib.metadata as meta
+
+from javsp.__version__ import __version__
 
 # 判断系统是否可以使用tk
 USE_GUI = True
@@ -191,9 +192,9 @@ def check_update(allow_check=True, auto_update=True):
         print("=" * display_width)
         print("")
 
-    # 使用pyinstaller打包exe时生成hook，运行时由该hook将版本信息注入到sys中
-    local_version = meta.version("javsp")
-    if local_version == "":
+    local_version = __version__
+    if local_version == "0.0.0":
+        logger.debug("无法获取版本信息，跳过更新检查")
         return
     # 检查更新
     if allow_check:
@@ -299,9 +300,7 @@ def download_update(rel_info):
                     if not os.path.abspath(member_path).startswith(
                         os.path.abspath(".")
                     ):
-                        logger.warning(
-                            f"跳过不安全的解压路径: {member.filename}"
-                        )
+                        logger.warning(f"跳过不安全的解压路径: {member.filename}")
                         continue
                     zip_ref.extract(member)
             logger.info("更新完成，启动新版本程序...")
