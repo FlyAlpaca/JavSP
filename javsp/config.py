@@ -220,6 +220,7 @@ class Summarizer(BaseConfig):
     censor_options_representation: list[str]
     title: TitleSummarize
     move_files: bool = True
+    match_subtitles: bool = True
     path: PathSummarize
     nfo: NFOSummarize
     cover: CoverSummarize

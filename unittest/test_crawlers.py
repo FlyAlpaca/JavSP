@@ -2,15 +2,15 @@ import os
 import sys
 import logging
 import requests
+import pytest
 from urllib.parse import urlsplit
+
+from javsp.datatype import MovieInfo
+from javsp.web.exceptions import CrawlerError, SiteBlocked
 
 
 file_dir = os.path.dirname(__file__)
 data_dir = os.path.join(file_dir, "data")
-sys.path.insert(0, os.path.abspath(os.path.join(file_dir, "..")))
-
-from javsp.datatype import MovieInfo
-from javsp.web.exceptions import CrawlerError, SiteBlocked
 
 
 logger = logging.getLogger(__name__)
@@ -25,7 +25,7 @@ def test_crawler(crawler_params):
         compare(*crawler_params)
     except requests.exceptions.ReadTimeout:
         logger.warning(f"{site} 连接超时: {params}")
-    except Exception as e:
+    except Exception:
         if os.getenv("GITHUB_ACTIONS") and (site in ["javdb", "javlib"]):
             logger.debug(
                 f"检测到Github actions环境，已忽略测试失败项: {params}", exc_info=True
@@ -53,7 +53,7 @@ def compare(avid, scraper, file):
     try:
         parse_data(online)
     except SiteBlocked as e:
-        logger.warning(e)
+        pytest.skip(f"站点被屏蔽: {e}")
         return
     except (CrawlerError, requests.exceptions.ReadTimeout) as e:
         logger.info(e)

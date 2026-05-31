@@ -226,6 +226,52 @@ class Movie:
         except OSError:
             pass
 
+        # 移动匹配的字幕文件（基于番号模糊匹配：IPZ-380 == ipz380 == ipz00380）
+        if Cfg().summarizer.match_subtitles:
+            from javsp.avid import get_id
+            import re as _re
+
+            def _norm_sub_id(dvdid):
+                """规范化番号，去除数字前导零用于模糊匹配"""
+                if not dvdid:
+                    return ""
+                d = dvdid.upper()
+                m = _re.match(r"^([A-Z]+)-(\d+)$", d)
+                if m:
+                    return m.group(1) + "-" + str(int(m.group(2)))
+                m = _re.match(r"^([A-Z]+)(\d+)$", d)
+                if m:
+                    return m.group(1) + "-" + str(int(m.group(2)))
+                return d
+
+            movie_norm_id = _norm_sub_id(self.dvdid)
+            if movie_norm_id:
+                sub_dir = os.path.dirname(self.files[0])
+                for f in sorted(os.listdir(sub_dir)):
+                    f_path = os.path.join(sub_dir, f)
+                    if not os.path.isfile(f_path):
+                        continue
+                    f_stem, f_ext = os.path.splitext(f)
+                    if f_ext.lower() not in (".srt", ".ass"):
+                        continue
+                    sub_id = get_id(f_stem)
+                    if sub_id and _norm_sub_id(sub_id) == movie_norm_id:
+                        if len(self.files) == 1:
+                            target_basename = self.basename
+                        else:
+                            target_basename = self.basename
+                            cd_m = _re.search(r"cd(\d+)$", f_stem, _re.I)
+                            if cd_m:
+                                target_basename += f"-CD{cd_m.group(1)}"
+                        new_sub_path = os.path.join(
+                            self.save_dir, target_basename + f_ext.lower()
+                        )
+                        try:
+                            move_file(f_path, new_sub_path)
+                            logger.info(f"已移动字幕文件: '{f}'")
+                        except FileExistsError:
+                            logger.warning(f"字幕文件已存在，跳过: '{new_sub_path}'")
+
 
 class GenreMap(dict):
     """genre的映射表"""

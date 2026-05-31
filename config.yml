@@ -70,6 +70,8 @@ crawler:
 summarizer:
   # 整理时是否移动文件: true-移动所有文件到新文件夹; false-数据保存到同级文件夹，不移动文件
   move_files: true
+  # 是否匹配并移动同名的本地字幕文件（.srt/.ass），需 move_files 为 true
+  match_subtitles: true
 
   # 路径相关的选项
   path: 

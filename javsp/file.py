@@ -17,6 +17,7 @@ __all__ = [
     "replace_illegal_chars",
     "get_failed_when_scan",
     "find_subtitle_in_dir",
+    "find_matching_subtitles",
 ]
 
 
@@ -278,6 +279,18 @@ def find_subtitle_in_dir(folder: str, dvdid: str):
         _sub_files[folder] = folder_data
     sub_file = folder_data.get(dvdid.upper())
     return sub_file
+
+
+def find_matching_subtitles(video_path: str) -> list[str]:
+    """在视频文件同目录下查找与视频文件同名的字幕文件"""
+    dir = os.path.dirname(video_path)
+    basename = os.path.splitext(os.path.basename(video_path))[0]
+    subtitles = []
+    for ext in SUB_EXTENSIONS:
+        sub_path = os.path.join(dir, basename + ext)
+        if os.path.exists(sub_path):
+            subtitles.append(sub_path)
+    return subtitles
 
 
 if __name__ == "__main__":
