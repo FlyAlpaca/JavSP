@@ -55,10 +55,9 @@ jobs:
       - name: Build with Cx_Freeze
         run: poetry run python setup.py build_exe -b dist
 
-      - name: Set VERSION variable for windows
+      - name: Set VERSION
         shell: bash
-        run: |
-          echo "VERSION=`poetry run python tools/version.py`" >> $GITHUB_ENV
+        run: echo "VERSION=$(poetry run python tools/version.py)" >> $GITHUB_ENV
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v7
