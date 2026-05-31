@@ -52,6 +52,7 @@ flake8 = "^7.0.0"
 cx-freeze = "^8.5"
 types-lxml = "^2026.2"
 types-pillow = "^10.2.0"
+colorama = "^0.4.6"
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
