@@ -41,58 +41,69 @@ jobs:
       - name: Build with Cx_Freeze
         run: poetry run python setup.py build_exe -b dist
 
-      - name: Set VERSION
+      - name: Save VERSION
         shell: bash
-        run: echo "VERSION=$(poetry run python tools/version.py)" >> $GITHUB_ENV
+        run: poetry run python tools/version.py > VERSION.txt
 
-      - name: Set archive name (Linux)
-        if: runner.os == 'Linux'
-        shell: bash
-        run: echo "ARCHIVE=JavSP-${VERSION}-linux.tar.gz" >> $GITHUB_ENV
-
-      - name: Set archive name (macOS)
-        if: runner.os == 'macOS'
-        shell: bash
-        run: echo "ARCHIVE=JavSP-${VERSION}-macos.tar.gz" >> $GITHUB_ENV
-
-      - name: Set archive name (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: echo "ARCHIVE=JavSP-${env:VERSION}-windows.zip" >> $env:GITHUB_ENV
-
-      - name: Package (Linux/macOS)
-        if: runner.os != 'Windows'
-        shell: bash
-        run: |
-          cd dist
-          tar -czf "../${ARCHIVE}" *
-
-      - name: Package (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          cd dist
-          Compress-Archive -Path * -DestinationPath "../${env:ARCHIVE}"
-
-      - name: Upload artifact
+      - name: Upload dist directory
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ env.ARCHIVE }}
-          path: ${{ env.ARCHIVE }}
+          name: build-${{ runner.os }}
+          path: |
+            dist/
+            VERSION.txt
 
   release:
     name: Create Release
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - name: Download artifacts
+      - name: Install zip tool
+        run: sudo apt-get update && sudo apt-get install -y zip
+
+      - name: Download Linux build
         uses: actions/download-artifact@v8
         with:
-          path: artifacts
-          merge-multiple: true
+          name: build-Linux
+          path: build-linux
+
+      - name: Download macOS build
+        uses: actions/download-artifact@v8
+        with:
+          name: build-macOS
+          path: build-macOS
+
+      - name: Download Windows build
+        uses: actions/download-artifact@v8
+        with:
+          name: build-Windows
+          path: build-Windows
+
+      - name: Set VERSION
+        shell: bash
+        run: echo "VERSION=$(cat build-linux/VERSION.txt)" >> $GITHUB_ENV
+
+      - name: Package Linux
+        shell: bash
+        run: tar czf "JavSP-${VERSION}-linux.tar.gz" -C build-linux/dist .
+
+      - name: Package macOS
+        shell: bash
+        run: tar czf "JavSP-${VERSION}-macos.tar.gz" -C build-macOS/dist .
+
+      - name: Package Windows
+        shell: bash
+        run: |
+          cd build-Windows/dist
+          zip -r "../../JavSP-${VERSION}-windows.zip" .
 
       - name: Create Release
         uses: softprops/action-gh-release@v3
         with:
-          files: artifacts/*
+          files: |
+            JavSP-*-linux.tar.gz
+            JavSP-*-macos.tar.gz
+            JavSP-*-windows.zip
           generate_release_notes: true
