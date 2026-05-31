@@ -27,28 +27,23 @@ jobs:
       with:
         submodules: 'true'
 
-    - name: Install poetry
-      run: pipx install poetry
+    - name: Install uv
+      run: pipx install uv
 
     - name: Setup Python 3.14
       uses: actions/setup-python@v6
       with:
         python-version: '3.14'
-        cache: 'poetry'
-    - name: Setup dynamic versioning
-      run: poetry self add poetry-dynamic-versioning
+
     - name: Install dependencies
-      run: |
-        poetry install
+      run: uv sync --group dev
+
     - name: Test avid.py
-      run: |
-        poetry run pytest unittest/test_avid.py
+      run: uv run pytest unittest/test_avid.py
     - name: Test file.py
-      run: |
-        poetry run pytest unittest/test_file.py
+      run: uv run pytest unittest/test_file.py
     - name: Test func.py
-      run: |
-        poetry run pytest unittest/test_func.py
+      run: uv run pytest unittest/test_func.py
     - name: Upload log as artifact
       uses: actions/upload-artifact@v7
       if: ${{ always() }}

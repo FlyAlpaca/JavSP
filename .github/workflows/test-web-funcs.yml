@@ -29,31 +29,26 @@ jobs:
       with:
         submodules: 'true'
 
-    - name: Install poetry
-      run: pipx install poetry
+    - name: Install uv
+      run: pipx install uv
 
     - name: Setup Python 3.14
       uses: actions/setup-python@v6
       with:
         python-version: '3.14'
-        cache: 'poetry'
-    - name: Setup dynamic versioning
-      run: poetry self add poetry-dynamic-versioning
+
     - name: Install dependencies
-      run: |
-        poetry install
+      run: uv sync --group dev
+
     - name: Switch code page
-      run: |
-        chcp 65001
+      run: chcp 65001
     - name: Public IP
       id: ip
       uses: haythem/public-ip@v1.3
     - name: Test proxyfree.py
-      run: |
-        poetry run pytest unittest/test_proxyfree.py
+      run: uv run pytest unittest/test_proxyfree.py
     - name: Test web crawlers
-      run: |
-        poetry run pytest unittest/test_crawlers.py
+      run: uv run pytest unittest/test_crawlers.py
     - name: Upload log as artifact
       uses: actions/upload-artifact@v7
       if: ${{ always() }}
