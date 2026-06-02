@@ -30,6 +30,8 @@ __all__ = [
     "download",
     "get_resp_text",
     "read_proxy",
+    "get_list_first",
+    "select_fc2_cover",
 ]
 
 
@@ -234,6 +236,17 @@ def dump_xpath_node(node, filename=None):
         f.write(content)
 
 
+def get_list_first(lst: list):
+    """安全获取列表第一个元素，为空时返回None"""
+    return lst[0] if lst else None
+
+
+def select_fc2_cover(movie):
+    """为FC2影片选择封面：若存在预览图则用第一张预览图替换封面"""
+    if movie.preview_pics:
+        movie.cover = movie.preview_pics[0]
+
+
 def is_connectable(url, timeout=3):
     """测试与指定url的连接"""
     try:
@@ -293,19 +306,6 @@ def download(url, output_path, desc=None):
         urlretrieve(url, filename=output_path, reporthook=t.update_to, headers=referrer)
         info = {k: t.format_dict[k] for k in ("total", "elapsed", "rate")}
         return info
-
-
-def open_in_chrome(url, new=0, autoraise=True):
-    """使用指定的Chrome Profile打开url，便于调试"""
-    import subprocess
-
-    chrome = R"C:\Program Files\Google\Chrome\Application\chrome.exe"
-    subprocess.run(f'"{chrome}" --profile-directory="Profile 2" {url}', shell=True)
-
-
-import webbrowser
-
-webbrowser.open = open_in_chrome
 
 
 if __name__ == "__main__":

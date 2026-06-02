@@ -4,7 +4,7 @@ import logging
 import re
 
 
-from javsp.web.base import get_html
+from javsp.web.base import get_html, get_list_first, select_fc2_cover
 from javsp.web.exceptions import *
 from javsp.lib import strftime_to_minutes
 from javsp.datatype import MovieInfo
@@ -117,14 +117,9 @@ def parse_data(movie: MovieInfo):
     movie.magnet = magnet
 
     # FC2的封面是220x220的，和正常封面尺寸、比例都差太多。如果有预览图片，则使用第一张预览图作为封面
-    if movie.preview_pics:
-        movie.cover = preview_pics[0]
-    else:
+    select_fc2_cover(movie)
+    if not movie.cover:
         movie.cover = get_list_first(thumb_pic)
-
-
-def get_list_first(list: list):
-    return list[0] if list and len(list) > 0 else None
 
 
 if __name__ == "__main__":
