@@ -4,3 +4,8 @@
 .vscode/
 .devcontainer/
 **/*.log
+unittest/
+tools/
+docker/
+*.md
+LICENSE

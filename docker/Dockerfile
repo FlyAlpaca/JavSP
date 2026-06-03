@@ -12,15 +12,19 @@ COPY . .
 
 RUN poetry self add poetry-dynamic-versioning && \
     poetry config virtualenvs.in-project true && \
-    poetry install && \
-    rm -rf /app/.git
+    poetry install
 
 
-FROM python:3.14-slim as runner
+FROM python:3.14-slim AS runner
 
 WORKDIR /app
 
-COPY --from=builder /app/ /app/
+COPY --from=builder /app/.venv /app/.venv
+COPY --from=builder /app/javsp /app/javsp
+COPY --from=builder /app/data /app/data
+COPY --from=builder /app/image /app/image
+COPY --from=builder /app/config.yml /app/config.yml
+COPY --from=builder /app/pyproject.toml /app/pyproject.toml
 
 ENTRYPOINT ["/app/.venv/bin/javsp"]
 CMD ["-i", "/video"]
