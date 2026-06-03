@@ -137,3 +137,6 @@ javsp/VERSION
 .idea
 .vscode
 .trae
+
+# UV
+uv.lock
