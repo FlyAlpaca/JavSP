@@ -40,7 +40,7 @@ build_exe = {
 
 javsp = Executable(
     "./javsp/__main__.py",
-    target_name="JavSP",
+    target_name="JavSP-bin",
     base=base,
     icon="./image/JavSP.ico",
 )
