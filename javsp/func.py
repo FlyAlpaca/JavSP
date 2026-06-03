@@ -290,23 +290,41 @@ def download_update(rel_info):
             backup_name = basepath + "_backup" + ext
             if os.path.exists(backup_name):
                 os.remove(backup_name)
-            try:
-                os.rename(sys.executable, backup_name)
-            except OSError:
-                shutil.copy2(sys.executable, backup_name)
-            with zipfile.ZipFile(asset_name, "r") as zip_ref:
-                for member in zip_ref.infolist():
-                    member_path = os.path.join(".", member.filename)
-                    if not os.path.abspath(member_path).startswith(
-                        os.path.abspath(".")
-                    ):
-                        logger.warning(f"跳过不安全的解压路径: {member.filename}")
-                        continue
-                    zip_ref.extract(member)
-            logger.info("更新完成，启动新版本程序...")
-            args = [sys.executable] + sys.argv[1:]
-            subprocess.Popen(args, start_new_session=True)
-            sys.exit(0)
+            # Windows 下运行中的 exe 无法被重命名/删除，需借助独立更新脚本
+            if sys.platform == "win32":
+                updater_script = basepath + "_update.bat"
+                with open(updater_script, "w", encoding="utf-8") as f:
+                    f.write(
+                        "@echo off\n"
+                        "timeout /t 2 /nobreak >nul\n"
+                        f"move /Y \"{sys.executable}\" \"{backup_name}\"\n"
+                        f"powershell -Command Expand-Archive -Path '{asset_name}' -DestinationPath '.' -Force\n"
+                        f"start \"\" \"{sys.executable}\"\n"
+                        f"del \"{updater_script}\"\n"
+                    )
+                subprocess.Popen(
+                    ["cmd", "/c", updater_script],
+                    creationflags=subprocess.CREATE_NEW_CONSOLE,
+                )
+                sys.exit(0)
+            else:
+                try:
+                    os.rename(sys.executable, backup_name)
+                except OSError:
+                    shutil.copy2(sys.executable, backup_name)
+                with zipfile.ZipFile(asset_name, "r") as zip_ref:
+                    for member in zip_ref.infolist():
+                        member_path = os.path.join(".", member.filename)
+                        if not os.path.abspath(member_path).startswith(
+                            os.path.abspath(".")
+                        ):
+                            logger.warning(f"跳过不安全的解压路径: {member.filename}")
+                            continue
+                        zip_ref.extract(member)
+                logger.info("更新完成，启动新版本程序...")
+                args = [sys.executable] + sys.argv[1:]
+                subprocess.Popen(args, start_new_session=True)
+                sys.exit(0)
 
 
 if __name__ == "__main__":
