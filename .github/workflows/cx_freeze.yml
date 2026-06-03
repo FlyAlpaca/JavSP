@@ -1,23 +1,15 @@
-# This is a basic workflow to help you get started with Actions
+name: "Cx_Freeze"
 
-name: Cx_Freeze
-
-# Controls when the workflow will run
 on:
-  # Triggers the workflow on push or pull request events
   push:
     branches:
-    - master
+      - master
   pull_request:
     branches:
-    - master
-
-  # Allows you to run this workflow manually from the Actions tab
+      - master
   workflow_dispatch:
 
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
-  # This workflow contains a single job called "build"
   build:
     name: Build binaries on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -26,45 +18,18 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
 
-    # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
-      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-      - uses: actions/checkout@v6
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Run freeze build
+        id: freeze
+        uses: ./.github/actions/freeze-build
         with:
-          submodules: 'true'
-
-      - name: Fetch tags
-        run: git fetch --prune --unshallow --tags
-
-      - name: Install poetry
-        run: pipx install poetry
-
-      - name: Setup Python 3.14
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.14'
-          cache: 'poetry'
-
-      - name: Setup dynamic versioning
-        run: poetry self add poetry-dynamic-versioning
-
-      - name: Install dependencies
-        run: |
-          poetry install
-
-      - name: Write VERSION file for frozen build
-        shell: bash
-        run: poetry run python tools/version.py > javsp/VERSION
-
-      - name: Build with Cx_Freeze
-        run: poetry run python setup.py build_exe -b dist
-
-      - name: Set VERSION
-        shell: bash
-        run: echo "VERSION=$(poetry run python tools/version.py)" >> $GITHUB_ENV
+          version-source: tool
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v7
         with:
-          name: JavSP-${{ env.VERSION }}-${{ matrix.os }}
+          name: JavSP-${{ steps.freeze.outputs.version }}-${{ matrix.os }}
           path: dist

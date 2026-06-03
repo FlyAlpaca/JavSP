@@ -1,57 +1,54 @@
-# This workflow will install Python dependencies, run tests and lint with a single version of Python
-# For more information see: https://help.github.com/actions/language-and-framework-guides/using-python-with-github-actions
-
 name: "Unit Test: web-based functions"
 
 on:
   push:
     branches:
-    - master
+      - master
   pull_request:
     branches:
-    - master
-  schedule:
+      - master
   # Web crawlers might be outdated because of website updating, so run periodically to follow the changes
-  - cron: '9 9 * * 3,6,0'
-  # Allows you to run this workflow manually from the Actions tab
+  schedule:
+    - cron: "9 9 * * 3,6,0"
   workflow_dispatch:
 
 jobs:
   test-web-crawlers:
-
-    runs-on: windows-latest
+    name: Test web crawlers
+    runs-on: ubuntu-latest
     env:
       PYTHONIOENCODING: "utf-8"
       PYTEST_ADDOPTS: "-rA --color=yes --tb=long --showlocals"
 
     steps:
-    - uses: actions/checkout@v6
-      with:
-        submodules: 'true'
+      - name: Check out code
+        uses: actions/checkout@v6
 
-    - name: Install uv
-      run: pipx install uv
+      - name: Install poetry
+        shell: bash
+        run: pipx install poetry
 
-    - name: Setup Python 3.14
-      uses: actions/setup-python@v6
-      with:
-        python-version: '3.14'
+      - name: Setup Python 3.14
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          cache: "poetry"
 
-    - name: Install dependencies
-      run: uv sync --group dev
+      - name: Install dependencies
+        shell: bash
+        run: poetry install --with dev
 
-    - name: Switch code page
-      run: chcp 65001
-    - name: Public IP
-      id: ip
-      uses: haythem/public-ip@v1.3
-    - name: Test proxyfree.py
-      run: uv run pytest unittest/test_proxyfree.py
-    - name: Test web crawlers
-      run: uv run pytest unittest/test_crawlers.py
-    - name: Upload log as artifact
-      uses: actions/upload-artifact@v7
-      if: ${{ always() }}
-      with:
-        name: JavSP-web-funcs.log
-        path: javspn/JavSP.log
+      - name: Test proxyfree.py
+        shell: bash
+        run: poetry run pytest unittest/test_proxyfree.py
+
+      - name: Test web crawlers
+        shell: bash
+        run: poetry run pytest unittest/test_crawlers.py
+
+      - name: Upload log as artifact
+        uses: actions/upload-artifact@v7
+        if: ${{ always() }}
+        with:
+          name: JavSP-web-funcs.log
+          path: javsp/JavSP.log
