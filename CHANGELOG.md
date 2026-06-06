@@ -1,6 +1,8 @@
 # Changelog
 
-## [Unreleased](https://github.com/Yuukiy/Javsp/compare/v1.8...HEAD)
+## [Unreleased](https://github.com/Yuukiy/JavSP/compare/v1.9.2...HEAD)
+
+## [v1.9 - v1.9.2](https://github.com/Yuukiy/JavSP/compare/v1.8...v1.9.2) (2026-05-22 ~ 2026-06-04)
 
 ### Added
 - 添加无码和字幕的水印 [#73](https://github.com/Yuukiy/JavSP/commit/eaedc84049597eaab1ba064229f9b5bcf38aa504)
@@ -14,6 +16,10 @@
 - Slimeface人脸识别 [#380](https://github.com/Yuukiy/JavSP/pull/380)
 - 支持Linux和MacOS(x64)二进制 [a754e1c](https://github.com/Yuukiy/JavSP/commit/a754e1ce0f14b0ca9dcc6d43d8e7d322a3da1c43)
 - 添加选项`other.interactive`来表示程序是否应该在interactive模式下运行
+- 智能错误分级报告：单源失败降级为 INFO，仅全部失败时汇总报错，curl_cffi 网络错误不再暴露 traceback
+- 支持 Python 3.14
+- 添加本地字幕匹配功能
+- 启用 poetry-dynamic-versioning，版本号由 git tag 驱动
 
 ### Changed
 - 使用 Poetry 作为构建系统 [134b279](https://github.com/Yuukiy/JavSP/commit/134b279151aead587db0b12d1a30781f2e1be5b1)
@@ -35,8 +41,23 @@
   env JAVSP_SCANNER.INPUT_DIRECTORY='/some/directory' poetry run javsp
   ```
 - 为了引入对类型注释的支持，最低Python版本现在为3.10
-
 - 重构封面剪裁逻辑 [#380](https://github.com/Yuukiy/JavSP/pull/380)
+- 重构 `parallel_crawler` 异常处理：区分网络错误/站点封禁/影片不存在，curl_cffi 异常被正确识别并自动重试
+- 简化爬虫日志名称（`javsp.web.javlib` → `javlib`）
+- 合并 arzon 双搜索模式，提取 fc2 通用工具
+- 重构 CI workflow 并升级 Actions 版本
+- 移除 dependabot，改用 renovate 统一管理依赖更新
+- 优化 Docker 镜像构建，runner 阶段只复制运行时必要文件
+
+### Fixed
+- 修复网络超时设置无效的问题：`Duration.seconds` 误用导致超时始终为 1 秒，改用 `total_seconds()`
+- 修复 Windows/跨平台兼容性问题：extrafanart 跨平台路径、macOS 文件名非法字符替换、硬链接 OSError fallback、stderr 编码
+- 修复 urlretrieve 安全问题：headers 空值防护与副作用消除、referer 提取边界处理、文件写入模式修正
+- 修复自动更新逻辑：os.rename 添加 fallback、Zip Slip 防护、移除矛盾的 p.wait/p.terminate
+- 修复 cx_freeze 产物版本号并优化 CI 版本策略
+- 修复 Linux/macOS Chrome Cookie 解密：原实现使用错误的 AES-GCM 算法，改为正确的 AES-CBC（v10 固定密码 + v11 keyring）
+- 新增 macOS Keychain Cookie 解密支持
+- 修复 SQL 注入风险：cookie 查询改用参数化查询
 
 ### Removed
 - Pyinstaller 打包描述文件 [134b279](https://github.com/Yuukiy/JavSP/commit/134b279151aead587db0b12d1a30781f2e1be5b1)
@@ -44,6 +65,7 @@
 - MovieID.ignore_whole_word 功能和ignore_regex重复 [e096d83](https://github.com/Yuukiy/JavSP/commit/e096d8394a4db29bb4a1123b3d05021de201207d)
 - NamingRule.media_servers：由于不常用删除，之后会出更general的解决方案 [#353](https://github.com/Yuukiy/JavSP/issues/353)
 - Baidu AIP人脸识别，请使用Slimeface替代。
+- airav: 站点已失效，移除爬虫及相关测试数据和工具脚本
 
 ## v1.8 - 2024-09-28
 
@@ -64,19 +86,3 @@
 - 为Cloudflare拦截导致的失败请求给出提示
 - 改进T38-000系列影片的番号识别
 - msin: 站点关闭，移除相应代码及测试用例
-
-## v1.9 - 2026-05-22
-
-### Added
-- 智能错误分级报告：单源失败降级为 INFO，仅全部失败时汇总报错，curl_cffi 网络错误不再暴露 traceback
-- 支持 Python 3.14
-
-### Changed
-- 重构 `parallel_crawler` 异常处理：区分网络错误/站点封禁/影片不存在，curl_cffi 异常被正确识别并自动重试
-- 简化爬虫日志名称（`javsp.web.javlib` → `javlib`）
-
-### Fixed
-- 修复网络超时设置无效的问题：`Duration.seconds` 误用导致超时始终为 1 秒，改用 `total_seconds()`
-
-### Removed
-- airav: 站点已失效，移除爬虫及相关测试数据和工具脚本
