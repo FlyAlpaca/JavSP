@@ -1,12 +1,13 @@
+import logging
 from argparse import ArgumentParser, RawTextHelpFormatter
 from enum import Enum
+from pathlib import Path
 from typing import Literal, TypeAlias
+
 from confz import BaseConfig, CLArgSource, EnvSource, FileSource
 from pydantic import ByteSize, Field, NonNegativeInt, PositiveInt, model_validator
-from pydantic_extra_types.pendulum_dt import Duration
 from pydantic_core import Url
-from pathlib import Path
-import logging
+from pydantic_extra_types.pendulum_dt import Duration
 
 from javsp.lib import resource_path
 
@@ -58,12 +59,8 @@ class Network(BaseConfig):
             proxy_free = data.get("proxy_free", {})
             invalid_keys = [k for k in proxy_free if k not in valid_keys]
             if invalid_keys:
-                _logger.warning(
-                    f"配置的免代理站点无效，已自动忽略: {', '.join(invalid_keys)}"
-                )
-                data["proxy_free"] = {
-                    k: v for k, v in proxy_free.items() if k in valid_keys
-                }
+                _logger.warning(f"配置的免代理站点无效，已自动忽略: {', '.join(invalid_keys)}")
+                data["proxy_free"] = {k: v for k, v in proxy_free.items() if k in valid_keys}
         return data
 
 
@@ -88,9 +85,7 @@ class CrawlerSelect(BaseConfig):
                     all_invalid.extend(invalid)
                 data[attr] = valid
             if all_invalid:
-                _logger.warning(
-                    f"配置的抓取器无效，已自动忽略: {', '.join(all_invalid)}"
-                )
+                _logger.warning(f"配置的抓取器无效，已自动忽略: {', '.join(all_invalid)}")
         return data
 
     def items(self) -> list[tuple[str, list[str]]]:
@@ -256,12 +251,7 @@ class GoogleTranslateEngine(BaseConfig):
 
 
 TranslateEngine: TypeAlias = (
-    BaiduTranslateEngine
-    | BingTranslateEngine
-    | ClaudeTranslateEngine
-    | OpenAITranslateEngine
-    | GoogleTranslateEngine
-    | None
+    BaiduTranslateEngine | BingTranslateEngine | ClaudeTranslateEngine | OpenAITranslateEngine | GoogleTranslateEngine | None
 )
 
 

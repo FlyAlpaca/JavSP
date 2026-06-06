@@ -7,10 +7,8 @@ import time
 import uuid
 from hashlib import md5
 
-
 import requests
 from pydantic_core import Url
-
 
 __all__ = ["translate", "translate_movie_info"]
 
@@ -20,13 +18,10 @@ from javsp.config import (
     BingTranslateEngine,
     Cfg,
     ClaudeTranslateEngine,
-    GoogleTranslateEngine,
     OpenAITranslateEngine,
-    TranslateEngine,
 )
 from javsp.datatype import MovieInfo
 from javsp.web.base import read_proxy
-
 
 logger = logging.getLogger(__name__)
 
@@ -62,13 +57,7 @@ def translate_movie_info(info: MovieInfo):
 
 def translate(
     texts,
-    engine: (
-        BaiduTranslateEngine
-        | BingTranslateEngine
-        | ClaudeTranslateEngine
-        | OpenAITranslateEngine
-        | None
-    ),
+    engine: (BaiduTranslateEngine | BingTranslateEngine | ClaudeTranslateEngine | OpenAITranslateEngine | None),
     actress=[],
 ):
     """
@@ -88,15 +77,11 @@ def translate(
             paragraphs = [i["dst"] for i in result["trans_result"]]
             rtn = {"trans": "\n".join(paragraphs)}
         else:
-            err_msg = "{}: {}: {}".format(
-                engine, result["error_code"], result["error_msg"]
-            )
+            err_msg = "{}: {}: {}".format(engine, result["error_code"], result["error_msg"])
     elif engine.name == "bing":
         # 使用动态词典保护原文中的女优名，防止翻译后认不出来
         for i in actress:
-            texts = texts.replace(
-                i, f'<mstrans:dictionary translation="{i}">{i}</mstrans:dictionary>'
-            )
+            texts = texts.replace(i, f'<mstrans:dictionary translation="{i}">{i}</mstrans:dictionary>')
         result = bing_translate(texts, api_key=engine.api_key)
         if "error" not in result:
             sentLen = result[0]["translations"][0]["sentLen"]
@@ -115,31 +100,25 @@ def translate(
             trans = "".join(trans_break)
             rtn = {"trans": trans, "orig_break": orig_break, "trans_break": trans_break}
         else:
-            err_msg = "{}: {}: {}".format(
-                engine, result["error"]["code"], result["error"]["message"]
-            )
+            err_msg = "{}: {}: {}".format(engine, result["error"]["code"], result["error"]["message"])
     elif engine.name == "claude":
         try:
             result = claude_translate(texts, engine.api_key)
             if "error_code" not in result:
                 rtn = {"trans": result}
             else:
-                err_msg = "{}: {}: {}".format(
-                    engine, result["error_code"], result["error_msg"]
-                )
+                err_msg = "{}: {}: {}".format(engine, result["error_code"], result["error_msg"])
         except Exception as e:
-            err_msg = "{}: {}: Exception: {}".format(engine, -2, repr(e))
+            err_msg = f"{engine}: {-2}: Exception: {repr(e)}"
     elif engine.name == "openai":
         try:
             result = openai_translate(texts, engine.url, engine.api_key, engine.model)
             if "error_code" not in result:
                 rtn = {"trans": result}
             else:
-                err_msg = "{}: {}: {}".format(
-                    engine, result["error_code"], result["error_msg"]
-                )
+                err_msg = "{}: {}: {}".format(engine, result["error_code"], result["error_msg"])
         except Exception as e:
-            err_msg = "{}: {}: Exception: {}".format(engine, -2, repr(e))
+            err_msg = f"{engine}: {-2}: Exception: {repr(e)}"
     elif engine.name == "google":
         try:
             result = google_trans(texts)
@@ -155,11 +134,9 @@ def translate(
                     "trans_break": trans_break,
                 }
             else:
-                err_msg = "{}: {}: {}".format(
-                    engine, result["error_code"], result["error_msg"]
-                )
+                err_msg = "{}: {}: {}".format(engine, result["error_code"], result["error_msg"])
         except Exception as e:
-            err_msg = "{}: {}: Exception: {}".format(engine, -2, repr(e))
+            err_msg = f"{engine}: {-2}: Exception: {repr(e)}"
     else:
         return {"trans": texts}
 
@@ -224,9 +201,7 @@ def google_trans(texts, to="zh_CN"):
     proxies = read_proxy()
     r = requests.get(url, proxies=proxies)
     while r.status_code == 429:
-        logger.warning(
-            f"HTTP {r.status_code}: {r.reason}: Google翻译请求超限，将等待{_google_trans_wait}秒后重试"
-        )
+        logger.warning(f"HTTP {r.status_code}: {r.reason}: Google翻译请求超限，将等待{_google_trans_wait}秒后重试")
         time.sleep(_google_trans_wait)
         r = requests.get(url, proxies=proxies)
         if r.status_code == 429:
@@ -291,13 +266,7 @@ def openai_translate(texts, url: Url, api_key: str, model: str, to="zh_CN"):
                 "error_msg": r.json().get("error", {}).get("message", ""),
             }
         else:
-            result = (
-                r.json()
-                .get("choices", [{}])[0]
-                .get("message", {})
-                .get("content", "")
-                .strip()
-            )
+            result = r.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip()
     else:
         result = {
             "error_code": r.status_code,

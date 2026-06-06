@@ -1,24 +1,23 @@
 """网络请求的统一接口"""
 
+import contextlib
+import logging
 import os
+import shutil
 import sys
 import time
-import shutil
-import logging
-import requests
-import contextlib
+
 import curl_cffi
-from curl_cffi import requests as curl_requests
 import lxml.html
-from tqdm import tqdm
+import requests
+from curl_cffi import requests as curl_requests
 from lxml import etree
 from lxml.html.clean import Cleaner
 from requests.models import Response
-
+from tqdm import tqdm
 
 from javsp.config import Cfg
-from javsp.web.exceptions import *
-
+from javsp.web.exceptions import SiteBlocked
 
 __all__ = [
     "Request",
@@ -83,9 +82,7 @@ class Request:
             try:
                 return func(*args, **kw)
             except curl_cffi.CurlError as e:
-                logger.debug(
-                    f"无法通过CloudFlare检测: '{e}', 尝试退回常规的requests请求"
-                )
+                logger.debug(f"无法通过CloudFlare检测: '{e}', 尝试退回常规的requests请求")
                 if func == self.scraper.get:
                     return requests.get(*args, **kw)
                 else:
@@ -148,9 +145,7 @@ def request_get(url, cookies={}, timeout=None, delay_raise=False):
     if timeout is None:
         timeout = Cfg().network.timeout.total_seconds()
 
-    r = requests.get(
-        url, headers=headers, proxies=read_proxy(), cookies=cookies, timeout=timeout
-    )
+    r = requests.get(url, headers=headers, proxies=read_proxy(), cookies=cookies, timeout=timeout)
     if not delay_raise:
         if r.status_code == 403 and b">Just a moment...<" in r.content:
             raise SiteBlocked(f"403 Forbidden: 无法通过CloudFlare检测: {url}")
@@ -231,7 +226,7 @@ def dump_xpath_node(node, filename=None):
     """将xpath节点dump到文件"""
     if not filename:
         filename = node.tag + ".html"
-    with open(filename, "wt", encoding="utf-8") as f:
+    with open(filename, "w", encoding="utf-8") as f:
         content = etree.tostring(node, pretty_print=True).decode("utf-8")
         f.write(content)
 
@@ -250,7 +245,7 @@ def select_fc2_cover(movie):
 def is_connectable(url, timeout=3):
     """测试与指定url的连接"""
     try:
-        r = requests.get(url, headers=headers, timeout=timeout)
+        requests.get(url, headers=headers, timeout=timeout)
         return True
     except requests.exceptions.RequestException as e:
         logger.debug(f"Not connectable: {url}\n" + repr(e))
@@ -264,9 +259,7 @@ def urlretrieve(url, filename=None, reporthook=None, headers=None):
         headers = headers.copy()
     if "arzon" in url:
         headers["Referer"] = "https://www.arzon.jp/"
-    with contextlib.closing(
-        requests.get(url, headers=headers, proxies=read_proxy(), stream=True)
-    ) as r:
+    with contextlib.closing(requests.get(url, headers=headers, proxies=read_proxy(), stream=True)) as r:
         header = r.headers
         with open(filename, "wb") as fp:
             bs = 1024
@@ -300,9 +293,7 @@ def download(url, output_path, desc=None):
     referrer = headers.copy()
     slash_pos = url.find("/", 8)
     referrer["referer"] = url[: slash_pos + 1] if slash_pos != -1 else url + "/"
-    with DownloadProgressBar(
-        unit="B", unit_scale=True, miniters=1, desc=desc, leave=False
-    ) as t:
+    with DownloadProgressBar(unit="B", unit_scale=True, miniters=1, desc=desc, leave=False) as t:
         urlretrieve(url, filename=output_path, reporthook=t.update_to, headers=referrer)
         info = {k: t.format_dict[k] for k in ("total", "elapsed", "rate")}
         return info

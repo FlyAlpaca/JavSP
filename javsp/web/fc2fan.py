@@ -1,18 +1,17 @@
 """解析fc2fan本地镜像的数据"""
 
 # FC2官网的影片下架就无法再抓取数据，如果用户有fc2fan的镜像，那可以尝试从镜像中解析影片数据
+import logging
 import os
 import re
-import logging
+
 import lxml.html
 import requests
 
-
-from javsp.web.base import resp2html, read_proxy
-from javsp.web.exceptions import *
 from javsp.config import Cfg
 from javsp.datatype import MovieInfo
-
+from javsp.web.base import read_proxy, resp2html
+from javsp.web.exceptions import CrawlerError, MovieNotFoundError, WebsiteError
 
 logger = logging.getLogger(__name__)
 base_path = str(Cfg().crawler.fc2fan_local_path)
@@ -37,7 +36,7 @@ def parse_data(movie: MovieInfo):
     try:
         container = html.xpath("//div[@class='col-sm-8']")[0]
     except IndexError:
-        raise WebsiteError(f"fc2fan: 站点不可用")
+        raise WebsiteError("fc2fan: 站点不可用")
     title = container.xpath("h3/text()")[0]
     score_str = container.xpath("h5/strong[text()='影片评分']")[0].tail.strip()
     match = re.search(r"\d+", score_str)
@@ -57,9 +56,7 @@ def parse_data(movie: MovieInfo):
     actress = container.xpath("h5/strong[text()='女优名字']/../a/text()")
     preview_pics = container.xpath("//ul[@class='slides']/li/img/@src")
     if use_local_mirror:
-        preview_pics = [
-            os.path.normpath(os.path.join(base_path, i)) for i in preview_pics
-        ]
+        preview_pics = [os.path.normpath(os.path.join(base_path, i)) for i in preview_pics]
     # big_preview = container.xpath("//img[@id='thumbpic']/../@href")[0]    # 影片真实截图，目前暂时用不到
 
     movie.title = title

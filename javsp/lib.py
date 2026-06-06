@@ -5,7 +5,6 @@ import re
 import sys
 from pathlib import Path
 
-
 __all__ = ["re_escape", "resource_path", "strftime_to_minutes", "detect_special_attr"]
 
 
@@ -47,9 +46,7 @@ def strftime_to_minutes(s: str) -> int:
     return minutes
 
 
-_PATTERN = re.compile(
-    r"(uncen(sor(ed)?)?([- _\s]*leak(ed)?)?|[无無][码碼](流出|破解))", flags=re.I
-)
+_PATTERN = re.compile(r"(uncen(sor(ed)?)?([- _\s]*leak(ed)?)?|[无無][码碼](流出|破解))", flags=re.I)
 
 
 def detect_special_attr(filepath: str, avid: str = None) -> str:

@@ -1,11 +1,10 @@
 """与操作nfo文件相关的功能"""
 
-from lxml.etree import tostring
 from lxml.builder import E
+from lxml.etree import tostring
 
-
-from javsp.datatype import MovieInfo
 from javsp.config import Cfg
+from javsp.datatype import MovieInfo
 
 
 def write_nfo(info: MovieInfo, nfo_file):
@@ -110,7 +109,7 @@ def write_nfo(info: MovieInfo, nfo_file):
             else:
                 nfo.append(E.actor(E.name(i)))
 
-    with open(nfo_file, "wt", encoding="utf-8") as f:
+    with open(nfo_file, "w", encoding="utf-8") as f:
         f.write(
             tostring(
                 nfo,

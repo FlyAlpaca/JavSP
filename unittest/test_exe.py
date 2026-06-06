@@ -13,7 +13,7 @@ def test_javsp_exe(tmp_path):
     try:
         os.system(f"fsutil file createnew {FILE} {size}")
         r = subprocess.run(
-            f"JavSP.exe --auto-exit --input . --output {tmp_path}".split(),
+            f"JavSP-bin.exe --auto-exit --input . --output {tmp_path}".split(),
             capture_output=True,
             encoding="utf-8",
         )

@@ -1,13 +1,13 @@
+import logging
 import os
 import sys
-import logging
-import requests
-import pytest
 from urllib.parse import urlsplit
+
+import pytest
+import requests
 
 from javsp.datatype import MovieInfo
 from javsp.web.exceptions import CrawlerError, SiteBlocked
-
 
 file_dir = os.path.dirname(__file__)
 data_dir = os.path.join(file_dir, "data")
@@ -27,9 +27,7 @@ def test_crawler(crawler_params):
         logger.warning(f"{site} 连接超时: {params}")
     except Exception:
         if os.getenv("GITHUB_ACTIONS") and (site in ["javdb", "javlib"]):
-            logger.debug(
-                f"检测到Github actions环境，已忽略测试失败项: {params}", exc_info=True
-            )
+            logger.debug(f"检测到Github actions环境，已忽略测试失败项: {params}", exc_info=True)
         else:
             raise
 
@@ -75,9 +73,7 @@ def compare(avid, scraper, file):
                 local_tmp = online_tmp = {}
                 local_pics = local_vars.get(k)
                 if local_pics:
-                    local_tmp = {
-                        name: urlsplit(url).path for name, url in local_pics.items()
-                    }
+                    local_tmp = {name: urlsplit(url).path for name, url in local_pics.items()}
                 if v:
                     online_tmp = {name: urlsplit(url).path for name, url in v.items()}
                 assert local_tmp == online_tmp

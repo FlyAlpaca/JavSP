@@ -1,5 +1,6 @@
 import os
-from cx_Freeze import setup, Executable
+
+from cx_Freeze import Executable, setup
 
 # https://github.com/marcelotduarte/cx_Freeze/issues/1288
 base = None

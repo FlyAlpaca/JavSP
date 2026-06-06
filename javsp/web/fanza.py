@@ -2,16 +2,12 @@
 
 import json
 import logging
-import os
 import re
-import sys
 
-
-from javsp.web.base import Request, resp2html
-from javsp.web.exceptions import *
 from javsp.config import Cfg
 from javsp.datatype import MovieInfo
-
+from javsp.web.base import Request, resp2html
+from javsp.web.exceptions import CrawlerError, MovieNotFoundError, SiteBlocked
 
 logger = logging.getLogger(__name__)
 base_url = "https://www.dmm.co.jp"
@@ -48,9 +44,7 @@ def sort_search_result(result: list[dict]):
 
 def get_urls_of_cid(cid: str) -> tuple[str, str]:
     """搜索cid可能的影片URL"""
-    r = request.get(
-        f"https://www.dmm.co.jp/search/?redirect=1&enc=UTF-8&category=&searchstr={cid}&commit.x=0&commit.y=0"
-    )
+    r = request.get(f"https://www.dmm.co.jp/search/?redirect=1&enc=UTF-8&category=&searchstr={cid}&commit.x=0&commit.y=0")
     if r.status_code == 404:
         raise MovieNotFoundError(__name__, cid)
     r.raise_for_status()
@@ -66,13 +60,11 @@ def get_urls_of_cid(cid: str) -> tuple[str, str]:
             elif part.startswith("cid="):
                 cid = part[4:]
                 new_url = "/".join(i for i in items if not i.startswith("?")) + "/"
-                parsed_result.setdefault(cid, []).append(
-                    {"product": product, "type": type_, "url": new_url}
-                )
+                parsed_result.setdefault(cid, []).append({"product": product, "type": type_, "url": new_url})
                 break
     if cid not in parsed_result:
         if len(result) > 0:
-            logger.debug(f"Unknown URL in search result: " + ", ".join(result))
+            logger.debug("Unknown URL in search result: " + ", ".join(result))
         raise MovieNotFoundError(__name__, cid)
     sorted_result = sort_search_result(parsed_result[cid])
     return sorted_result
@@ -81,9 +73,7 @@ def get_urls_of_cid(cid: str) -> tuple[str, str]:
 def resp2html_wrapper(resp):
     html = resp2html(resp)
     if "not available in your region" in html.text_content():
-        raise SiteBlocked(
-            "FANZA不允许从当前IP所在地区访问，请检查你的网络和代理服务器设置"
-        )
+        raise SiteBlocked("FANZA不允许从当前IP所在地区访问，请检查你的网络和代理服务器设置")
     elif "/login/" in resp.url:
         raise SiteBlocked("FANZA要求当前IP登录账号才可访问，请尝试更换为日本IP")
     return html
@@ -111,9 +101,7 @@ def parse_data(movie: MovieInfo):
             except Exception:
                 logger.debug(f"Fail to parse {d['url']}", exc_info=True)
                 if d is urls[-1]:
-                    logger.warning(
-                        f"在fanza查找到的cid={movie.cid}的影片页面均解析失败"
-                    )
+                    logger.warning(f"在fanza查找到的cid={movie.cid}的影片页面均解析失败")
                     raise
     else:
         html = resp2html_wrapper(r0)
@@ -128,32 +116,22 @@ def parse_videoa_page(movie: MovieInfo, html):
     container = html.xpath("//table[@class='mg-b12']/tr/td")[0]
     cover = container.xpath("//div[@id='sample-video']/a/@href")[0]
     # 采用'配信開始日'作为发布日期: https://www.zhihu.com/question/57513172/answer/153219083
-    date_tag = container.xpath(
-        "//td[text()='配信開始日：']/following-sibling::td/text()"
-    )
+    date_tag = container.xpath("//td[text()='配信開始日：']/following-sibling::td/text()")
     if date_tag:
         movie.publish_date = date_tag[0].strip().replace("/", "-")
-    duration_str = container.xpath(
-        "//td[text()='収録時間：']/following-sibling::td/text()"
-    )[0].strip()
+    duration_str = container.xpath("//td[text()='収録時間：']/following-sibling::td/text()")[0].strip()
     match = re.search(r"\d+", duration_str)
     if match:
         movie.duration = match.group(0)
     # 女优、导演、系列：字段不存在时，匹配将得到空列表。暂未发现有名字不显示在a标签中的情况
     actress = container.xpath("//span[@id='performer']/a/text()")
-    director_tag = container.xpath(
-        "//td[text()='監督：']/following-sibling::td/a/text()"
-    )
+    director_tag = container.xpath("//td[text()='監督：']/following-sibling::td/a/text()")
     if director_tag:
         movie.director = director_tag[0].strip()
-    serial_tag = container.xpath(
-        "//td[text()='シリーズ：']/following-sibling::td/a/text()"
-    )
+    serial_tag = container.xpath("//td[text()='シリーズ：']/following-sibling::td/a/text()")
     if serial_tag:
         movie.serial = serial_tag[0].strip()
-    producer_tag = container.xpath(
-        "//td[text()='メーカー：']/following-sibling::td/a/text()"
-    )
+    producer_tag = container.xpath("//td[text()='メーカー：']/following-sibling::td/a/text()")
     if producer_tag:
         movie.producer = producer_tag[0].strip()
     # label: 大意是某个系列策划用同样的番号，例如ABS打头的番号label是'ABSOLUTELY PERFECT'，暂时用不到
@@ -168,9 +146,7 @@ def parse_videoa_page(movie: MovieInfo, html):
     for tag in genre_tags:
         genre.append(tag.text.strip())
         genre_id.append(tag.get("href").split("=")[-1].strip("/"))
-    cid = container.xpath("//td[text()='品番：']/following-sibling::td/text()")[
-        0
-    ].strip()
+    cid = container.xpath("//td[text()='品番：']/following-sibling::td/text()")[0].strip()
     plot = container.xpath("//div[contains(@class, 'mg-b20 lh4')]/text()")[0].strip()
     preview_pics = container.xpath("//a[@name='sample-image']/img/@src")
     score_tag = container.xpath("//p[@class='d-review__average']/strong/text()")
@@ -180,9 +156,7 @@ def parse_videoa_page(movie: MovieInfo, html):
             score = float(match.group()) * 2
             movie.score = f"{score:.2f}"
     else:
-        score_img = container.xpath(
-            "//td[text()='平均評価：']/following-sibling::td/img/@src"
-        )[0]
+        score_img = container.xpath("//td[text()='平均評価：']/following-sibling::td/img/@src")[0]
         movie.score = int(score_img.split("/")[-1].split(".")[0])  # 00, 05 ... 50
 
     if Cfg().crawler.hardworking:
@@ -190,9 +164,7 @@ def parse_videoa_page(movie: MovieInfo, html):
         video_url = f"{base_url}/service/digitalapi/-/html5_player/=/cid={movie.cid}"
         html2 = request.get_html(video_url)
         # 目前用到js脚本的地方不多，所以不使用专门的js求值模块，先用正则提取文本然后用json解析数据
-        script = html2.xpath(
-            "//script[contains(text(),'getElementById(\"dmmplayer\")')]/text()"
-        )[0].strip()
+        script = html2.xpath("//script[contains(text(),'getElementById(\"dmmplayer\")')]/text()")[0].strip()
         match = re.search(r"\{.*\}", script)
         # 主要是为了捕捉json.loads的异常，但是也借助try-except判断是否正则表达式是否匹配
         try:
@@ -220,40 +192,26 @@ def parse_anime_page(movie: MovieInfo, html):
     title = html.xpath("//h1[@id='title']/text()")[0]
     container = html.xpath("//table[@class='mg-b12']/tr/td")[0]
     cover = container.xpath("//img[@name='package-image']/@src")[0]
-    date_str = container.xpath("//td[text()='発売日：']/following-sibling::td/text()")[
-        0
-    ].strip()
+    date_str = container.xpath("//td[text()='発売日：']/following-sibling::td/text()")[0].strip()
     publish_date = date_str.replace("/", "-")
-    duration_tag = container.xpath(
-        "//td[text()='収録時間：']/following-sibling::td/text()"
-    )
+    duration_tag = container.xpath("//td[text()='収録時間：']/following-sibling::td/text()")
     if duration_tag:
         movie.duration = duration_tag[0].strip().replace("分", "")
-    serial_tag = container.xpath(
-        "//td[text()='シリーズ：']/following-sibling::td/a/text()"
-    )
+    serial_tag = container.xpath("//td[text()='シリーズ：']/following-sibling::td/a/text()")
     if serial_tag:
         movie.serial = serial_tag[0].strip()
-    producer_tag = container.xpath(
-        "//td[text()='メーカー：']/following-sibling::td/a/text()"
-    )
+    producer_tag = container.xpath("//td[text()='メーカー：']/following-sibling::td/a/text()")
     if producer_tag:
         movie.producer = producer_tag[0].strip()
-    genre_tags = container.xpath(
-        "//td[text()='ジャンル：']/following-sibling::td/a[contains(@href,'article=keyword')]"
-    )
+    genre_tags = container.xpath("//td[text()='ジャンル：']/following-sibling::td/a[contains(@href,'article=keyword')]")
     genre, genre_id = [], []
     for tag in genre_tags:
         genre.append(tag.text.strip())
         genre_id.append(tag.get("href").split("=")[-1].strip("/"))
-    cid = container.xpath("//td[text()='品番：']/following-sibling::td/text()")[
-        0
-    ].strip()
+    cid = container.xpath("//td[text()='品番：']/following-sibling::td/text()")[0].strip()
     plot = container.xpath("//div[@class='mg-b20 lh4']/p")[0].text_content().strip()
     preview_pics = container.xpath("//a[@name='sample-image']/img/@data-lazy")
-    score_img = container.xpath(
-        "//td[text()='平均評価：']/following-sibling::td/img/@src"
-    )[0]
+    score_img = container.xpath("//td[text()='平均評価：']/following-sibling::td/img/@src")[0]
     score = int(score_img.split("/")[-1].split(".")[0])  # 00, 05 ... 50
 
     movie.cid = cid
