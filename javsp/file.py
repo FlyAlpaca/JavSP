@@ -2,13 +2,10 @@
 
 import ctypes
 import itertools
-import json
 import logging
 import os
 import re
-from pathlib import Path
 from sys import platform
-
 
 __all__ = [
     "scan_movies",
@@ -21,10 +18,10 @@ __all__ = [
 ]
 
 
-from javsp.avid import *
-from javsp.lib import re_escape
+from javsp.avid import get_cid, get_id, guess_av_type
 from javsp.config import Cfg
 from javsp.datatype import Movie
+from javsp.lib import re_escape
 
 logger = logging.getLogger(__name__)
 failed_items = []
@@ -39,19 +36,14 @@ def scan_movies(root: str) -> list[Movie]:
     # 扫描所有影片文件并获取它们的番号
     dic = {}  # avid: [abspath1, abspath2...]
     small_videos = {}
-    ignore_folder_name_pattern = re.compile(
-        "|".join(Cfg().scanner.ignored_folder_name_pattern)
-    )
+    ignore_folder_name_pattern = re.compile("|".join(Cfg().scanner.ignored_folder_name_pattern))
     for dirpath, dirnames, filenames in os.walk(root):
         for name in dirnames.copy():
             if ignore_folder_name_pattern.match(name):
                 dirnames.remove(name)
             # 移除有nfo的文件夹
             if Cfg().scanner.skip_nfo_dir:
-                if any(
-                    file.lower().endswith(".nfo")
-                    for file in os.listdir(os.path.join(dirpath, name))
-                ):
+                if any(file.lower().endswith(".nfo") for file in os.listdir(os.path.join(dirpath, name))):
                     logger.info(f"跳过已有NFO的文件夹: {name}")
                     dirnames.remove(name)
 
@@ -94,9 +86,7 @@ def scan_movies(root: str) -> list[Movie]:
     skipped_cnt = len(skipped_files)
     if skipped_cnt > 0:
         if len(has_avid) > 0:
-            logger.info(
-                f"跳过了 {', '.join(has_avid)} 等{skipped_cnt}个小于指定大小的视频文件"
-            )
+            logger.info(f"跳过了 {', '.join(has_avid)} 等{skipped_cnt}个小于指定大小的视频文件")
         else:
             logger.info(f"跳过了{skipped_cnt}个小于指定大小的视频文件")
         logger.debug("跳过的视频文件如下:\n" + "\n".join(skipped_files))
@@ -138,9 +128,7 @@ def scan_movies(root: str) -> list[Movie]:
         # 影片编号必须从 0/1/a 开始且编号连续
         sorted_slices = sorted(slices)
         first, last = sorted_slices[0], sorted_slices[-1]
-        if (first not in ("0", "1", "a")) or (
-            ord(last) != (ord(first) + len(sorted_slices) - 1)
-        ):
+        if (first not in ("0", "1", "a")) or (ord(last) != (ord(first) + len(sorted_slices) - 1)):
             logger.debug(f"无效的分片起始编号或分片编号不连续: {sorted_slices=}")
             non_slice_dup[avid] = files
             del dic[avid]
@@ -156,10 +144,7 @@ def scan_movies(root: str) -> list[Movie]:
         for f in files:
             msg += "  " + os.path.relpath(f, root) + "\n"
     if msg:
-        logger.error(
-            "下列番号对应多部影片文件且不符合分片规则，已略过整理，请手动处理后重新运行脚本: \n"
-            + msg
-        )
+        logger.error("下列番号对应多部影片文件且不符合分片规则，已略过整理，请手动处理后重新运行脚本: \n" + msg)
     # 转换数据的组织格式
     movies: list[Movie] = []
     for avid, files in dic.items():
@@ -230,11 +215,7 @@ def get_remaining_path_len(path):
     # TODO: 支持不同的操作系统
     fullpath = os.path.abspath(path)
     # Windows: If the length exceeds ~256 characters, you will be able to see the path/files via Windows/File Explorer, but may not be able to delete/move/rename these paths/files
-    length = (
-        len(fullpath.encode("utf-8"))
-        if Cfg().summarizer.path.length_by_byte
-        else len(fullpath)
-    )
+    length = len(fullpath.encode("utf-8")) if Cfg().summarizer.path.length_by_byte else len(fullpath)
     remaining = Cfg().summarizer.path.length_maximum - length
     return remaining
 

@@ -22,23 +22,17 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v6
 
-      - name: Install poetry
-        shell: bash
-        run: pipx install poetry
-
-      - name: Setup Python 3.14
-        uses: actions/setup-python@v6
+      - name: Install uv and set up Python
+        uses: astral-sh/setup-uv
         with:
           python-version: "3.14"
-          cache: "poetry"
+          enable-cache: true
 
       - name: Install dependencies
-        shell: bash
-        run: poetry install --with dev
+        run: uv sync --extra dev
 
       - name: Run unit tests
-        shell: bash
-        run: poetry run pytest unittest/test_avid.py unittest/test_file.py unittest/test_func.py
+        run: uv run pytest unittest/test_avid.py unittest/test_file.py unittest/test_func.py
 
       - name: Upload log as artifact
         uses: actions/upload-artifact@v7

@@ -3,12 +3,10 @@
 import logging
 import re
 
-
-from javsp.web.base import get_html, get_list_first, select_fc2_cover
-from javsp.web.exceptions import *
-from javsp.lib import strftime_to_minutes
 from javsp.datatype import MovieInfo
-
+from javsp.lib import strftime_to_minutes
+from javsp.web.base import get_html, get_list_first, select_fc2_cover
+from javsp.web.exceptions import CrawlerError, MovieNotFoundError
 
 logger = logging.getLogger(__name__)
 base_url = "https://njav.tv/ja"
@@ -48,9 +46,7 @@ def parse_data(movie: MovieInfo):
     else:
         raise MovieNotFoundError(__name__, movie.dvdid)
 
-    title = container.xpath(
-        "//div[@class='d-flex justify-content-between align-items-start']/div/h1/text()"
-    )[0]
+    title = container.xpath("//div[@class='d-flex justify-content-between align-items-start']/div/h1/text()")[0]
     thumb_pic = container.xpath("//div[@id='player']/@data-poster")
     plot = " ".join(container.xpath("//div[@class='description']/p/text()"))
     magnet = container.xpath("//div[@class='magnet']/a/@href")
@@ -66,7 +62,6 @@ def parse_data(movie: MovieInfo):
     genre = []
     actress = []
 
-    detail_dic = {}
     for item in container.xpath("//div[@class='detail-item']/div"):
         item_title = item.xpath("span/text()")[0]
         if "タグ:" in item_title:

@@ -2,12 +2,10 @@
 
 import logging
 
-
-from javsp.web.base import get_html, get_list_first, select_fc2_cover
-from javsp.web.exceptions import *
-from javsp.lib import strftime_to_minutes
 from javsp.datatype import MovieInfo
-
+from javsp.lib import strftime_to_minutes
+from javsp.web.base import get_html, get_list_first, select_fc2_cover
+from javsp.web.exceptions import CrawlerError, MovieNotFoundError
 
 logger = logging.getLogger(__name__)
 base_url = "https://fc2ppvdb.com"
@@ -23,9 +21,7 @@ def parse_data(movie: MovieInfo):
     # 抓取网页
     url = f"{base_url}/articles/{fc2_id}"
     html = get_html(url)
-    container = html.xpath(
-        "//div[@class='container lg:px-5 px-2 py-12 mx-auto']/div[1]"
-    )
+    container = html.xpath("//div[@class='container lg:px-5 px-2 py-12 mx-auto']/div[1]")
     if len(container) > 0:
         container = container[0]
     else:
@@ -33,24 +29,14 @@ def parse_data(movie: MovieInfo):
 
     title = container.xpath("//h2/a/text()")
     thumb_pic = container.xpath(f"//img[@alt='{fc2_id}']/@src")
-    duration_str = container.xpath(
-        "//div[starts-with(text(),'収録時間：')]/span/text()"
-    )
+    duration_str = container.xpath("//div[starts-with(text(),'収録時間：')]/span/text()")
     actress = container.xpath("//div[starts-with(text(),'女優：')]/span/a/text()")
     genre = container.xpath("//div[starts-with(text(),'タグ：')]/span/a/text()")
     publish_date = container.xpath("//div[starts-with(text(),'販売日：')]/span/text()")
     publisher = container.xpath("//div[starts-with(text(),'販売者：')]/span/a/text()")
-    uncensored_str = container.xpath(
-        "//div[starts-with(text(),'モザイク：')]/span/text()"
-    )
+    uncensored_str = container.xpath("//div[starts-with(text(),'モザイク：')]/span/text()")
     uncensored_str_f = get_list_first(uncensored_str)
-    uncensored = (
-        True
-        if uncensored_str_f == "無"
-        else False
-        if uncensored_str_f == "有"
-        else None
-    )
+    uncensored = True if uncensored_str_f == "無" else False if uncensored_str_f == "有" else None
     preview_pics = None
     preview_video = container.xpath("//a[starts-with(text(),'サンプル動画')]/@href")
 

@@ -1,63 +1,84 @@
-[tool.poetry]
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
 name = "javsp"
-version = "0.0.0"
 description = "汇总多站点数据的AV元数据刮削器"
-authors = ["Yuukiy <76897913+Yuukiy@users.noreply.github.com>"]
-license = "GPL-3.0-only"
 readme = "README.md"
+license = "GPL-3.0-only"
+authors = [
+    {name = "Yuukiy", email = "76897913+Yuukiy@users.noreply.github.com"},
+]
+requires-python = ">=3.10,<3.16"
+dynamic = ["version"]
+dependencies = [
+    "curl_cffi>=0.15",
+    "colorama>=0.4.6",
+    "pillow>=12.0",
+    "pretty-errors==1.2.19",
+    "requests>=2.32",
+    "tqdm>=4.67",
+    # https://stackoverflow.com/questions/446209/possible-values-from-sys-platform
+    "pywin32>=311; sys_platform == 'win32'",
+    "pywin32-ctypes>=0.2.2; sys_platform == 'win32'",
+    "cryptography>=48.0",
+    "pycryptodome>=3.20.0",
+    "lxml[html-clean]>=6.0",
+    "confz>=2.0.1",
+    "pydantic-extra-types>=2.9.0",
+    "pendulum>=3.2.0",
+]
 
-[tool.poetry-dynamic-versioning]
-enable = true
-vcs = "git"
-format = "v{base}.{distance}"
+[project.optional-dependencies]
+crop = ["slimeface>=2024.9.27"]
+dev = [
+    "pytest>=9.0",
+    "flake8>=7.0.0",
+    "cx-freeze>=8.5",
+    "types-lxml>=2026.2",
+    "types-pillow>=10.2.0",
+    "ruff>=0.13",
+]
 
-[tool.poetry.dependencies]
-python = "<3.16,>=3.10"
-curl_cffi = "^0.15"
-colorama = "^0.4.6"
-pillow = ">=12.0"
-pretty-errors = "1.2.19"
-requests = "^2.32"
-tqdm = "^4.67"
-# https://stackoverflow.com/questions/446209/possible-values-from-sys-platform
-pywin32 = {version = "^311", markers = "sys_platform == 'win32'"}
-pywin32-ctypes = {version = "^0.2.2", markers = "sys_platform == 'win32'"}
-cryptography = "^48.0"
-pycryptodome = "^3.20.0"
-lxml = {extras = ["html-clean"], version = "^6.0"}
-confz = "^2.0.1"
-pydantic-extra-types = "^2.9.0"
-pendulum = "^3.2.0"
-
-
-[tool.poetry.group.crop]
-optional = true
-
-[tool.poetry.group.crop.dependencies]
-slimeface = "^2024.9.27"
-
-[tool.poetry.scripts]
+[project.scripts]
 javsp = "javsp.__main__:entry"
 server = "javsp.server:entry"
 
-[[tool.poetry.source]]
+[project.urls]
+Repository = "https://github.com/Yuukiy/JavSP"
+Issues = "https://github.com/Yuukiy/JavSP/issues"
+Changelog = "https://github.com/Yuukiy/JavSP/blob/master/CHANGELOG.md"
+
+# ----- hatch 构建配置 -----
+# 版本由 git tag 驱动，遵循 PEP 440（dev 版本形如 1.9.2.dev3+gabc1234）
+[tool.hatch.version]
+source = "vcs"
+raw-options = {local_scheme = "no-local-version"}
+
+[tool.hatch.build.targets.wheel]
+packages = ["javsp"]
+
+# ----- uv 解析配置：默认走清华源 -----
+[[tool.uv.index]]
 name = "mirrors"
 url = "https://pypi.tuna.tsinghua.edu.cn/simple/"
-priority = "primary"
+default = true
 
-
-[tool.poetry.group.dev.dependencies]
-pytest = "^9.0"
-flake8 = "^7.0.0"
-cx-freeze = "^8.5"
-types-lxml = "^2026.2"
-types-pillow = "^10.2.0"
-colorama = "^0.4.6"
-
+# ----- 工具配置 -----
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["unittest"]
 
-[build-system]
-requires = ["poetry-core>=2.0.0", "poetry-dynamic-versioning>=1.0.0,<2.0.0"]
-build-backend = "poetry_dynamic_versioning.backend"
+[tool.ruff]
+target-version = "py314"
+line-length = 130
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP"]
+ignore = [
+    "E402",   # module-import-not-at-top-of-file: __main__.py 需要在 import 前初始化编码
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["javsp"]

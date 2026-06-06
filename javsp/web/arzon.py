@@ -3,11 +3,12 @@
 import logging
 import re
 
-from javsp.web.base import request_get, read_proxy
-from javsp.web.exceptions import *
-from javsp.datatype import MovieInfo
 import requests
 from lxml import html
+
+from javsp.datatype import MovieInfo
+from javsp.web.base import read_proxy, request_get
+from javsp.web.exceptions import CrawlerError, MovieNotFoundError
 
 logger = logging.getLogger(__name__)
 base_url = "https://www.arzon.jp"
@@ -36,9 +37,7 @@ _SEARCH_MODES = {
 
 
 def get_cookie():
-    skip_verify_url = (
-        "http://www.arzon.jp/index.php?action=adult_customer_agecheck&agecheck=1"
-    )
+    skip_verify_url = "http://www.arzon.jp/index.php?action=adult_customer_agecheck&agecheck=1"
     session = requests.Session()
     session.get(skip_verify_url, timeout=(12, 7), proxies=read_proxy())
     return session.cookies.get_dict()
@@ -89,9 +88,7 @@ def parse_data(movie: MovieInfo, mode="arzon"):
         elif key == "監督：":
             movie.director = value
         elif key == "発売日：" and value:
-            movie.publish_date = (
-                re.search(r"\d{4}/\d{2}/\d{2}", value).group(0).replace("/", "-")
-            )
+            movie.publish_date = re.search(r"\d{4}/\d{2}/\d{2}", value).group(0).replace("/", "-")
         elif key == "収録時間：" and value:
             movie.duration = re.search(r"([\d.]+)分", value).group(1)
         elif key == "品番：":

@@ -11,7 +11,7 @@ def get_version() -> str:
     """获取 JavSP 版本号，带降级链
 
     优先级：
-    1. 已安装包的元数据（pip install / poetry install / uv sync 后生效）
+    1. 已安装包的元数据（pip install / uv sync 后生效）
     2. 从 pyproject.toml 读取声明的版本（非 0.0.0 占位符时生效）
     3. 从 git describe 获取最近 tag（本地源码开发时生效）
     4. 从 javsp/VERSION 文件读取（cx_freeze 打包产物中使用）

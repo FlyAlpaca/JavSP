@@ -2,32 +2,32 @@
 
 # 为了降低耦合度，也避免功能复杂后可能出现的循环导入的问题，这里尽量不导入项目内部的模块
 # 如果需要获得配置信息，也应当由外部模块将配置项的值以参数的形式传入
+import logging
 import os
 import re
+import shutil
+import subprocess
 import sys
 import time
-import shutil
 import zipfile
-import logging
-import subprocess
-from datetime import datetime, timezone
-from packaging import version
-from colorama import Style
+from datetime import UTC, datetime
 from pathlib import Path
+
+from colorama import Style
+from packaging import version
 
 from javsp.__version__ import __version__
 
 # 判断系统是否可以使用tk
 USE_GUI = True
 try:
-    from tkinter import filedialog, Tk
+    from tkinter import Tk, filedialog
 except ImportError:
     USE_GUI = False
 
-from javsp.web.base import *
 from javsp.lib import re_escape, resource_path
-
 from javsp.prompt import prompt
+from javsp.web.base import download, request_get
 
 __all__ = [
     "select_folder",
@@ -72,9 +72,7 @@ def get_scan_dir(cfg_scan_dir: Path | None) -> str | None:
             print("请选择要整理的文件夹：", end="")
             root = select_folder()
         else:
-            root = prompt(
-                "请选择要整理的文件夹路径，必须是绝对路径: ", "要整理的文件夹"
-            )
+            root = prompt("请选择要整理的文件夹路径，必须是绝对路径: ", "要整理的文件夹")
         print(root)
         return root
 
@@ -103,9 +101,7 @@ def shutdown(timeout=120):
         return
     try:
         for i in reversed(range(timeout)):
-            print(
-                CLEAR_LINE + f"JavSP整理完成，将在 {i} 秒后关机。按'Ctrl+C'取消", end=""
-            )
+            print(CLEAR_LINE + f"JavSP整理完成，将在 {i} 秒后关机。按'Ctrl+C'取消", end="")
             time.sleep(1)
         logger.info("整理完成，自动关机")
         os.system("shutdown -s")
@@ -117,9 +113,7 @@ def utc2local(utc_str):
     """将UTC时间转换为本地时间"""
     # python不支持 ISO-8601 中的Z后缀
     now = time.time()
-    offset = datetime.fromtimestamp(now) - datetime.fromtimestamp(
-        now, tz=timezone.utc
-    ).replace(tzinfo=None)
+    offset = datetime.fromtimestamp(now) - datetime.fromtimestamp(now, tz=UTC).replace(tzinfo=None)
     utc_str = utc_str.replace("Z", "+00:00")
     utc_time = datetime.fromisoformat(utc_str)
     local_time = utc_time + offset
@@ -257,9 +251,7 @@ def check_update(allow_check=True, auto_update=True):
         # 尝试自动更新
         if auto_update:
             try:
-                logger.info(
-                    "尝试自动更新到新版本: " + latest_version + " （按'Ctrl+C'取消）"
-                )
+                logger.info("尝试自动更新到新版本: " + latest_version + " （按'Ctrl+C'取消）")
                 download_update(data)
             except KeyboardInterrupt:
                 logger.info("用户取消更新")
@@ -279,11 +271,7 @@ def download_update(rel_info):
     if rel_info.get("assets") and getattr(sys, "frozen", False):
         down_url = rel_info["assets"][0]["browser_download_url"]
         asset_name = rel_info["assets"][0]["name"]
-        desc = (
-            "下载更新"
-            if shutil.get_terminal_size().columns < 120
-            else "下载更新: " + asset_name
-        )
+        desc = "下载更新" if shutil.get_terminal_size().columns < 120 else "下载更新: " + asset_name
         download(down_url, asset_name, desc=desc)
         if os.path.exists(asset_name):
             basepath, ext = os.path.splitext(sys.executable)
@@ -297,10 +285,10 @@ def download_update(rel_info):
                     f.write(
                         "@echo off\n"
                         "timeout /t 2 /nobreak >nul\n"
-                        f"move /Y \"{sys.executable}\" \"{backup_name}\"\n"
+                        f'move /Y "{sys.executable}" "{backup_name}"\n'
                         f"powershell -Command Expand-Archive -Path '{asset_name}' -DestinationPath '.' -Force\n"
-                        f"start \"\" \"{sys.executable}\"\n"
-                        f"del \"{updater_script}\"\n"
+                        f'start "" "{sys.executable}"\n'
+                        f'del "{updater_script}"\n'
                     )
                 subprocess.Popen(
                     ["cmd", "/c", updater_script],
@@ -315,9 +303,7 @@ def download_update(rel_info):
                 with zipfile.ZipFile(asset_name, "r") as zip_ref:
                     for member in zip_ref.infolist():
                         member_path = os.path.join(".", member.filename)
-                        if not os.path.abspath(member_path).startswith(
-                            os.path.abspath(".")
-                        ):
+                        if not os.path.abspath(member_path).startswith(os.path.abspath(".")):
                             logger.warning(f"跳过不安全的解压路径: {member.filename}")
                             continue
                         zip_ref.extract(member)

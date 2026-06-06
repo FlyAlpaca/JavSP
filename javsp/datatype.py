@@ -1,15 +1,14 @@
 """定义数据类型和一些通用性的对数据类型的操作"""
 
-import os
 import csv
 import json
-import shutil
 import logging
+import os
+import shutil
 from functools import cached_property
 
 from javsp.config import Cfg
-from javsp.lib import resource_path, detect_special_attr
-
+from javsp.lib import detect_special_attr, resource_path
 
 logger = logging.getLogger(__name__)
 filemove_logger = logging.getLogger("filemove")
@@ -39,9 +38,7 @@ class MovieInfo:
         self.genre = None  # 影片分类的标签
         self.genre_id = None  # 影片分类的标签的ID，用于解决部分站点多个genre同名的问题，也便于管理多语言的genre
         self.genre_norm = None  # 统一后的影片分类的标签
-        self.score = (
-            None  # 评分（10分制，为方便提取写入和保持统一，应以字符串类型表示）
-        )
+        self.score = None  # 评分（10分制，为方便提取写入和保持统一，应以字符串类型表示）
         self.title = None  # 影片标题（不含番号）
         self.ori_title = None  # 原始影片标题，仅在标题被处理过时才对此字段赋值
         self.magnet = None  # 磁力链接
@@ -88,11 +85,11 @@ class MovieInfo:
                 filepath = os.path.join(os.path.dirname(__file__), filepath)
             else:
                 filepath = id + ".json"
-        with open(filepath, "wt", encoding="utf-8") as f:
+        with open(filepath, "w", encoding="utf-8") as f:
             f.write(str(self))
 
     def load(self, filepath) -> None:
-        with open(filepath, "rt", encoding="utf-8") as f:
+        with open(filepath, encoding="utf-8") as f:
             d = json.load(f)
         # 更新对象属性
         attrs = vars(self).keys()
@@ -107,13 +104,9 @@ class MovieInfo:
         d["num"] = info.dvdid or info.cid
         d["title"] = info.title or Cfg().summarizer.default.title
         d["rawtitle"] = info.ori_title or d["title"]
-        d["actress"] = (
-            ",".join(info.actress) if info.actress else Cfg().summarizer.default.actress
-        )
+        d["actress"] = ",".join(info.actress) if info.actress else Cfg().summarizer.default.actress
         d["score"] = info.score or "0"
-        d["censor"] = Cfg().summarizer.censor_options_representation[
-            1 if info.uncensored else 0
-        ]
+        d["censor"] = Cfg().summarizer.censor_options_representation[1 if info.uncensored else 0]
         d["serial"] = info.serial or Cfg().summarizer.default.series
         d["director"] = info.director or Cfg().summarizer.default.director
         d["producer"] = info.producer or Cfg().summarizer.default.producer
@@ -123,9 +116,7 @@ class MovieInfo:
         # cid中不会出现'-'，可以直接从d['num']拆分出label
         num_items = d["num"].split("-")
         d["label"] = num_items[0] if len(num_items) > 1 else "---"
-        d["genre"] = ",".join(
-            info.genre_norm if info.genre_norm else info.genre if info.genre else []
-        )
+        d["genre"] = ",".join(info.genre_norm if info.genre_norm else info.genre if info.genre else [])
 
         return d
 
@@ -191,9 +182,7 @@ class Movie:
                 try:
                     os.link(src, abs_dst)
                 except OSError:
-                    logger.warning(
-                        f"创建硬链接失败，回退为复制文件: '{src}' -> '{abs_dst}'"
-                    )
+                    logger.warning(f"创建硬链接失败，回退为复制文件: '{src}' -> '{abs_dst}'")
                     shutil.copy2(src, abs_dst)
             else:
                 shutil.move(src, abs_dst)
@@ -201,9 +190,7 @@ class Movie:
             dst_name = os.path.basename(dst)
             logger.info(f"重命名文件: '{src_rel}' -> '...{os.sep}{dst_name}'")
             # 目前StreamHandler并未设置filter，为了避免显示中出现重复的日志，这里暂时只能用debug级别
-            filemove_logger.debug(
-                f'移动（重命名）文件: \n  原路径: "{src}"\n  新路径: "{abs_dst}"'
-            )
+            filemove_logger.debug(f'移动（重命名）文件: \n  原路径: "{src}"\n  新路径: "{abs_dst}"')
 
         new_paths = []
         dir = os.path.dirname(self.files[0])
@@ -228,8 +215,9 @@ class Movie:
 
         # 移动匹配的字幕文件（基于番号模糊匹配：IPZ-380 == ipz380 == ipz00380）
         if Cfg().summarizer.match_subtitles:
-            from javsp.avid import get_id
             import re as _re
+
+            from javsp.avid import get_id
 
             def _norm_sub_id(dvdid):
                 """规范化番号，去除数字前导零用于模糊匹配"""
@@ -263,9 +251,7 @@ class Movie:
                             cd_m = _re.search(r"cd(\d+)$", f_stem, _re.I)
                             if cd_m:
                                 target_basename += f"-CD{cd_m.group(1)}"
-                        new_sub_path = os.path.join(
-                            self.save_dir, target_basename + f_ext.lower()
-                        )
+                        new_sub_path = os.path.join(self.save_dir, target_basename + f_ext.lower())
                         try:
                             move_file(f_path, new_sub_path)
                             logger.info(f"已移动字幕文件: '{f}'")
@@ -286,9 +272,7 @@ class GenreMap(dict):
             except UnicodeDecodeError:
                 logger.error("CSV file must be saved as UTF-8-BOM to edit is in Excel")
             except KeyError:
-                logger.error(
-                    "The columns 'id' and 'translate' must exist in the csv file"
-                )
+                logger.error("The columns 'id' and 'translate' must exist in the csv file")
         self.update(genres)
 
     def map(self, ls):

@@ -4,7 +4,6 @@ import os
 import re
 from pathlib import Path
 
-
 __all__ = ["get_id", "get_cid", "guess_av_type"]
 
 
@@ -51,9 +50,7 @@ def get_id(filepath_str: str) -> str:
         if match:
             return "heydouga-" + "-".join(match.groups())
         # 匹配片商 MUGEN 的奇怪番号。由于MK3D2DBD的模式，要放在普通番号模式之前进行匹配
-        match = re.search(
-            r"(MKB?D)[-_]*(S\d{2,3})|(MK3D2DBD|S2M|S2MBD)[-_]*(\d{2,3})", norm, re.I
-        )
+        match = re.search(r"(MKB?D)[-_]*(S\d{2,3})|(MK3D2DBD|S2M|S2MBD)[-_]*(\d{2,3})", norm, re.I)
         if match:
             if match.group(1) is not None:
                 avid = match.group(1) + "-" + match.group(2)

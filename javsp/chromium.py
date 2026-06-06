@@ -7,17 +7,17 @@
 - macOS: Keychain 获取 "Chrome Safe Storage" 密码 → PBKDF2 派生 key → AES-128-CBC 解密
 """
 
-import os
-import sys
-import json
 import base64
-import sqlite3
+import json
 import logging
+import os
+import sqlite3
+import sys
 import tempfile
-from glob import glob
-from shutil import copyfile
 from datetime import datetime
+from glob import glob
 from hashlib import pbkdf2_hmac
+from shutil import copyfile
 
 __all__ = ["get_browsers_cookies"]
 
@@ -115,7 +115,7 @@ def _decrypt_key_win(local_state_path: str) -> bytes:
     """
     import win32crypt
 
-    with open(local_state_path, "rt", encoding="utf-8") as f:
+    with open(local_state_path, encoding="utf-8") as f:
         local_state = json.loads(f.read())
 
     # 检查是否存在 App-Bound Encryption 密钥（Chrome 127+）
@@ -292,9 +292,7 @@ def _create_decrypter_mac() -> PosixDecrypter | None:
     if password is None:
         logger.debug("未找到 Keychain 密码，使用默认密码")
         password = b"peanuts"
-    key = pbkdf2_hmac(
-        "sha1", password, _PBKDF2_SALT, _PBKDF2_ITERATIONS_MAC, _PBKDF2_KEY_LENGTH_MAC
-    )
+    key = pbkdf2_hmac("sha1", password, _PBKDF2_SALT, _PBKDF2_ITERATIONS_MAC, _PBKDF2_KEY_LENGTH_MAC)
     return PosixDecrypter(key)
 
 
@@ -312,9 +310,7 @@ def get_browsers_cookies():
         if not os.path.isdir(user_dir):
             continue
 
-        cookies_files = glob(os.path.join(user_dir, "*", "Cookies")) + glob(
-            os.path.join(user_dir, "*", "Network", "Cookies")
-        )
+        cookies_files = glob(os.path.join(user_dir, "*", "Cookies")) + glob(os.path.join(user_dir, "*", "Network", "Cookies"))
 
         for cookies_file in cookies_files:
             try:
@@ -394,9 +390,7 @@ def get_cookies(cookies_file, decrypter, host_pattern="javdb%.com"):
                 try:
                     d[name] = decrypter.decrypt(encrypted_value)
                 except Exception as e:
-                    logger.debug(
-                        f"解密Cookie失败({e}): {name}@{host_key}", exc_info=True
-                    )
+                    logger.debug(f"解密Cookie失败({e}): {name}@{host_key}", exc_info=True)
         # Cookies的核心字段是'_jdb_session'，因此如果records中缺失此字段（说明已过期），则对应的Cookies不再有效
         valid_records = {k: v for k, v in records.items() if "_jdb_session" in v}
         conn.close()

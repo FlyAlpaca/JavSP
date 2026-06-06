@@ -3,13 +3,11 @@
 import logging
 from urllib.parse import urlsplit
 
-
-from javsp.web.base import Request, read_proxy, resp2html
-from javsp.web.exceptions import *
-from javsp.web.proxyfree import get_proxy_free_url
 from javsp.config import Cfg, CrawlerID
 from javsp.datatype import MovieInfo
-
+from javsp.web.base import Request, read_proxy, resp2html
+from javsp.web.exceptions import CrawlerError, MovieDuplicateError, MovieNotFoundError
+from javsp.web.proxyfree import get_proxy_free_url
 
 # 初始化Request实例
 request = Request(use_scraper=True)
@@ -26,9 +24,7 @@ def init_network_cfg():
     """
     request.timeout = 5
     # 1. 优先尝试免代理地址（config配置 + 自动获取）
-    proxy_free_url = get_proxy_free_url(
-        "javlib", str(Cfg().network.proxy_free[CrawlerID.javlib])
-    )
+    proxy_free_url = get_proxy_free_url("javlib", str(Cfg().network.proxy_free[CrawlerID.javlib]))
     if proxy_free_url:
         request.proxies = {}
         try:
@@ -95,19 +91,13 @@ def parse_data(movie: MovieInfo):
             no_blueray_count = len(no_blueray)
             if no_blueray_count == 1:
                 new_url = no_blueray[0].get("href")
-                logger.debug(
-                    f"'{movie.dvdid}': 存在{match_count}个同番号搜索结果，已自动选择封面比例正确的一个: {new_url}"
-                )
+                logger.debug(f"'{movie.dvdid}': 存在{match_count}个同番号搜索结果，已自动选择封面比例正确的一个: {new_url}")
             else:
                 # 两个结果中没有谁是蓝光影片，说明影片番号重复了
-                raise MovieDuplicateError(
-                    __name__, movie.dvdid, match_count, pre_choose_urls
-                )
+                raise MovieDuplicateError(__name__, movie.dvdid, match_count, pre_choose_urls)
         else:
             # 存在不同影片但是番号相同的情况，如MIDV-010
-            raise MovieDuplicateError(
-                __name__, movie.dvdid, match_count, pre_choose_urls
-            )
+            raise MovieDuplicateError(__name__, movie.dvdid, match_count, pre_choose_urls)
         # 重新抓取网页
         html = request.get_html(new_url)
     container = html.xpath("/html/body/div/div[@id='rightcolumn']")[0]

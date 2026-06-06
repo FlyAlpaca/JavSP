@@ -1,23 +1,27 @@
 """从JavDB抓取数据"""
 
+import logging
 import os
 import re
-import logging
 
-from javsp.web.base import Request, resp2html
-from javsp.web.exceptions import *
-from javsp.func import *
 from javsp.avid import guess_av_type
-from javsp.config import Cfg, CrawlerID
-from javsp.datatype import MovieInfo, GenreMap
 from javsp.chromium import get_browsers_cookies
-
+from javsp.config import Cfg, CrawlerID
+from javsp.datatype import GenreMap, MovieInfo
+from javsp.web.base import Request, resp2html
+from javsp.web.exceptions import (
+    CrawlerError,
+    CredentialError,
+    MovieDuplicateError,
+    MovieNotFoundError,
+    SiteBlocked,
+    SitePermissionError,
+    WebsiteError,
+)
 
 # 初始化Request实例。使用scraper绕过CloudFlare后，需要指定网页语言，否则可能会返回其他语言网页，影响解析
 request = Request(use_scraper=True)
-request.headers["Accept-Language"] = (
-    "zh-CN,zh;q=0.9,zh-TW;q=0.8,en-US;q=0.7,en;q=0.6,ja;q=0.5"
-)
+request.headers["Accept-Language"] = "zh-CN,zh;q=0.9,zh-TW;q=0.8,en-US;q=0.7,en;q=0.6,ja;q=0.5"
 
 logger = logging.getLogger(__name__)
 genre_map = GenreMap("data/genre_javdb.csv")
@@ -60,16 +64,12 @@ def get_html_wrapper(url):
                     for k, v in item["cookies"].items():
                         request.scraper.cookies.set(k, v)
                 cookies_source = (item["profile"], item["site"])
-                logger.debug(
-                    f"未携带有效Cookies而发生重定向，尝试更换Cookies为: {cookies_source}"
-                )
+                logger.debug(f"未携带有效Cookies而发生重定向，尝试更换Cookies为: {cookies_source}")
                 return get_html_wrapper(url)
             else:
                 raise CredentialError("JavDB: 所有浏览器Cookies均已过期")
         elif r.history and "pay" in r.url.split("/")[-1]:
-            raise SitePermissionError(
-                f"JavDB: 此资源被限制为仅VIP可见: '{r.history[0].url}'"
-            )
+            raise SitePermissionError(f"JavDB: 此资源被限制为仅VIP可见: '{r.history[0].url}'")
         else:
             html = resp2html(r)
             return html
@@ -81,9 +81,7 @@ def get_html_wrapper(url):
             if error_code == "1020":
                 block_msg = f"JavDB: {r.status_code} 禁止访问: 站点屏蔽了来自日本地区的IP地址，请使用其他地区的代理服务器"
             else:
-                block_msg = (
-                    f"JavDB: {r.status_code} 禁止访问: {url} (Error code: {error_code})"
-                )
+                block_msg = f"JavDB: {r.status_code} 禁止访问: {url} (Error code: {error_code})"
         else:
             block_msg = f"JavDB: {r.status_code} 禁止访问: {url}"
         raise SiteBlocked(block_msg)
@@ -102,12 +100,8 @@ def get_user_info(site, cookies):
         return
     # 扫描浏览器得到的Cookies对应的临时域名可能会过期，因此需要先判断域名是否仍然指向JavDB的站点
     if "JavDB" in html.text:
-        email = html.xpath(
-            "//div[@class='user-profile']/ul/li[1]/span/following-sibling::text()"
-        )[0].strip()
-        username = html.xpath(
-            "//div[@class='user-profile']/ul/li[2]/span/following-sibling::text()"
-        )[0].strip()
+        email = html.xpath("//div[@class='user-profile']/ul/li[1]/span/following-sibling::text()")[0].strip()
+        username = html.xpath("//div[@class='user-profile']/ul/li[2]/span/following-sibling::text()")[0].strip()
         return email, username
     else:
         logger.debug("JavDB: 域名已过期: " + site)
@@ -141,7 +135,7 @@ def parse_data(movie: MovieInfo):
         new_url = movie_urls[index]
         try:
             html2 = get_html_wrapper(new_url)
-        except (SitePermissionError, CredentialError):
+        except SitePermissionError, CredentialError:
             # 不开VIP不让看，过分。决定榨出能获得的信息，毕竟有时候只有这里能找到标题和封面
             box = html.xpath("//a[@class='box']")[index]
             movie.url = new_url
@@ -149,7 +143,7 @@ def parse_data(movie: MovieInfo):
             movie.cover = box.xpath("div/img/@src")[0]
             score_str = box.xpath("div[@class='score']/span/span")[0].tail
             score = re.search(r"([\d.]+)分", score_str).group(1)
-            movie.score = "{:.2f}".format(float(score) * 2)
+            movie.score = f"{float(score) * 2:.2f}"
             movie.publish_date = box.xpath("div[@class='meta']/text()")[0].strip()
             return
     else:
@@ -158,15 +152,11 @@ def parse_data(movie: MovieInfo):
     container = html2.xpath("/html/body/section/div/div[@class='video-detail']")[0]
     info = container.xpath("//nav[@class='panel movie-panel-info']")[0]
     title = container.xpath("h2/strong[@class='current-title']/text()")[0]
-    show_orig_title = container.xpath(
-        "//a[contains(@class, 'meta-link') and not(contains(@style, 'display: none'))]"
-    )
+    show_orig_title = container.xpath("//a[contains(@class, 'meta-link') and not(contains(@style, 'display: none'))]")
     if show_orig_title:
         movie.ori_title = container.xpath("h2/span[@class='origin-title']/text()")[0]
     cover = container.xpath("//img[@class='video-cover']/@src")[0]
-    preview_pics = container.xpath(
-        "//a[@class='tile-item'][@data-fancybox='gallery']/@href"
-    )
+    preview_pics = container.xpath("//a[@class='tile-item'][@data-fancybox='gallery']/@href")
     preview_video_tag = container.xpath("//video[@id='preview-video']/source/@src")
     if preview_video_tag:
         preview_video = preview_video_tag[0]
@@ -175,12 +165,7 @@ def parse_data(movie: MovieInfo):
         movie.preview_video = preview_video
     dvdid = info.xpath("div/span")[0].text_content()
     publish_date = info.xpath("div/strong[text()='日期:']")[0].getnext().text
-    duration = (
-        info.xpath("div/strong[text()='時長:']")[0]
-        .getnext()
-        .text.replace("分鍾", "")
-        .strip()
-    )
+    duration = info.xpath("div/strong[text()='時長:']")[0].getnext().text.replace("分鍾", "").strip()
     director_tag = info.xpath("div/strong[text()='導演:']")
     if director_tag:
         movie.director = director_tag[0].getnext().text_content().strip()
@@ -201,7 +186,7 @@ def parse_data(movie: MovieInfo):
     if score_tag:
         score_str = score_tag[0].tail
         score = re.search(r"([\d.]+)分", score_str).group(1)
-        movie.score = "{:.2f}".format(float(score) * 2)
+        movie.score = f"{float(score) * 2:.2f}"
     genre_tags = info.xpath("//strong[text()='類別:']/../span/a")
     genre, genre_id = [], []
     for tag in genre_tags:
@@ -216,9 +201,7 @@ def parse_data(movie: MovieInfo):
     all_actors = actors_tag.xpath("a/text()")
     genders = actors_tag.xpath("strong/text()")
     actress = [i for i in all_actors if genders[all_actors.index(i)] == "♀"]
-    magnet = container.xpath(
-        "//div[@class='magnet-name column is-four-fifths']/a/@href"
-    )
+    magnet = container.xpath("//div[@class='magnet-name column is-four-fifths']/a/@href")
 
     movie.dvdid = dvdid
     movie.url = new_url.replace(base_url, permanent_url)
@@ -247,9 +230,7 @@ def parse_clean_data(movie: MovieInfo):
         raise
     if movie.genre_id and (not movie.genre_id[0].startswith("fc2?")):
         movie.genre_norm = genre_map.map(movie.genre_id)
-        movie.genre_id = (
-            None  # 没有别的地方需要再用到，清空genre id（表明已经完成转换）
-        )
+        movie.genre_id = None  # 没有别的地方需要再用到，清空genre id（表明已经完成转换）
 
 
 def collect_actress_alias(type=0, use_original=True):
@@ -259,8 +240,8 @@ def collect_actress_alias(type=0, use_original=True):
     use_original: 是否使用原名而非译名，True-田中レモン，False-田中檸檬
     """
     import json
-    import time
     import random
+    import time
 
     actressAliasMap = {}
 
@@ -281,7 +262,7 @@ def collect_actress_alias(type=0, use_original=True):
             count = 0
             for actor in actors:
                 count += 1
-                actor_name = actor.xpath("strong/text()")[0].strip()
+                actor.xpath("strong/text()")[0].strip()
                 actor_url = actor.xpath("@href")[0]
                 # actor_url = f"https://javdb.com{actor_url}"  # 构造演员主页的完整URL
 
@@ -294,23 +275,17 @@ def collect_actress_alias(type=0, use_original=True):
 
                 names_list = [name.strip() for name in names_span.text.split(",")]
                 if len(aliases_span_list) > 1:
-                    aliases_list = [
-                        alias.strip() for alias in aliases_span.text.split(",")
-                    ]
+                    aliases_list = [alias.strip() for alias in aliases_span.text.split(",")]
                 else:
                     aliases_list = []
 
                 # 将信息添加到actressAliasMap中
-                actressAliasMap[names_list[-1 if use_original else 0]] = (
-                    names_list + aliases_list
-                )
-                print(
-                    f"{count} --- {names_list[-1 if use_original else 0]}: {names_list + aliases_list}"
-                )
+                actressAliasMap[names_list[-1 if use_original else 0]] = names_list + aliases_list
+                print(f"{count} --- {names_list[-1 if use_original else 0]}: {names_list + aliases_list}")
 
                 if count == 10:
                     # 将数据写回文件
-                    with open(actressAliasFilePath, "r", encoding="utf-8") as file:
+                    with open(actressAliasFilePath, encoding="utf-8") as file:
                         existing_data = json.load(file)
 
                     # 合并现有数据和新爬取的数据
@@ -333,9 +308,7 @@ def collect_actress_alias(type=0, use_original=True):
                 time.sleep(max(1, 10 * random.random()))  # 随机等待 1-10 秒
 
             # 判断是否有下一页按钮
-            next_page_link = html.xpath(
-                "//a[@rel='next' and @class='pagination-next']/@href"
-            )
+            next_page_link = html.xpath("//a[@rel='next' and @class='pagination-next']/@href")
             if not next_page_link:
                 break  # 没有下一页，结束循环
             else:
@@ -345,7 +318,7 @@ def collect_actress_alias(type=0, use_original=True):
         except SiteBlocked:
             raise
 
-    with open(actressAliasFilePath, "r", encoding="utf-8") as file:
+    with open(actressAliasFilePath, encoding="utf-8") as file:
         existing_data = json.load(file)
 
     # 合并现有数据和新爬取的数据
