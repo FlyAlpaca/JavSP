@@ -29,6 +29,7 @@ runs:
         enable-cache: true
 
     - name: Install dependencies
+      shell: bash
       run: uv sync --extra dev
 
     - name: Write VERSION file
