@@ -17,7 +17,7 @@ from requests.models import Response
 from tqdm import tqdm
 
 from javsp.config import Cfg
-from javsp.web.exceptions import SiteBlocked
+from javsp.web.exceptions import CrawlerError, SiteBlocked
 
 __all__ = [
     "Request",
@@ -31,6 +31,7 @@ __all__ = [
     "read_proxy",
     "get_list_first",
     "select_fc2_cover",
+    "xpath_first",
 ]
 
 
@@ -236,6 +237,27 @@ def get_list_first(lst: list):
     return lst[0] if lst else None
 
 
+def xpath_first(element, path, required=True, label=""):
+    """xpath取第一个匹配，失败时给出明确提示
+
+    Args:
+        element: lxml元素
+        path: XPath表达式
+        required: 是否为必需字段，必需字段匹配失败时抛出CrawlerError
+        label: 站点标识，用于错误提示
+
+    Returns:
+        匹配的第一个元素，无匹配时required=True抛异常，required=False返回None
+    """
+    result = element.xpath(path)
+    if result:
+        return result[0]
+    if required:
+        site = label or "unknown"
+        raise CrawlerError(f"XPath匹配失败: [{site}] '{path}' 未找到元素")
+    return None
+
+
 def select_fc2_cover(movie):
     """为FC2影片选择封面：若存在预览图则用第一张预览图替换封面"""
     if movie.preview_pics:
@@ -257,8 +279,6 @@ def urlretrieve(url, filename=None, reporthook=None, headers=None):
         headers = {}
     else:
         headers = headers.copy()
-    if "arzon" in url:
-        headers["Referer"] = "https://www.arzon.jp/"
     with contextlib.closing(requests.get(url, headers=headers, proxies=read_proxy(), stream=True)) as r:
         header = r.headers
         with open(filename, "wb") as fp:

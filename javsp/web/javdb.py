@@ -8,7 +8,7 @@ from javsp.avid import guess_av_type
 from javsp.chromium import get_browsers_cookies
 from javsp.config import Cfg, CrawlerID
 from javsp.datatype import GenreMap, MovieInfo
-from javsp.web.base import Request, resp2html
+from javsp.web.base import Request, resp2html, xpath_first
 from javsp.web.exceptions import (
     CrawlerError,
     CredentialError,
@@ -30,6 +30,45 @@ if Cfg().network.proxy_server is not None:
     base_url = permanent_url
 else:
     base_url = str(Cfg().network.proxy_free[CrawlerID.javdb])
+
+_SITE = "javdb"
+
+# XPath选择器集中定义
+XP = {
+    # 搜索结果页
+    "search_title": "//div[@class='video-title']/strong/text()",
+    "search_url": "//a[@class='box']/@href",
+    "search_box": "//a[@class='box']",
+    "search_score": "div[@class='score']/span/span",
+    "search_meta": "div[@class='meta']/text()",
+    # 详情页
+    "detail": "/html/body/section/div/div[@class='video-detail']",
+    "info_panel": "//nav[@class='panel movie-panel-info']",
+    "title": "h2/strong[@class='current-title']/text()",
+    "ori_title_link": "//a[contains(@class, 'meta-link') and not(contains(@style, 'display: none'))]",
+    "ori_title": "h2/span[@class='origin-title']/text()",
+    "cover": "//img[@class='video-cover']/@src",
+    "preview_pics": "//a[@class='tile-item'][@data-fancybox='gallery']/@href",
+    "preview_video": "//video[@id='preview-video']/source/@src",
+    "info_dvdid": "div/span",
+    "info_date": "div/strong[text()='日期:']",
+    "info_duration": "div/strong[text()='時長:']",
+    "info_director": "div/strong[text()='導演:']",
+    "info_producer": "div/strong[text()='片商:']",
+    "info_seller": "div/strong[text()='賣家:']",
+    "info_publisher": "div/strong[text()='發行:']",
+    "info_serial": "div/strong[text()='系列:']",
+    "info_genre": "//strong[text()='類別:']/../span/a",
+    "info_actor": "//strong[text()='演員:']/../span",
+    "score_stars": "//span[@class='score-stars']",
+    "magnet": "//div[@class='magnet-name column is-four-fifths']/a/@href",
+    # CloudFlare检测
+    "cf_code": "//span[@class='code-label']/span",
+    # 用户信息
+    "user_profile": "//div[@class='user-profile']/ul/li[1]/span/following-sibling::text()",
+    "user_name": "//div[@class='user-profile']/ul/li[2]/span/following-sibling::text()",
+    "user_bio": "//div[@class='p-note user-profile-bio mb-3 js-user-profile-bio']",
+}
 
 
 def get_html_wrapper(url):
@@ -75,7 +114,7 @@ def get_html_wrapper(url):
             return html
     elif r.status_code in (403, 503):
         html = resp2html(r)
-        code_tag = html.xpath("//span[@class='code-label']/span")
+        code_tag = html.xpath(XP["cf_code"])
         error_code = code_tag[0].text if code_tag else None
         if error_code:
             if error_code == "1020":
@@ -100,9 +139,9 @@ def get_user_info(site, cookies):
         return
     # 扫描浏览器得到的Cookies对应的临时域名可能会过期，因此需要先判断域名是否仍然指向JavDB的站点
     if "JavDB" in html.text:
-        email = html.xpath("//div[@class='user-profile']/ul/li[1]/span/following-sibling::text()")[0].strip()
-        username = html.xpath("//div[@class='user-profile']/ul/li[2]/span/following-sibling::text()")[0].strip()
-        return email, username
+        email = xpath_first(html, XP["user_profile"], label=_SITE)
+        username = xpath_first(html, XP["user_name"], label=_SITE)
+        return email.strip(), username.strip()
     else:
         logger.debug("JavDB: 域名已过期: " + site)
 
@@ -125,8 +164,8 @@ def parse_data(movie: MovieInfo):
     """
     # JavDB搜索番号时会有多个搜索结果，从中查找匹配番号的那个
     html = get_html_wrapper(f"{base_url}/search?q={movie.dvdid}")
-    ids = list(map(str.lower, html.xpath("//div[@class='video-title']/strong/text()")))
-    movie_urls = html.xpath("//a[@class='box']/@href")
+    ids = list(map(str.lower, html.xpath(XP["search_title"])))
+    movie_urls = html.xpath(XP["search_url"])
     match_count = len([i for i in ids if i == movie.dvdid.lower()])
     if match_count == 0:
         raise MovieNotFoundError(__name__, movie.dvdid, ids)
@@ -137,57 +176,57 @@ def parse_data(movie: MovieInfo):
             html2 = get_html_wrapper(new_url)
         except SitePermissionError, CredentialError:
             # 不开VIP不让看，过分。决定榨出能获得的信息，毕竟有时候只有这里能找到标题和封面
-            box = html.xpath("//a[@class='box']")[index]
+            box = html.xpath(XP["search_box"])[index]
             movie.url = new_url
             movie.title = box.get("title")
             movie.cover = box.xpath("div/img/@src")[0]
-            score_str = box.xpath("div[@class='score']/span/span")[0].tail
+            score_str = xpath_first(box, XP["search_score"], label=_SITE).tail
             score = re.search(r"([\d.]+)分", score_str).group(1)
             movie.score = f"{float(score) * 2:.2f}"
-            movie.publish_date = box.xpath("div[@class='meta']/text()")[0].strip()
+            movie.publish_date = box.xpath(XP["search_meta"])[0].strip()
             return
     else:
         raise MovieDuplicateError(__name__, movie.dvdid, match_count)
 
-    container = html2.xpath("/html/body/section/div/div[@class='video-detail']")[0]
-    info = container.xpath("//nav[@class='panel movie-panel-info']")[0]
-    title = container.xpath("h2/strong[@class='current-title']/text()")[0]
-    show_orig_title = container.xpath("//a[contains(@class, 'meta-link') and not(contains(@style, 'display: none'))]")
+    container = xpath_first(html2, XP["detail"], label=_SITE)
+    info = xpath_first(container, XP["info_panel"], label=_SITE)
+    title = xpath_first(container, XP["title"], label=_SITE)
+    show_orig_title = container.xpath(XP["ori_title_link"])
     if show_orig_title:
-        movie.ori_title = container.xpath("h2/span[@class='origin-title']/text()")[0]
-    cover = container.xpath("//img[@class='video-cover']/@src")[0]
-    preview_pics = container.xpath("//a[@class='tile-item'][@data-fancybox='gallery']/@href")
-    preview_video_tag = container.xpath("//video[@id='preview-video']/source/@src")
+        movie.ori_title = xpath_first(container, XP["ori_title"], label=_SITE)
+    cover = xpath_first(container, XP["cover"], label=_SITE)
+    preview_pics = container.xpath(XP["preview_pics"])
+    preview_video_tag = container.xpath(XP["preview_video"])
     if preview_video_tag:
         preview_video = preview_video_tag[0]
         if preview_video.startswith("//"):
             preview_video = "https:" + preview_video
         movie.preview_video = preview_video
-    dvdid = info.xpath("div/span")[0].text_content()
-    publish_date = info.xpath("div/strong[text()='日期:']")[0].getnext().text
-    duration = info.xpath("div/strong[text()='時長:']")[0].getnext().text.replace("分鍾", "").strip()
-    director_tag = info.xpath("div/strong[text()='導演:']")
-    if director_tag:
-        movie.director = director_tag[0].getnext().text_content().strip()
+    dvdid = xpath_first(info, XP["info_dvdid"], label=_SITE).text_content()
+    publish_date = xpath_first(info, XP["info_date"], label=_SITE).getnext().text
+    duration = xpath_first(info, XP["info_duration"], label=_SITE).getnext().text.replace("分鍾", "").strip()
+    director_tag = xpath_first(info, XP["info_director"], required=False, label=_SITE)
+    if director_tag is not None:
+        movie.director = director_tag.getnext().text_content().strip()
     av_type = guess_av_type(movie.dvdid)
     if av_type != "fc2":
-        producer_tag = info.xpath("div/strong[text()='片商:']")
+        producer_tag = xpath_first(info, XP["info_producer"], required=False, label=_SITE)
     else:
-        producer_tag = info.xpath("div/strong[text()='賣家:']")
-    if producer_tag:
-        movie.producer = producer_tag[0].getnext().text_content().strip()
-    publisher_tag = info.xpath("div/strong[text()='發行:']")
-    if publisher_tag:
-        movie.publisher = publisher_tag[0].getnext().text_content().strip()
-    serial_tag = info.xpath("div/strong[text()='系列:']")
-    if serial_tag:
-        movie.serial = serial_tag[0].getnext().text_content().strip()
-    score_tag = info.xpath("//span[@class='score-stars']")
-    if score_tag:
-        score_str = score_tag[0].tail
+        producer_tag = xpath_first(info, XP["info_seller"], required=False, label=_SITE)
+    if producer_tag is not None:
+        movie.producer = producer_tag.getnext().text_content().strip()
+    publisher_tag = xpath_first(info, XP["info_publisher"], required=False, label=_SITE)
+    if publisher_tag is not None:
+        movie.publisher = publisher_tag.getnext().text_content().strip()
+    serial_tag = xpath_first(info, XP["info_serial"], required=False, label=_SITE)
+    if serial_tag is not None:
+        movie.serial = serial_tag.getnext().text_content().strip()
+    score_tag = xpath_first(info, XP["score_stars"], required=False, label=_SITE)
+    if score_tag is not None:
+        score_str = score_tag.tail
         score = re.search(r"([\d.]+)分", score_str).group(1)
         movie.score = f"{float(score) * 2:.2f}"
-    genre_tags = info.xpath("//strong[text()='類別:']/../span/a")
+    genre_tags = info.xpath(XP["info_genre"])
     genre, genre_id = [], []
     for tag in genre_tags:
         pre_id = tag.get("href").split("/")[-1]
@@ -197,11 +236,11 @@ def parse_data(movie: MovieInfo):
         subsite = pre_id.split("?")[0]
         movie.uncensored = {"uncensored": True, "tags": False}.get(subsite)
     # JavDB目前同时提供男女优信息，根据用来标识性别的符号筛选出女优
-    actors_tag = info.xpath("//strong[text()='演員:']/../span")[0]
+    actors_tag = xpath_first(info, XP["info_actor"], label=_SITE)
     all_actors = actors_tag.xpath("a/text()")
     genders = actors_tag.xpath("strong/text()")
     actress = [i for i in all_actors if genders[all_actors.index(i)] == "♀"]
-    magnet = container.xpath("//div[@class='magnet-name column is-four-fifths']/a/@href")
+    magnet = container.xpath(XP["magnet"])
 
     movie.dvdid = dvdid
     movie.url = new_url.replace(base_url, permanent_url)
@@ -264,7 +303,6 @@ def collect_actress_alias(type=0, use_original=True):
                 count += 1
                 actor.xpath("strong/text()")[0].strip()
                 actor_url = actor.xpath("@href")[0]
-                # actor_url = f"https://javdb.com{actor_url}"  # 构造演员主页的完整URL
 
                 # 进入演员主页，获取更多信息
                 actor_html = get_html_wrapper(actor_url)

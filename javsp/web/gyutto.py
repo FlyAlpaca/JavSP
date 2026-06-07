@@ -4,7 +4,7 @@ import logging
 import time
 
 from javsp.datatype import MovieInfo
-from javsp.web.base import request_get, resp2html
+from javsp.web.base import request_get, resp2html, xpath_first
 from javsp.web.exceptions import CrawlerError, MovieNotFoundError
 
 logger = logging.getLogger(__name__)
@@ -13,19 +13,27 @@ logger = logging.getLogger(__name__)
 base_url = "http://gyutto.com"
 base_encode = "euc-jp"
 
+_SITE = "gyutto"
+
+# XPath选择器集中定义
+XP = {
+    "title": "//h1",
+    "img_container": "//a[@class='highslide']/img",
+    "info_container": "//dl[@class='BasicInfo clearfix']",
+    "plot": "//div[@class='unit_DetailLead']/p/text()",
+}
+
 
 def get_movie_title(html):
-    container = html.xpath("//h1")
-    if len(container) > 0:
-        container = container[0]
-    title = container.text
-
-    return title
+    container = xpath_first(html, XP["title"], required=False, label=_SITE)
+    if container is None:
+        return ""
+    return container.text
 
 
 def get_movie_img(html, index=1):
     images = []
-    container = html.xpath("//a[@class='highslide']/img")
+    container = html.xpath(XP["img_container"])
     if len(container) > 0:
         if index == 0:
             return container[0].get("src")
@@ -49,7 +57,7 @@ def parse_data(movie: MovieInfo):
     if r.status_code == 404:
         raise MovieNotFoundError(__name__, movie.dvdid)
     html = resp2html(r, base_encode)
-    container = html.xpath("//dl[@class='BasicInfo clearfix']")
+    container = html.xpath(XP["info_container"])
 
     for row in container:
         key = row.xpath(".//dt/text()")
@@ -63,7 +71,7 @@ def parse_data(movie: MovieInfo):
             date_time = time.strptime(date_str, "%Y年%m月%d日")
             publish_date = time.strftime("%Y-%m-%d", date_time)
 
-    plot = html.xpath("//div[@class='unit_DetailLead']/p/text()")[0]
+    plot = html.xpath(XP["plot"])[0]
 
     movie.title = get_movie_title(html)
     movie.cover = get_movie_img(html, 0)

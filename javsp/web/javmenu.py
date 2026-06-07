@@ -3,13 +3,30 @@
 import logging
 
 from javsp.datatype import MovieInfo
-from javsp.web.base import Request, resp2html
+from javsp.web.base import Request, resp2html, xpath_first
 from javsp.web.exceptions import CrawlerError, MovieNotFoundError
 
 request = Request()
 
 logger = logging.getLogger(__name__)
-base_url = "https://mrzyx.xyz"
+base_url = "https://javmenu.com/zh"
+
+_SITE = "javmenu"
+
+# XPath选择器集中定义
+XP = {
+    "container": "//div[contains(@class, 'col-md-9')]",
+    "title": ".//h1/strong/text()",
+    "cover_video": ".//div[@id='primary-player']//video",
+    "info": ".//div[@class='card-body']",
+    "date": "div[contains(@class, 'd-flex')]/span[contains(text(), '发佈于:')]",
+    "duration": "div[contains(@class, 'd-flex')]/span[contains(text(), '时长:')]",
+    "producer": "div[@class='maker d-flex']/a/span/text()",
+    "genre": ".//a[@class='genre']",
+    "actress": "div[contains(@class, 'd-flex')][span[contains(text(), '女优:')]]//a/text()",
+    "magnet_table": ".//table[contains(@class, 'magnet')]",
+    "preview_pics": ".//a[@data-fancybox='gallery']/@href",
+}
 
 
 def parse_data(movie: MovieInfo):
@@ -25,43 +42,42 @@ def parse_data(movie: MovieInfo):
         raise MovieNotFoundError(__name__, movie.dvdid)
 
     html = resp2html(r)
-    container = html.xpath("//div[@class='col-md-9 px-0']")[0]
-    title = container.xpath("div[@class='col-12 mb-3']/h1/strong/text()")[0]
-    # 竟然还在标题里插广告，真的疯了。要不是我已经写了抓取器，才懒得维护这个破站
-    title = title.replace("  | JAV目錄大全 | 每日更新", "")
-    title = title.replace(" 免費在線看", "").replace(" 免費AV在線看", "")
-    cover_tag = container.xpath("//div[@class='single-video']")
-    if len(cover_tag) > 0:
-        video_tag = cover_tag[0].find("video")
-        # URL首尾竟然也有空格……
-        movie.cover = video_tag.get("data-poster").strip()
-        # 预览影片改为blob了，无法获取
-        # movie.preview_video = video_tag.find('source').get('src').strip()
+    container = xpath_first(html, XP["container"], label=_SITE)
+    title = container.xpath(XP["title"])[0]
+    title = title.replace("免费AV在线看", "").replace("免費在線看", "").strip()
+    video_tag = xpath_first(container, XP["cover_video"], required=False, label=_SITE)
+    if video_tag is not None:
+        poster = video_tag.get("poster") or video_tag.get("data-poster")
+        if poster:
+            movie.cover = poster.strip()
+    info = xpath_first(container, XP["info"], label=_SITE)
+    date_tag = xpath_first(info, XP["date"], required=False, label=_SITE)
+    if date_tag is not None:
+        publish_date = date_tag.getnext().text.strip()
     else:
-        cover_img_tag = container.xpath("//img[@class='lazy rounded']/@data-src")
-        if cover_img_tag:
-            movie.cover = cover_img_tag[0].strip()
-    info = container.xpath("//div[@class='card-body']")[0]
-    publish_date = info.xpath("div/span[contains(text(), '日期:')]")[0].getnext().text
-    duration = info.xpath("div/span[contains(text(), '時長:')]")[0].getnext().text.replace("分鐘", "")
-    producer = info.xpath("div/span[contains(text(), '製作:')]/following-sibling::a/span/text()")
+        publish_date = None
+    duration_tag = xpath_first(info, XP["duration"], required=False, label=_SITE)
+    if duration_tag is not None:
+        duration = duration_tag.getnext().text.replace("分钟", "").replace("分鐘", "").strip()
+    else:
+        duration = None
+    producer = info.xpath(XP["producer"])
     if producer:
-        movie.producer = producer[0]
-    genre_tags = info.xpath("//a[@class='genre']")
+        movie.producer = producer[0].strip()
+    genre_tags = container.xpath(XP["genre"])
     genre, genre_id = [], []
     for tag in genre_tags:
         items = tag.get("href").split("/")
         pre_id = items[-3] + "/" + items[-1]
         genre.append(tag.text.strip())
         genre_id.append(pre_id)
-        # genre的链接中含有censored字段，但是无法用来判断影片是否有码，因为完全不可靠……
-    actress = info.xpath("div/span[contains(text(), '女優:')]/following-sibling::*/a/text()") or None
-    magnet_table = container.xpath("//table[contains(@class, 'magnet-table')]/tbody")
+    actress = info.xpath(XP["actress"])
+    actress = [a.strip() for a in actress if a.strip()] or None
+    magnet_table = container.xpath(XP["magnet_table"])
     if magnet_table:
-        magnet_links = magnet_table[0].xpath("tr/td/a/@href")
-        # 它的FC2数据是从JavDB抓的，JavDB更换图片服务器后它也跟上了，似乎数据更新频率还可以
+        magnet_links = magnet_table[0].xpath(".//tr/td/a/@href")
         movie.magnet = [i.replace("[javdb.com]", "") for i in magnet_links]
-    preview_pics = container.xpath("//a[@data-fancybox='gallery']/@href")
+    preview_pics = container.xpath(XP["preview_pics"])
 
     if (not movie.cover) and preview_pics:
         movie.cover = preview_pics[0]

@@ -5,7 +5,7 @@ from urllib.parse import urlsplit
 
 from javsp.config import Cfg, CrawlerID
 from javsp.datatype import MovieInfo
-from javsp.web.base import Request, read_proxy, resp2html
+from javsp.web.base import Request, read_proxy, resp2html, xpath_first
 from javsp.web.exceptions import CrawlerError, MovieDuplicateError, MovieNotFoundError
 from javsp.web.proxyfree import get_proxy_free_url
 
@@ -15,6 +15,27 @@ request = Request(use_scraper=True)
 logger = logging.getLogger(__name__)
 permanent_url = "https://www.javlibrary.com"
 base_url = ""
+
+_SITE = "javlib"
+
+# XPath选择器集中定义
+XP = {
+    "search_video": "//div[@class='video'][@id]/a",
+    "search_id": "div[@class='id']/text()",
+    "rightcolumn": "/html/body/div/div[@id='rightcolumn']",
+    "title": "div/h3/a/text()",
+    "cover": "//img[@id='video_jacket_img']/@src",
+    "video_info": "//div[@id='video_info']",
+    "dvdid": "div[@id='video_id']//td[@class='text']/text()",
+    "date": "div[@id='video_date']//td[@class='text']/text()",
+    "duration": "div[@id='video_length']//span[@class='text']/text()",
+    "director": "//span[@class='director']/a/text()",
+    "producer": "//span[@class='maker']/a/text()",
+    "publisher": "//span[@class='label']/a/text()",
+    "score": "//span[@class='score']/text()",
+    "genre": "//span[@class='genre']/a/text()",
+    "actress": "//span[@class='star']/a/text()",
+}
 
 
 def init_network_cfg():
@@ -70,11 +91,11 @@ def parse_data(movie: MovieInfo):
             logger.warning(f"请将配置文件中的JavLib免代理地址更新为: {base_url}")
             return parse_data(movie)
     else:  # 如果有多个搜索结果则不会自动跳转，此时需要程序介入选择搜索结果
-        video_tags = html.xpath("//div[@class='video'][@id]/a")
+        video_tags = html.xpath(XP["search_video"])
         # 通常第一部影片就是我们要找的，但是以免万一还是遍历所有搜索结果
         pre_choose = []
         for tag in video_tags:
-            tag_dvdid = tag.xpath("div[@class='id']/text()")[0]
+            tag_dvdid = tag.xpath(XP["search_id"])[0]
             if tag_dvdid.upper() == movie.dvdid.upper():
                 pre_choose.append(tag)
         pre_choose_urls = [i.get("href") for i in pre_choose]
@@ -100,26 +121,26 @@ def parse_data(movie: MovieInfo):
             raise MovieDuplicateError(__name__, movie.dvdid, match_count, pre_choose_urls)
         # 重新抓取网页
         html = request.get_html(new_url)
-    container = html.xpath("/html/body/div/div[@id='rightcolumn']")[0]
-    title_tag = container.xpath("div/h3/a/text()")
+    container = xpath_first(html, XP["rightcolumn"], label=_SITE)
+    title_tag = container.xpath(XP["title"])
     title = title_tag[0]
-    cover = container.xpath("//img[@id='video_jacket_img']/@src")[0]
-    info = container.xpath("//div[@id='video_info']")[0]
-    dvdid = info.xpath("div[@id='video_id']//td[@class='text']/text()")[0]
-    publish_date = info.xpath("div[@id='video_date']//td[@class='text']/text()")[0]
-    duration = info.xpath("div[@id='video_length']//span[@class='text']/text()")[0]
-    director_tag = info.xpath("//span[@class='director']/a/text()")
+    cover = xpath_first(container, XP["cover"], label=_SITE)
+    info = xpath_first(container, XP["video_info"], label=_SITE)
+    dvdid = xpath_first(info, XP["dvdid"], label=_SITE)
+    publish_date = xpath_first(info, XP["date"], label=_SITE)
+    duration = xpath_first(info, XP["duration"], label=_SITE)
+    director_tag = xpath_first(info, XP["director"], required=False, label=_SITE)
     if director_tag:
-        movie.director = director_tag[0]
-    producer = info.xpath("//span[@class='maker']/a/text()")[0]
-    publisher_tag = info.xpath("//span[@class='label']/a/text()")
+        movie.director = director_tag
+    producer = xpath_first(info, XP["producer"], label=_SITE)
+    publisher_tag = xpath_first(info, XP["publisher"], required=False, label=_SITE)
     if publisher_tag:
-        movie.publisher = publisher_tag[0]
-    score_tag = info.xpath("//span[@class='score']/text()")
+        movie.publisher = publisher_tag
+    score_tag = xpath_first(info, XP["score"], required=False, label=_SITE)
     if score_tag:
-        movie.score = score_tag[0].strip("()")
-    genre = info.xpath("//span[@class='genre']/a/text()")
-    actress = info.xpath("//span[@class='star']/a/text()")
+        movie.score = score_tag.strip("()")
+    genre = info.xpath(XP["genre"])
+    actress = info.xpath(XP["actress"])
 
     movie.dvdid = dvdid
     movie.url = new_url.replace(base_url, permanent_url)

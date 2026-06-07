@@ -3,11 +3,21 @@
 import logging
 
 from javsp.datatype import MovieInfo
-from javsp.web.base import request_get, resp2html
+from javsp.web.base import request_get, resp2html, xpath_first
 from javsp.web.exceptions import CrawlerError, MovieNotFoundError
 
 logger = logging.getLogger(__name__)
 base_url = "https://av-wiki.net"
+
+_SITE = "avwiki"
+
+# XPath选择器集中定义
+XP = {
+    "cover_img": "//header/div/a[@class='image-link-border']/img",
+    "body": "//section[@class='article-body']",
+    "title": "div[@class='blockquote-like']/p/text()",
+    "info_table": "dl[@class='dltable']",
+}
 
 
 def parse_data(movie: MovieInfo):
@@ -21,7 +31,7 @@ def parse_data(movie: MovieInfo):
         raise MovieNotFoundError(__name__, movie.dvdid)
     html = resp2html(resp)
 
-    cover_tag = html.xpath("//header/div/a[@class='image-link-border']/img")
+    cover_tag = html.xpath(XP["cover_img"])
     if cover_tag:
         try:
             srcset = cover_tag[0].get("srcset").split(", ")
@@ -34,12 +44,10 @@ def parse_data(movie: MovieInfo):
             movie.cover = max_pic[0][1]
         except Exception:
             movie.cover = cover_tag[0].get("src")
-    body = html.xpath("//section[@class='article-body']")[0]
-    title = body.xpath("div/p/text()")[0]
+    body = xpath_first(html, XP["body"], label=_SITE)
+    title = body.xpath(XP["title"])[0]
     title = title.replace(f"【{movie.dvdid}】", "")
-    cite_url = body.xpath("div/cite/a/@href")[0]
-    cite_url = cite_url.split("?aff=")[0]
-    info = body.xpath("dl[@class='dltable']")[0]
+    info = xpath_first(body, XP["info_table"], label=_SITE)
     dt_txt_ls, dd_tags = info.xpath("dt/text()"), info.xpath("dd")
     data = {}
     for dt_txt, dd in zip(dt_txt_ls, dd_tags):

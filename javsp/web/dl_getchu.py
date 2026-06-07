@@ -4,7 +4,7 @@ import logging
 import re
 
 from javsp.datatype import MovieInfo
-from javsp.web.base import request_get, resp2html
+from javsp.web.base import request_get, resp2html, xpath_first
 from javsp.web.exceptions import CrawlerError, MovieNotFoundError
 
 logger = logging.getLogger(__name__)
@@ -14,16 +14,27 @@ base_url = "https://dl.getchu.com"
 # dl.getchu用utf-8会乱码
 base_encode = "euc-jp"
 
+_SITE = "dlgetchu"
+
+# XPath选择器集中定义
+XP = {
+    "title_container": "//form[@action='https://dl.getchu.com/cart/']/div/table[2]",
+    "info_container": "//form[@action='https://dl.getchu.com/cart/']/div/table[3]",
+    "cover_img": "//img[contains(@src, '{id}top.jpg')]",
+    "preview_img": "//img[contains(@src, '{id}_')]",
+}
+
+DURATION_PATTERN = re.compile(r"(?:動画)?(\d+)分")
+
 
 def get_movie_title(html):
-    container = html.xpath("//form[@action='https://dl.getchu.com/cart/']/div/table[2]")
-    if len(container) > 0:
-        container = container[0]
+    container = xpath_first(html, XP["title_container"], required=False, label=_SITE)
+    if container is None:
+        return ""
     rows = container.xpath(".//tr")
     title = ""
     for row in rows:
         for cell in row.xpath(".//td/div"):
-            # 获取单元格文本内容
             if cell.text:
                 title = str(cell.text).strip()
     return title
@@ -31,7 +42,7 @@ def get_movie_title(html):
 
 def get_movie_img(html, getchu_id):
     img_src = ""
-    container = html.xpath(f'//img[contains(@src, "{getchu_id}top.jpg")]')
+    container = html.xpath(XP["cover_img"].format(id=getchu_id))
     if len(container) > 0:
         container = container[0]
         img_src = container.get("src")
@@ -40,14 +51,11 @@ def get_movie_img(html, getchu_id):
 
 def get_movie_preview(html, getchu_id):
     preview_pics = []
-    container = html.xpath(f'//img[contains(@src, "{getchu_id}_")]')
+    container = html.xpath(XP["preview_img"].format(id=getchu_id))
     if len(container) > 0:
         for c in container:
             preview_pics.append(c.get("src"))
     return preview_pics
-
-
-DURATION_PATTERN = re.compile(r"(?:動画)?(\d+)分")
 
 
 def parse_data(movie: MovieInfo):
@@ -63,9 +71,9 @@ def parse_data(movie: MovieInfo):
     if r.status_code == 404:
         raise MovieNotFoundError(__name__, movie.dvdid)
     html = resp2html(r, base_encode)
-    container = html.xpath("//form[@action='https://dl.getchu.com/cart/']/div/table[3]")
-    if len(container) > 0:
-        container = container[0]
+    container = xpath_first(html, XP["info_container"], required=False, label=_SITE)
+    if container is None:
+        raise MovieNotFoundError(__name__, movie.dvdid)
     # 将表格提取为键值对
     rows = container.xpath(".//table/tr")
     kv_rows = [i for i in rows if len(i) == 2]
@@ -86,7 +94,6 @@ def parse_data(movie: MovieInfo):
         if key == "サークル":
             movie.producer = value[0]
         elif key == "作者":
-            # 暂时没有在getchu找到多个actress的片子
             movie.actress = [i.strip() for i in value]
         elif key == "画像数&ページ数":
             match = DURATION_PATTERN.search(" ".join(value))

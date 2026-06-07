@@ -4,11 +4,30 @@ import logging
 
 from javsp.config import Cfg, CrawlerID
 from javsp.datatype import MovieInfo
-from javsp.web.base import get_html
+from javsp.web.base import get_html, xpath_first
 from javsp.web.exceptions import CrawlerError, MovieNotFoundError
 
 logger = logging.getLogger(__name__)
 base_url = str(Cfg().network.proxy_free[CrawlerID.avsox])
+
+_SITE = "avsox"
+
+# XPath选择器集中定义
+XP = {
+    "search_id": "//div[@class='photo-info']/span/date[1]/text()",
+    "search_url": "//a[contains(@class, 'movie-box')]/@href",
+    "container": "/html/body/div[@class='container']",
+    "title": "h3/text()",
+    "cover": "//a[@class='bigImage']/@href",
+    "info": "div/div[@class='col-md-3 info']",
+    "dvdid": "p/span[@style]/text()",
+    "date": "p/span[text()='发行时间:']",
+    "duration": "p/span[text()='长度:']",
+    "producer_p": "p[text()='制作商: ']",
+    "serial": "p[text()='系列:']",
+    "genre": "p/span[@class='genre']/a/text()",
+    "actress": "//a[@class='avatar-box']/span/text()",
+}
 
 
 def parse_data(movie: MovieInfo):
@@ -18,8 +37,8 @@ def parse_data(movie: MovieInfo):
     if full_id.startswith("FC2-"):
         full_id = full_id.replace("FC2-", "FC2-PPV-")
     html = get_html(f"{base_url}tw/search/{full_id}")
-    ids = html.xpath("//div[@class='photo-info']/span/date[1]/text()")
-    urls = html.xpath("//a[contains(@class, 'movie-box')]/@href")
+    ids = html.xpath(XP["search_id"])
+    urls = html.xpath(XP["search_url"])
     ids_lower = list(map(str.lower, ids))
     if full_id.lower() in ids_lower:
         url = urls[ids_lower.index(full_id.lower())]
@@ -29,22 +48,22 @@ def parse_data(movie: MovieInfo):
 
     # 提取影片信息
     html = get_html(url)
-    container = html.xpath("/html/body/div[@class='container']")[0]
-    title = container.xpath("h3/text()")[0]
-    cover = container.xpath("//a[@class='bigImage']/@href")[0]
-    info = container.xpath("div/div[@class='col-md-3 info']")[0]
-    dvdid = info.xpath("p/span[@style]/text()")[0]
-    publish_date = info.xpath("p/span[text()='发行时间:']")[0].tail.strip()
-    duration = info.xpath("p/span[text()='长度:']")[0].tail.replace("分钟", "").strip()
+    container = xpath_first(html, XP["container"], label=_SITE)
+    title = xpath_first(container, XP["title"], label=_SITE)
+    cover = xpath_first(container, XP["cover"], label=_SITE)
+    info = xpath_first(container, XP["info"], label=_SITE)
+    dvdid = xpath_first(info, XP["dvdid"], label=_SITE)
+    publish_date = xpath_first(info, XP["date"], label=_SITE).tail.strip()
+    duration = xpath_first(info, XP["duration"], label=_SITE).tail.replace("分钟", "").strip()
     producer, serial = None, None
-    producer_tag = info.xpath("p[text()='制作商: ']")[0].getnext().xpath("a")
+    producer_tag = xpath_first(info, XP["producer_p"], label=_SITE).getnext().xpath("a")
     if producer_tag:
         producer = producer_tag[0].text_content()
-    serial_tag = info.xpath("p[text()='系列:']")
-    if serial_tag:
-        serial = serial_tag[0].getnext().xpath("a/text()")[0]
-    genre = info.xpath("p/span[@class='genre']/a/text()")
-    actress = container.xpath("//a[@class='avatar-box']/span/text()")
+    serial_tag = xpath_first(info, XP["serial"], required=False, label=_SITE)
+    if serial_tag is not None:
+        serial = serial_tag.getnext().xpath("a/text()")[0]
+    genre = info.xpath(XP["genre"])
+    actress = container.xpath(XP["actress"])
 
     movie.dvdid = dvdid.replace("FC2-PPV-", "FC2-")
     movie.url = url

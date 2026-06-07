@@ -4,7 +4,7 @@ import logging
 
 from javsp.config import Cfg, CrawlerID
 from javsp.datatype import GenreMap, MovieInfo
-from javsp.web.base import request_get, resp2html
+from javsp.web.base import request_get, resp2html, xpath_first
 from javsp.web.exceptions import CrawlerError, MovieNotFoundError
 
 logger = logging.getLogger(__name__)
@@ -14,6 +14,27 @@ if Cfg().network.proxy_server is not None:
     base_url = permanent_url
 else:
     base_url = str(Cfg().network.proxy_free[CrawlerID.javbus])
+
+_SITE = "javbus"
+
+# XPath选择器集中定义
+XP = {
+    "container": "//div[@class='container']",
+    "title": "h3/text()",
+    "cover": "//a[@class='bigImage']/img/@src",
+    "preview_pics": "//div[@id='sample-waterfall']/a/@href",
+    "info": "//div[@class='col-md-3 info']",
+    "page_title": "/html/head/title/text()",
+    "dvdid": "p/span[text()='識別碼:']",
+    "date": "p/span[text()='發行日期:']",
+    "duration": "p/span[text()='長度:']",
+    "director": "p/span[text()='導演:']",
+    "producer": "p/span[text()='製作商:']",
+    "publisher": "p/span[text()='發行商:']",
+    "serial": "p/span[text()='系列:']",
+    "genre": "//span[@class='genre']/label/a",
+    "actress": "//a[@class='avatar-box']/div/img",
+}
 
 
 def parse_data(movie: MovieInfo):
@@ -29,34 +50,34 @@ def parse_data(movie: MovieInfo):
     else:
         html = resp2html(resp)
     # 引入登录验证后状态码不再准确，因此还要额外通过检测标题来确认是否发生了404
-    page_title = html.xpath("/html/head/title/text()")
+    page_title = html.xpath(XP["page_title"])
     if page_title and page_title[0].startswith("404 Page Not Found!"):
         raise MovieNotFoundError(__name__, movie.dvdid)
 
-    container = html.xpath("//div[@class='container']")[0]
-    title = container.xpath("h3/text()")[0]
-    cover = container.xpath("//a[@class='bigImage']/img/@src")[0]
-    preview_pics = container.xpath("//div[@id='sample-waterfall']/a/@href")
-    info = container.xpath("//div[@class='col-md-3 info']")[0]
-    dvdid = info.xpath("p/span[text()='識別碼:']")[0].getnext().text
-    publish_date = info.xpath("p/span[text()='發行日期:']")[0].tail.strip()
-    duration = info.xpath("p/span[text()='長度:']")[0].tail.replace("分鐘", "").strip()
-    director_tag = info.xpath("p/span[text()='導演:']")
-    if director_tag:  # xpath没有匹配时将得到空列表
-        movie.director = director_tag[0].getnext().text.strip()
-    producer_tag = info.xpath("p/span[text()='製作商:']")
-    if producer_tag:
-        text = producer_tag[0].getnext().text
+    container = xpath_first(html, XP["container"], label=_SITE)
+    title = xpath_first(container, XP["title"], label=_SITE)
+    cover = xpath_first(container, XP["cover"], label=_SITE)
+    preview_pics = container.xpath(XP["preview_pics"])
+    info = xpath_first(container, XP["info"], label=_SITE)
+    dvdid = xpath_first(info, XP["dvdid"], label=_SITE).getnext().text
+    publish_date = xpath_first(info, XP["date"], label=_SITE).tail.strip()
+    duration = xpath_first(info, XP["duration"], label=_SITE).tail.replace("分鐘", "").strip()
+    director_tag = xpath_first(info, XP["director"], required=False, label=_SITE)
+    if director_tag is not None:
+        movie.director = director_tag.getnext().text.strip()
+    producer_tag = xpath_first(info, XP["producer"], required=False, label=_SITE)
+    if producer_tag is not None:
+        text = producer_tag.getnext().text
         if text:
             movie.producer = text.strip()
-    publisher_tag = info.xpath("p/span[text()='發行商:']")
-    if publisher_tag:
-        movie.publisher = publisher_tag[0].getnext().text.strip()
-    serial_tag = info.xpath("p/span[text()='系列:']")
-    if serial_tag:
-        movie.serial = serial_tag[0].getnext().text
+    publisher_tag = xpath_first(info, XP["publisher"], required=False, label=_SITE)
+    if publisher_tag is not None:
+        movie.publisher = publisher_tag.getnext().text.strip()
+    serial_tag = xpath_first(info, XP["serial"], required=False, label=_SITE)
+    if serial_tag is not None:
+        movie.serial = serial_tag.getnext().text
     # genre, genre_id
-    genre_tags = info.xpath("//span[@class='genre']/label/a")
+    genre_tags = info.xpath(XP["genre"])
     genre, genre_id = [], []
     for tag in genre_tags:
         tag_url = tag.get("href")
@@ -71,7 +92,7 @@ def parse_data(movie: MovieInfo):
     # JavBus的磁力链接是依赖js脚本加载的，无法通过静态网页来解析
     # actress, actress_pics
     actress, actress_pics = [], {}
-    actress_tags = html.xpath("//a[@class='avatar-box']/div/img")
+    actress_tags = html.xpath(XP["actress"])
     for tag in actress_tags:
         name = tag.get("title")
         pic_url = tag.get("src")

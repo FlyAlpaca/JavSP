@@ -5,11 +5,24 @@ import re
 
 from javsp.datatype import MovieInfo
 from javsp.lib import strftime_to_minutes
-from javsp.web.base import get_html, get_list_first, select_fc2_cover
+from javsp.web.base import get_html, get_list_first, select_fc2_cover, xpath_first
 from javsp.web.exceptions import CrawlerError, MovieNotFoundError
 
 logger = logging.getLogger(__name__)
 base_url = "https://njav.tv/ja"
+
+_SITE = "njav"
+
+# XPath选择器集中定义
+XP = {
+    "search_list": "//div[@class='box-item']/div[@class='detail']/a",
+    "container": "//div[@class='container']/div/div[@class='col']",
+    "title": "//div[@class='d-flex justify-content-between align-items-start']/div/h1/text()",
+    "thumb": "//div[@id='player']/@data-poster",
+    "plot": "//div[@class='description']/p/text()",
+    "magnet": "//div[@class='magnet']/a/@href",
+    "detail_item": "//div[@class='detail-item']/div",
+}
 
 
 def search_video(movie: MovieInfo):
@@ -17,7 +30,7 @@ def search_video(movie: MovieInfo):
     # 抓取网页
     url = f"{base_url}/search?keyword={id_uc}"
     html = get_html(url)
-    list = html.xpath("//div[@class='box-item']/div[@class='detail']/a")
+    list = html.xpath(XP["search_list"])
     video_url = None
     for item in list:
         search_title = item.xpath("text()")[0]
@@ -40,16 +53,14 @@ def parse_data(movie: MovieInfo):
     if not url:
         raise MovieNotFoundError(__name__, movie.dvdid)
     html = get_html(url)
-    container = html.xpath("//div[@class='container']/div/div[@class='col']")
-    if len(container) > 0:
-        container = container[0]
-    else:
+    container = xpath_first(html, XP["container"], required=False, label=_SITE)
+    if not container:
         raise MovieNotFoundError(__name__, movie.dvdid)
 
-    title = container.xpath("//div[@class='d-flex justify-content-between align-items-start']/div/h1/text()")[0]
-    thumb_pic = container.xpath("//div[@id='player']/@data-poster")
-    plot = " ".join(container.xpath("//div[@class='description']/p/text()"))
-    magnet = container.xpath("//div[@class='magnet']/a/@href")
+    title = container.xpath(XP["title"])[0]
+    thumb_pic = container.xpath(XP["thumb"])
+    plot = " ".join(container.xpath(XP["plot"]))
+    magnet = container.xpath(XP["magnet"])
     real_id = None
     publish_date = None
     duration_str = None
@@ -62,7 +73,7 @@ def parse_data(movie: MovieInfo):
     genre = []
     actress = []
 
-    for item in container.xpath("//div[@class='detail-item']/div"):
+    for item in container.xpath(XP["detail_item"]):
         item_title = item.xpath("span/text()")[0]
         if "タグ:" in item_title:
             genre += item.xpath("span")[1].xpath("a/text()")
