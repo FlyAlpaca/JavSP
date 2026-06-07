@@ -12,11 +12,11 @@
 
 **i18n**: This project currently supports only Chinese. However, if you're willing, you can [vote here](https://github.com/Yuukiy/JavSP/discussions/157) for the language you'd like to see added
 
+![Python 3.14](https://img.shields.io/badge/python-3.14-green.svg)
+[![稳定版](https://img.shields.io/github/v/release/darksoap/JavSP)](https://github.com/darksoap/JavSP/releases/latest)
+[![尝鲜版 (CI)](https://img.shields.io/github/actions/workflow/status/darksoap/JavSP/cx_freeze.yml?label=%E5%B0%9D%E9%B2%9C%E7%89%88%20%28CI%29&style=for-the-badge)](https://github.com/darksoap/JavSP/actions/workflows/cx_freeze.yml)
 ![License](https://img.shields.io/github/license/Yuukiy/JavSP)
 [![LICENSE](https://img.shields.io/badge/license-Anti%20996-blue.svg)](https://github.com/996icu/996.ICU/blob/master/LICENSE)
-![Python 3.10](https://img.shields.io/badge/python-3.10-green.svg)
-[![Crawlers test](https://img.shields.io/github/actions/workflow/status/Yuukiy/JavSP/test-web-funcs.yml?label=crawlers%20test)](https://github.com/Yuukiy/JavSP/actions/workflows/test-web-funcs.yml)
-[![Latest release](https://img.shields.io/github/v/release/Yuukiy/JavSP)](https://github.com/Yuukiy/JavSP/releases/latest)
 [![996.icu](https://img.shields.io/badge/link-996.icu-red.svg)](https://996.icu)
 
 ## 功能特点
