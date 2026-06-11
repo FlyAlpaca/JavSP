@@ -2,6 +2,25 @@
 
 ## [Unreleased](https://github.com/Yuukiy/JavSP/compare/v1.9.2...HEAD)
 
+### Added
+- 新增 `xpath_first` 工具函数，统一 XPath 空值检查与错误提示
+- 新增 XP 选择器集中定义模式，各站点爬虫统一使用集中维护的 XPath 字典
+- 新增 fanza GraphQL API 解析策略，适配 Next.js 前端渲染改版
+- 刮削失败时报错信息包含番号、失败步骤和具体原因（爬虫名/封面URL/缺失字段/翻译错误）
+- 运行结束后显示统计摘要（总计/成功/失败/失败详情），5秒后自动退出或按任意键立即退出
+
+### Changed
+- 迁移构建系统从 Poetry 到 Hatch + uv，并使用 ruff 格式化代码
+- 更新 README 徽章指向新仓库，Python 版本标识升至 3.14
+
+### Fixed
+- 修复无分隔符番号的前导零处理（如 bbi00177 → BBI-177）
+- 改进跨平台 Cookie 解密：Chrome 127+ ABE 感知、KDE KWallet 支持、临时文件安全
+- 修复 CI 工作流配置错误
+
+### Removed
+- 移除 arzon/arzon_iv 爬虫源
+
 ## [v1.9 - v1.9.2](https://github.com/Yuukiy/JavSP/compare/v1.8...v1.9.2) (2026-05-22 ~ 2026-06-04)
 
 ### Added
@@ -17,15 +36,16 @@
 - 支持Linux和MacOS(x64)二进制 [a754e1c](https://github.com/Yuukiy/JavSP/commit/a754e1ce0f14b0ca9dcc6d43d8e7d322a3da1c43)
 - 添加选项`other.interactive`来表示程序是否应该在interactive模式下运行
 - 智能错误分级报告：单源失败降级为 INFO，仅全部失败时汇总报错，curl_cffi 网络错误不再暴露 traceback
+- replace cloudscraper with curl_cffi 绕过 CloudFlare TLS 指纹检测
 - 支持 Python 3.14
 - 添加本地字幕匹配功能
 - 启用 poetry-dynamic-versioning，版本号由 git tag 驱动
+- 新增 macOS Keychain Cookie 解密支持
 
 ### Changed
 - 使用 Poetry 作为构建系统 [134b279](https://github.com/Yuukiy/JavSP/commit/134b279151aead587db0b12d1a30781f2e1be5b1)
 - 使用 Cx_Freeze 作为打包工具 [134b279](https://github.com/Yuukiy/JavSP/commit/134b279151aead587db0b12d1a30781f2e1be5b1)
 - 将 Groq 翻译接口重构为 OpenAI 通用翻译接口 [#371](https://github.com/Yuukiy/JavSP/pull/371)
-- FIX: 修复图标没有添加到封面上的 bug [#262](https://github.com/Yuukiy/JavSP/issues/176)
 - 用更高清的Logo替换旧的Logo [7b8690f](https://github.com/Yuukiy/JavSP/commit/7b8690fb4af831c0e5ad5ed97cac61d51117c7eb)
 - 重构配置文件，现在使用YAML保存配置文件 [e096d83](https://github.com/Yuukiy/JavSP/commit/e096d8394a4db29bb4a1123b3d05021de201207d)
 
@@ -56,7 +76,7 @@
 - 修复自动更新逻辑：os.rename 添加 fallback、Zip Slip 防护、移除矛盾的 p.wait/p.terminate
 - 修复 cx_freeze 产物版本号并优化 CI 版本策略
 - 修复 Linux/macOS Chrome Cookie 解密：原实现使用错误的 AES-GCM 算法，改为正确的 AES-CBC（v10 固定密码 + v11 keyring）
-- 新增 macOS Keychain Cookie 解密支持
+- FIX: 修复图标没有添加到封面上的 bug [#262](https://github.com/Yuukiy/JavSP/issues/176)
 - 修复 SQL 注入风险：cookie 查询改用参数化查询
 
 ### Removed
@@ -67,7 +87,7 @@
 - Baidu AIP人脸识别，请使用Slimeface替代。
 - airav: 站点已失效，移除爬虫及相关测试数据和工具脚本
 
-## v1.8 - 2024-09-28
+## v1.8 - 2024-09-28（Fork 前历史）
 
 ### Added
 - 新增站点njav, fc2ppvdb
