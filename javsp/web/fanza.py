@@ -336,7 +336,7 @@ def parse_data(movie: MovieInfo):
             _parse_mono_page(movie, html)
             movie.url = d["url"]
             return
-        except CrawlerError, MovieNotFoundError:
+        except (CrawlerError, MovieNotFoundError):
             logger.debug(f"解析{d['url']}失败", exc_info=True)
 
     logger.warning(f"在fanza查找到的cid={movie.cid}的影片页面均解析失败")

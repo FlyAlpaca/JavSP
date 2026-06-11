@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 def translate_movie_info(info: MovieInfo):
     """根据配置翻译影片信息"""
+    errors = []
     # 翻译标题
     if info.title and Cfg().translator.fields.title and info.ori_title is None:
         result = translate(info.title, Cfg().translator.engine, info.actress)
@@ -40,8 +41,7 @@ def translate_movie_info(info: MovieInfo):
             if "trans_break" in result:
                 setattr(info, "title_break", result["trans_break"])
         else:
-            logger.error("翻译标题时出错: " + result["error"])
-            return False
+            errors.append("翻译标题时出错: " + result["error"])
     # 翻译简介
     if info.plot and Cfg().translator.fields.plot:
         result = translate(info.plot, Cfg().translator.engine, info.actress)
@@ -50,8 +50,11 @@ def translate_movie_info(info: MovieInfo):
             setattr(info, "ori_plot", info.plot)
             info.plot = result["trans"]
         else:
-            logger.error("翻译简介时出错: " + result["error"])
-            return False
+            errors.append("翻译简介时出错: " + result["error"])
+    if errors:
+        for e in errors:
+            logger.error(e)
+        raise Exception("; ".join(errors))
     return True
 
 

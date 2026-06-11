@@ -91,38 +91,40 @@ class Request:
 
         return wrapper
 
-    def get(self, url, delay_raise=False):
+    def get(self, url, cookies=None, timeout=None, delay_raise=False):
         r = self.__get(
             url,
             headers=self.headers,
             proxies=self.proxies,
-            cookies=self.cookies,
-            timeout=self.timeout,
+            cookies=cookies if cookies is not None else self.cookies,
+            timeout=timeout if timeout is not None else self.timeout,
         )
         if not delay_raise:
+            if r.status_code == 403 and b">Just a moment...<" in r.content:
+                raise SiteBlocked(f"403 Forbidden: 无法通过CloudFlare检测: {url}")
             r.raise_for_status()
         return r
 
-    def post(self, url, data, delay_raise=False):
+    def post(self, url, data, cookies=None, timeout=None, delay_raise=False):
         r = self.__post(
             url,
             data=data,
             headers=self.headers,
             proxies=self.proxies,
-            cookies=self.cookies,
-            timeout=self.timeout,
+            cookies=cookies if cookies is not None else self.cookies,
+            timeout=timeout if timeout is not None else self.timeout,
         )
         if not delay_raise:
             r.raise_for_status()
         return r
 
-    def head(self, url, delay_raise=True):
+    def head(self, url, cookies=None, timeout=None, delay_raise=True):
         r = self.__head(
             url,
             headers=self.headers,
             proxies=self.proxies,
-            cookies=self.cookies,
-            timeout=self.timeout,
+            cookies=cookies if cookies is not None else self.cookies,
+            timeout=timeout if timeout is not None else self.timeout,
         )
         if not delay_raise:
             r.raise_for_status()
@@ -141,35 +143,14 @@ class DownloadProgressBar(tqdm):
         self.update(b * bsize - self.n)
 
 
-def request_get(url, cookies={}, timeout=None, delay_raise=False):
+def request_get(url, cookies=None, timeout=None, delay_raise=False):
     """获取指定url的原始请求"""
-    if timeout is None:
-        timeout = Cfg().network.timeout.total_seconds()
-
-    r = requests.get(url, headers=headers, proxies=read_proxy(), cookies=cookies, timeout=timeout)
-    if not delay_raise:
-        if r.status_code == 403 and b">Just a moment...<" in r.content:
-            raise SiteBlocked(f"403 Forbidden: 无法通过CloudFlare检测: {url}")
-        else:
-            r.raise_for_status()
-    return r
+    return Request().get(url, cookies=cookies, timeout=timeout, delay_raise=delay_raise)
 
 
-def request_post(url, data, cookies={}, timeout=None, delay_raise=False):
+def request_post(url, data, cookies=None, timeout=None, delay_raise=False):
     """向指定url发送post请求"""
-    if timeout is None:
-        timeout = Cfg().network.timeout.total_seconds()
-    r = requests.post(
-        url,
-        data=data,
-        headers=headers,
-        proxies=read_proxy(),
-        cookies=cookies,
-        timeout=timeout,
-    )
-    if not delay_raise:
-        r.raise_for_status()
-    return r
+    return Request().post(url, data, cookies=cookies, timeout=timeout, delay_raise=delay_raise)
 
 
 def get_resp_text(resp: Response, encoding=None):
