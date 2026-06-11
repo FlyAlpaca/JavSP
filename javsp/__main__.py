@@ -193,7 +193,8 @@ def parallel_crawler(movie: Movie, tqdm_bar=None):
     if not all_info:
         total = len(Cfg().crawler.selection[movie.data_src])
         failed_list = "\n".join(f"  - {name}: {reason}" for name, reason in failed_crawlers)
-        logger.error(f"所有 {total} 个抓取器均失败:\n{failed_list}")
+        movie_id = movie.dvdid or movie.cid or "未知番号"
+        raise Exception(f"所有 {total} 个抓取器均失败 ({movie_id}):\n{failed_list}")
     elif failed_crawlers:
         failed_names = {name for name, _ in failed_crawlers}
         logger.info(f"部分抓取器失败: {', '.join(sorted(failed_names))}")
@@ -294,13 +295,13 @@ def info_summary(movie: Movie, all_info: dict[str, MovieInfo]):
             final_info.actress_pics = {resolve_alias(key): value for key, value in final_info.actress_pics.items()}
 
     # 检查是否所有必需的字段都已经获得了值
-    for attr in Cfg().crawler.required_keys:
-        if not getattr(final_info, attr, None):
-            logger.error(f"所有抓取器均未获取到字段: '{attr}'，抓取失败")
-            return False
+    missing_keys = [attr for attr in Cfg().crawler.required_keys if not getattr(final_info, attr, None)]
+    if missing_keys:
+        logger.error(f"所有抓取器均未获取到字段: {missing_keys}，抓取失败")
+        return missing_keys
     # 必需字段均已获得了值：将最终的数据附加到movie
     movie.info = final_info
-    return True
+    return None
 
 
 def generate_names(movie: Movie):
@@ -482,12 +483,28 @@ def process_poster(movie: Movie):
 def RunNormalMode(all_movies):
     """普通整理模式"""
 
+    # 运行统计
+    stats = {"total": len(all_movies), "success": 0, "failed": 0, "failed_list": []}
+
     def check_step(result, msg="步骤错误"):
         """检查一个整理步骤的结果，并负责更新tqdm的进度"""
         if result:
             inner_bar.update()
         else:
-            raise Exception(msg + "\n")
+            movie_id = movie.dvdid or movie.cid or "未知番号"
+            raise Exception(f"[{movie_id}] {msg}")
+
+    def step_with_id(step_name, fn):
+        """执行步骤，为异常补充番号上下文"""
+        try:
+            fn()
+            inner_bar.update()
+        except Exception as e:
+            movie_id = movie.dvdid or movie.cid or "未知番号"
+            # 如果异常信息已包含番号则不再重复添加
+            if movie_id in str(e):
+                raise
+            raise Exception(f"[{movie_id}] {step_name}: {e}") from e
 
     outer_bar = tqdm(all_movies, desc="整理影片", ascii=True, leave=False)
     total_step = 6
@@ -506,38 +523,48 @@ def RunNormalMode(all_movies):
             # 依次执行各个步骤
             inner_bar.set_description("启动并发任务")
             all_info = parallel_crawler(movie, inner_bar)
-            msg = f"为其配置的{len(Cfg().crawler.selection[movie.data_src])}个抓取器均未获取到影片信息"
-            check_step(all_info, msg)
+            inner_bar.update()
 
             inner_bar.set_description("汇总数据")
-            has_required_keys = info_summary(movie, all_info)
-            check_step(has_required_keys)
+            missing_keys = info_summary(movie, all_info)
+            if missing_keys:
+                movie_id = movie.dvdid or movie.cid or "未知番号"
+                raise Exception(f"[{movie_id}] 汇总数据失败：必需字段缺失 ({missing_keys})")
+            inner_bar.update()
 
             if Cfg().translator.engine:
                 inner_bar.set_description("翻译影片信息")
-                success = translate_movie_info(movie.info)
-                check_step(success)
+                step_with_id("翻译影片信息", lambda: translate_movie_info(movie.info))
 
-            generate_names(movie)
+            inner_bar.set_description("生成文件名")
+            step_with_id("生成文件名", lambda: generate_names(movie))
             check_step(movie.save_dir, "无法按命名规则生成目标文件夹")
-            if not os.path.exists(movie.save_dir):
-                os.makedirs(movie.save_dir)
+            try:
+                if not os.path.exists(movie.save_dir):
+                    os.makedirs(movie.save_dir)
+            except OSError as e:
+                movie_id = movie.dvdid or movie.cid or "未知番号"
+                raise Exception(f"[{movie_id}] 创建目标文件夹失败: {movie.save_dir}: {e}") from e
 
             inner_bar.set_description("下载封面图片")
+            movie_id = movie.dvdid or movie.cid or "未知番号"
             if Cfg().summarizer.cover.highres:
                 cover_dl = download_cover(
                     movie.info.covers,
                     movie.fanart_file,
                     movie.info.big_covers,
-                    movie_id=movie.dvdid or movie.cid or "",
+                    movie_id=movie_id,
                 )
             else:
                 cover_dl = download_cover(
                     movie.info.covers,
                     movie.fanart_file,
-                    movie_id=movie.dvdid or movie.cid or "",
+                    movie_id=movie_id,
                 )
-            check_step(cover_dl, "下载封面图片失败")
+            if not cover_dl or cover_dl[0] is None:
+                reason = cover_dl[1] if cover_dl else "未知原因"
+                raise Exception(f"[{movie_id}] 下载封面图片失败: {reason}")
+            inner_bar.update()
             cover, pic_path = cover_dl
             # 确保实际下载的封面的url与即将写入到movie.info中的一致
             if cover != movie.info.cover:
@@ -548,9 +575,8 @@ def RunNormalMode(all_movies):
                 actual_ext = os.path.splitext(pic_path)[1]
                 movie.poster_file = os.path.splitext(movie.poster_file)[0] + actual_ext
 
-            process_poster(movie)
-
-            check_step(True)
+            inner_bar.set_description("处理封面")
+            step_with_id("处理封面", lambda: process_poster(movie))
 
             if Cfg().summarizer.extra_fanarts.enabled:
                 scrape_interval = Cfg().summarizer.extra_fanarts.scrap_interval.total_seconds()
@@ -578,12 +604,10 @@ def RunNormalMode(all_movies):
                 check_step(True)
 
             inner_bar.set_description("写入NFO")
-            write_nfo(movie.info, movie.nfo_file)
-            check_step(True)
+            step_with_id("写入NFO", lambda: write_nfo(movie.info, movie.nfo_file))
             if Cfg().summarizer.move_files:
                 inner_bar.set_description("移动影片文件")
-                movie.rename_files(Cfg().summarizer.path.hard_link)
-                check_step(True)
+                step_with_id("移动影片文件", lambda: movie.rename_files(Cfg().summarizer.path.hard_link))
                 logger.info(f"整理完成，相关文件已保存到: {movie.save_dir}\n")
             else:
                 logger.info(f"刮削完成，相关文件已保存到: {movie.nfo_file}\n")
@@ -591,20 +615,26 @@ def RunNormalMode(all_movies):
             if movie != all_movies[-1] and Cfg().crawler.sleep_after_scraping > Duration(0):
                 time.sleep(Cfg().crawler.sleep_after_scraping.total_seconds())
             return_movies.append(movie)
+            stats["success"] += 1
         except Exception as e:
+            movie_id = movie.dvdid or movie.cid or "未知番号"
             logger.error(f"整理失败: {e}")
             logger.debug(e, exc_info=True)
+            stats["failed"] += 1
+            stats["failed_list"].append((movie_id, str(e)))
         finally:
             inner_bar.close()
-    return return_movies
+    return return_movies, stats
 
 
 def download_cover(covers, fanart_path, big_covers=[], movie_id=""):
     """下载封面图片"""
+    failed_reasons = []  # 收集失败原因
     # 优先下载高清封面
     for url in big_covers:
         pic_path = get_pic_path(fanart_path, url)
-        for _ in range(Cfg().network.retry):
+        last_err = None
+        for attempt in range(Cfg().network.retry):
             try:
                 info = download(url, pic_path)
                 if valid_pic(pic_path):
@@ -614,26 +644,37 @@ def download_cover(covers, fanart_path, big_covers=[], movie_id=""):
                     speed = get_fmt_size(info["rate"]) + "/s"
                     logger.info(f"已下载高清封面: {width}x{height}, {filesize} [{elapsed}, {speed}]")
                     return (url, pic_path)
-            except requests.exceptions.HTTPError:
+                else:
+                    failed_reasons.append(f"高清封面 {url}: 图片无效或已损坏")
+                    break
+            except requests.exceptions.HTTPError as e:
                 # HTTPError通常说明猜测的高清封面地址实际不可用，因此不再重试
+                failed_reasons.append(f"高清封面 {url}: HTTP {e.response.status_code if e.response else '?'}")
                 break
+            except Exception as e:
+                last_err = e
+        if last_err is not None:
+            failed_reasons.append(f"高清封面 {url}: {type(last_err).__name__}: {last_err} (重试{Cfg().network.retry}次)")
     # 如果没有高清封面或高清封面下载失败
     for url in covers:
         pic_path = get_pic_path(fanart_path, url)
-        for _ in range(Cfg().network.retry):
+        last_err = None
+        for attempt in range(Cfg().network.retry):
             try:
                 download(url, pic_path)
                 if valid_pic(pic_path):
                     logger.debug(f"已下载封面: '{url}'")
                     return (url, pic_path)
                 else:
-                    logger.debug(f"图片无效或已损坏: '{url}'，尝试更换下载地址")
+                    failed_reasons.append(f"封面 {url}: 图片无效或已损坏")
                     break
             except Exception as e:
-                logger.debug(e, exc_info=True)
-    logger.error(f"下载封面图片失败: {movie_id}")
-    logger.debug("big_covers:" + str(big_covers) + ", covers" + str(covers))
-    return None
+                last_err = e
+        if last_err is not None:
+            failed_reasons.append(f"封面 {url}: {type(last_err).__name__}: {last_err} (重试{Cfg().network.retry}次)")
+    reason_detail = "; ".join(failed_reasons) if failed_reasons else "无可用封面地址"
+    logger.error(f"下载封面图片失败: {movie_id}: {reason_detail}")
+    return (None, reason_detail)  # 返回 (None, 原因) 以便调用方获取详情
 
 
 def get_pic_path(fanart_path, url):
@@ -652,6 +693,59 @@ def error_exit(success, err_info):
     if not success:
         logger.error(err_info)
         sys.exit(1)
+
+
+def print_summary(stats):
+    """打印运行统计摘要"""
+    total = stats["total"]
+    success = stats["success"]
+    failed = stats["failed"]
+    width = 50
+    print()
+    print("=" * width)
+    print("  运行统计".center(width))
+    print("-" * width)
+    print(f"  总计: {total}  成功: {success}  失败: {failed}")
+    if stats["failed_list"]:
+        print("-" * width)
+        print("  失败详情:")
+        for movie_id, reason in stats["failed_list"]:
+            # 截断过长的原因
+            short_reason = reason if len(reason) <= 60 else reason[:57] + "..."
+            print(f"    {movie_id}: {short_reason}")
+    print("=" * width)
+    print()
+
+
+def wait_exit(timeout=5):
+    """等待指定秒数后退出，期间按任意键可立即退出"""
+    import select
+
+    print(f"将在 {timeout} 秒后自动退出，按任意键立即退出...")
+    # 非阻塞等待按键，超时后自动退出
+    try:
+        if sys.platform == "win32":
+            import msvcrt
+
+            start = time.monotonic()
+            while time.monotonic() - start < timeout:
+                if msvcrt.kbhit():
+                    msvcrt.getch()
+                    return
+                time.sleep(0.1)
+        else:
+            # Unix: 使用 select 监听 stdin
+            start = time.monotonic()
+            while time.monotonic() - start < timeout:
+                remaining = timeout - (time.monotonic() - start)
+                if remaining <= 0:
+                    break
+                r, _, _ = select.select([sys.stdin], [], [], min(remaining, 0.5))
+                if r:
+                    sys.stdin.read(1)
+                    return
+    except Exception:
+        time.sleep(timeout)
 
 
 def entry():
@@ -691,8 +785,13 @@ def entry():
     logger.info(f"扫描影片文件：共找到 {movie_count} 部影片")
     if Cfg().scanner.manual:
         reviewMovieID(recognized, root)
-    RunNormalMode(recognized + recognize_fail)
+    _, stats = RunNormalMode(recognized + recognize_fail)
 
+    print_summary(stats)
+    if Cfg().other.interactive:
+        wait_exit(5)
+    else:
+        time.sleep(5)
     sys.exit(0)
 
 
