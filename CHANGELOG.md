@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased](https://github.com/Yuukiy/JavSP/compare/v1.9.2...HEAD)
+## [v1.9.3](https://github.com/Yuukiy/JavSP/compare/v1.9.2...v1.9.3) (2026-06-11)
 
 ### Added
 - 新增 `xpath_first` 工具函数，统一 XPath 空值检查与错误提示
