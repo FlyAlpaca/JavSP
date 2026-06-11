@@ -1,11 +1,12 @@
 from PIL import Image
 
-from javsp.cropper.interface import Cropper, DefaultCropper
-from javsp.cropper.utils import get_bound_box_by_face
+from javsp.cropper.interface import DefaultCropper, get_bound_box_by_face
 
 
-class SlimefaceCropper(Cropper):
-    def crop_specific(self, fanart: Image.Image, ratio: float) -> Image.Image:
+class SlimefaceCropper:
+    def crop(self, fanart: Image.Image, ratio: float | None = None) -> Image.Image:
+        if ratio is None:
+            ratio = 1.42
         try:
             # defer the libary import so we don't break if missing dependencies
             from slimeface import detectRGB
@@ -16,7 +17,7 @@ class SlimefaceCropper(Cropper):
             poster_box = get_bound_box_by_face(face, fanart.size, ratio)
             return fanart.crop(poster_box)
         except Exception:
-            return DefaultCropper().crop_specific(fanart, ratio)
+            return DefaultCropper().crop(fanart, ratio)
 
 
 if __name__ == "__main__":
