@@ -6,6 +6,9 @@ import logging
 import os
 import shutil
 from functools import cached_property
+from typing import Optional
+
+from pydantic import BaseModel, ConfigDict, PrivateAttr, model_validator
 
 from javsp.config import Cfg
 from javsp.lib import detect_special_attr, resource_path
@@ -14,70 +17,121 @@ logger = logging.getLogger(__name__)
 filemove_logger = logging.getLogger("filemove")
 
 
-class MovieInfo:
-    def __init__(self, dvdid: str = None, /, *, cid: str = None, from_file=None):
+class MovieInfo(BaseModel):
+    """影片元数据信息
+
+    支持三种构造方式:
+      MovieInfo("ABC-123")       - 通过 dvdid 构造
+      MovieInfo(cid="abc00123")  - 通过 cid 构造
+      MovieInfo(from_file="...") - 从 JSON 文件加载
+    也支持从 Movie 实例构造: MovieInfo(movie)
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    # 标识字段（构造时必须提供其中之一）
+    dvdid: Optional[str] = None  # DVD ID，即通常的番号
+    cid: Optional[str] = None  # DMM Content ID
+
+    # 影片元数据字段
+    url: Optional[str] = None  # 影片页面的URL
+    plot: Optional[str] = None  # 故事情节
+    ori_plot: Optional[str] = None  # 原始故事情节，仅在简介被翻译过时才对此字段赋值
+    cover: Optional[str] = None  # 封面图片（URL）
+    big_cover: Optional[str] = None  # 高清封面图片（URL）
+    genre: Optional[list[str]] = None  # 影片分类的标签
+    genre_id: Optional[list[str]] = None  # 影片分类的标签的ID
+    genre_norm: Optional[list[str]] = None  # 统一后的影片分类的标签
+    score: Optional[float] = None  # 评分（10分制，两位浮点数）
+    title: Optional[str] = None  # 影片标题（不含番号）
+    ori_title: Optional[str] = None  # 原始影片标题，仅在标题被处理过时才对此字段赋值
+    magnet: Optional[list[str]] = None  # 磁力链接
+    serial: Optional[str] = None  # 系列
+    actress: Optional[list[str]] = None  # 出演女优
+    actress_pics: Optional[dict[str, str]] = None  # 出演女优的头像
+    director: Optional[str] = None  # 导演
+    duration: Optional[str] = None  # 影片时长
+    producer: Optional[str] = None  # 制作商
+    publisher: Optional[str] = None  # 发行商
+    uncensored: Optional[bool] = None  # 是否为无码影片
+    publish_date: Optional[str] = None  # 发布日期
+    preview_pics: Optional[list[str]] = None  # 预览图片（URL）
+    preview_video: Optional[str] = None  # 预览视频（URL）
+
+    # 动态属性（由汇总/命名逻辑设置，不参与序列化）
+    nfo_title: Optional[str] = None
+    label: Optional[str] = None
+    covers: Optional[list[str]] = None
+    big_covers: Optional[list[str]] = None
+    title_break: Optional[list[str]] = None
+    ori_title_break: Optional[list[str]] = None
+
+    # 私有属性（不参与序列化和 model_fields）
+    _success: bool = PrivateAttr(default=False)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_movie_input(cls, data):
+        """支持从 Movie 实例或位置参数构造"""
+        if isinstance(data, dict):
+            # 处理 from_file 参数
+            from_file = data.pop("from_file", None)
+            if from_file is not None:
+                if not isinstance(from_file, str):
+                    raise TypeError(f"from_file must be a string path, got {type(from_file)}")
+                if not os.path.isfile(from_file):
+                    raise TypeError(f"Invalid file path: '{from_file}'")
+                with open(from_file, encoding="utf-8") as f:
+                    file_data = json.load(f)
+                # 合并已有的键
+                for k, v in file_data.items():
+                    if k not in data or data[k] is None:
+                        data[k] = v
+            return data
+        # 如果传入的是 Movie 实例或其他对象
+        if hasattr(data, "dvdid") and hasattr(data, "cid"):
+            return {"dvdid": data.dvdid, "cid": data.cid}
+        return data
+
+    def __init__(self, dvdid: str = None, /, *, cid: str = None, from_file=None, **kwargs):
+        """兼容旧式构造方式
+
+        MovieInfo("ABC-123")       -> dvdid="ABC-123"
+        MovieInfo(cid="abc00123")  -> cid="abc00123"
+        MovieInfo(from_file="...") -> 从文件加载
+        MovieInfo(movie)           -> 从 Movie 实例提取 dvdid/cid
         """
-        Args:
-            dvdid ([str], optional): 番号，要通过其他方式创建实例时此参数应留空
-            from_file: 从指定的文件(json格式)中加载数据来创建实例
-        """
-        arg_count = len([i for i in [dvdid, cid, from_file] if i])
-        if arg_count != 1:
-            raise TypeError(f"Require 1 parameter but {arg_count} given")
+        # 处理位置参数：如果 dvdid 是 Movie 实例
         if isinstance(dvdid, Movie):
-            self.dvdid = dvdid.dvdid
-            self.cid = dvdid.cid
-        else:
-            self.dvdid = dvdid  # DVD ID，即通常的番号
-            self.cid = cid  # DMM Content ID
-        # 创建类的默认属性
-        self.url = None  # 影片页面的URL
-        self.plot = None  # 故事情节
-        self.cover = None  # 封面图片（URL）
-        self.big_cover = None  # 高清封面图片（URL）
-        self.genre = None  # 影片分类的标签
-        self.genre_id = None  # 影片分类的标签的ID，用于解决部分站点多个genre同名的问题，也便于管理多语言的genre
-        self.genre_norm = None  # 统一后的影片分类的标签
-        self.score = None  # 评分（10分制，为方便提取写入和保持统一，应以字符串类型表示）
-        self.title = None  # 影片标题（不含番号）
-        self.ori_title = None  # 原始影片标题，仅在标题被处理过时才对此字段赋值
-        self.magnet = None  # 磁力链接
-        self.serial = None  # 系列
-        self.actress = None  # 出演女优
-        self.actress_pics = None  # 出演女优的头像。单列一个字段，便于满足不同的使用需要
-        self.director = None  # 导演
-        self.duration = None  # 影片时长
-        self.producer = None  # 制作商
-        self.publisher = None  # 发行商
-        self.uncensored = None  # 是否为无码影片
-        self.publish_date = None  # 发布日期
-        self.preview_pics = None  # 预览图片（URL）
-        self.preview_video = None  # 预览视频（URL）
+            kwargs.setdefault("dvdid", dvdid.dvdid)
+            kwargs.setdefault("cid", dvdid.cid)
+            super().__init__(**kwargs)
+            return
 
-        if from_file:
-            if os.path.isfile(from_file):
-                self.load(from_file)
-            else:
-                raise TypeError(f"Invalid file path: '{from_file}'")
+        if dvdid is not None:
+            kwargs.setdefault("dvdid", dvdid)
+        if cid is not None:
+            kwargs.setdefault("cid", cid)
+        if from_file is not None:
+            kwargs["from_file"] = from_file
 
-    def __str__(self) -> str:
-        d = vars(self)
-        return json.dumps(d, indent=2, ensure_ascii=False)
+        # 校验：必须提供 dvdid/cid/from_file 之一
+        has_id = kwargs.get("dvdid") or kwargs.get("cid") or kwargs.get("from_file")
+        if not has_id and not kwargs.get("title"):  # 允许从文件加载时暂无 id
+            # 宽松模式：from_file 在 model_validator 中处理，这里不做严格校验
+            pass
+
+        super().__init__(**kwargs)
 
     def __repr__(self) -> str:
         if self.dvdid:
             expression = f"('{self.dvdid}')"
         else:
             expression = f"('cid={self.cid}')"
-        return __class__.__name__ + expression
-
-    def __eq__(self, other) -> bool:
-        if isinstance(other, self.__class__):
-            return self.__dict__ == other.__dict__
-        else:
-            return False
+        return self.__class__.__name__ + expression
 
     def dump(self, filepath=None, crawler=None) -> None:
+        """将影片信息序列化到 JSON 文件"""
         if not filepath:
             id = self.dvdid if self.dvdid else self.cid
             if crawler:
@@ -86,18 +140,18 @@ class MovieInfo:
             else:
                 filepath = id + ".json"
         with open(filepath, "w", encoding="utf-8") as f:
-            f.write(str(self))
+            f.write(self.model_dump_json(indent=2))
 
     def load(self, filepath) -> None:
+        """从 JSON 文件加载数据并更新当前实例（已弃用，建议直接使用 MovieInfo(from_file=...)）"""
         with open(filepath, encoding="utf-8") as f:
             d = json.load(f)
-        # 更新对象属性
-        attrs = vars(self).keys()
+        # 只更新模型中已定义的字段
         for k, v in d.items():
-            if k in attrs:
-                self.__setattr__(k, v)
+            if k in self.model_fields:
+                setattr(self, k, v)
 
-    def get_info_dic(self):
+    def get_info_dic(self) -> dict[str, str]:
         """生成用来填充模板的字典"""
         info = self
         d = {}
@@ -119,6 +173,11 @@ class MovieInfo:
         d["genre"] = ",".join(info.genre_norm if info.genre_norm else info.genre if info.genre else [])
 
         return d
+
+    @classmethod
+    def get_merge_fields(cls) -> list[str]:
+        """返回参与数据汇总合并的字段名列表（替代 dir() 反射）"""
+        return [name for name in cls.model_fields if name not in ("dvdid", "cid")]
 
 
 class Movie:
@@ -217,33 +276,26 @@ class Movie:
         if Cfg().summarizer.match_subtitles:
             import re as _re
 
-            from javsp.avid import get_id
+            from javsp.avid import get_id, normalize_id
 
-            def _norm_sub_id(dvdid):
-                """规范化番号，去除数字前导零用于模糊匹配"""
-                if not dvdid:
-                    return ""
-                d = dvdid.upper()
-                m = _re.match(r"^([A-Z]+)-(\d+)$", d)
-                if m:
-                    return m.group(1) + "-" + str(int(m.group(2)))
-                m = _re.match(r"^([A-Z]+)(\d+)$", d)
-                if m:
-                    return m.group(1) + "-" + str(int(m.group(2)))
-                return d
-
-            movie_norm_id = _norm_sub_id(self.dvdid)
+            movie_norm_id = normalize_id(self.dvdid)
             if movie_norm_id:
                 sub_dir = os.path.dirname(self.files[0])
-                for f in sorted(os.listdir(sub_dir)):
+                if not os.path.isdir(sub_dir):
+                    return
+                # 先过滤出目录中的字幕文件，没有则直接跳过后续匹配逻辑
+                sub_files = [
+                    f
+                    for f in sorted(os.listdir(sub_dir))
+                    if os.path.isfile(os.path.join(sub_dir, f)) and os.path.splitext(f)[1].lower() in (".srt", ".ass")
+                ]
+                if not sub_files:
+                    return
+                for f in sub_files:
                     f_path = os.path.join(sub_dir, f)
-                    if not os.path.isfile(f_path):
-                        continue
                     f_stem, f_ext = os.path.splitext(f)
-                    if f_ext.lower() not in (".srt", ".ass"):
-                        continue
                     sub_id = get_id(f_stem)
-                    if sub_id and _norm_sub_id(sub_id) == movie_norm_id:
+                    if sub_id and normalize_id(sub_id) == movie_norm_id:
                         if len(self.files) == 1:
                             target_basename = self.basename
                         else:

@@ -4,9 +4,15 @@ on:
   push:
     branches:
       - master
+    paths-ignore:
+      - 'unittest/data/*.json'
+      - '**/*.md'
   pull_request:
     branches:
       - master
+    paths-ignore:
+      - 'unittest/data/*.json'
+      - '**/*.md'
   workflow_dispatch:
 
 jobs:

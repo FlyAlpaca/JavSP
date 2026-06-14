@@ -18,7 +18,7 @@ __all__ = [
 ]
 
 
-from javsp.avid import get_cid, get_id, guess_av_type
+from javsp.avid import get_cid, get_id, guess_av_type, normalize_id
 from javsp.config import Cfg
 from javsp.datatype import Movie
 from javsp.lib import re_escape
@@ -245,7 +245,10 @@ SUB_EXTENSIONS = (".srt", ".ass")
 
 
 def find_subtitle_in_dir(folder: str, dvdid: str):
-    """在folder内寻找是否有匹配dvdid的字幕"""
+    """在folder内寻找是否有匹配dvdid的字幕（使用归一化匹配，IPZ-380 == ipz380 == ipz00380）"""
+    norm_target = normalize_id(dvdid)
+    if not norm_target:
+        return None
     folder_data = _sub_files.get(folder)
     if folder_data is None:
         # 此文件夹从未检查过时
@@ -256,9 +259,10 @@ def find_subtitle_in_dir(folder: str, dvdid: str):
                 if ext in SUB_EXTENSIONS:
                     match_id = get_id(basename)
                     if match_id:
-                        folder_data[match_id.upper()] = os.path.join(dirpath, file)
+                        # 使用归一化番号作为 key，支持模糊匹配
+                        folder_data[normalize_id(match_id)] = os.path.join(dirpath, file)
         _sub_files[folder] = folder_data
-    sub_file = folder_data.get(dvdid.upper())
+    sub_file = folder_data.get(norm_target)
     return sub_file
 
 

@@ -3,10 +3,16 @@ name: "CodeQL"
 on:
   push:
     branches: ["master"]
+    paths-ignore:
+      - 'unittest/data/*.json'
+      - '**/*.md'
   pull_request:
     branches: ["master"]
+    paths-ignore:
+      - 'unittest/data/*.json'
+      - '**/*.md'
   schedule:
-    - cron: "0 9 * * 1"
+    - cron: "0 8 15 * *"
 
 jobs:
   analyze:

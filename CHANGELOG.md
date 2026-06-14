@@ -1,5 +1,35 @@
 # Changelog
 
+## [v1.10.0](https://github.com/darksoap/JavSP/compare/v1.9.3...v1.10.0) (2026-06-13)
+
+### Added
+- 重构翻译模块，支持五种引擎类型：
+  - `openai_compatible`：兼容所有 OpenAI API 格式的服务（OpenAI、DeepSeek、Groq、硅基流动等）
+  - `anthropic`：Claude 原生 API，支持自定义 base_url（中转代理）
+  - `google`：Google 翻译非官方 API（免费，大陆需代理）
+  - `bing`：Bing 翻译（免费，无需 API Key，推荐）
+  - `alibaba`：阿里翻译（免费，无需 API Key，大陆可用）
+- 新增 49 个翻译模块测试用例
+- `ori_plot` 作为 MovieInfo 正式字段，替代之前的动态属性
+- 配置文件分离：`config.yml` 改为 `config_default.yml`（随代码分发），用户配置读取 `~/.javsp/config.yml`（只需写需要覆盖的项）
+
+### Changed
+- 翻译默认引擎从 google（大陆不可用）改为 bing
+- 移除 translators 库依赖，改用 requests 直接调用翻译 API，减少 11 个间接依赖
+- Bing 翻译 `source_language=auto` 时不传 `from` 参数，由 API 自动检测源语言
+- 更新 config_default.yml 翻译配置注释，按实测结果分类各翻译服务可用性
+- 优化工作流触发条件，忽略测试数据和文档变更
+- 更新 Issue 反馈链接指向新仓库
+
+### Fixed
+- 修复 API 翻译响应边界处理：空 choices、空 content 等异常情况
+- 修复 wait_exit 在 Windows 上键盘缓冲区残留按键导致立即退出的问题
+- 修复字幕匹配逻辑，先过滤字幕文件再匹配，增加目录存在性检查
+- 禁用清华源，CI 使用 PyPI 官方源（海外服务器访问清华源被拒绝）
+
+### Removed
+- 移除无用的 pywin32-ctypes 依赖
+
 ## [v1.9.3](https://github.com/Yuukiy/JavSP/compare/v1.9.2...v1.9.3) (2026-06-11)
 
 ### Added

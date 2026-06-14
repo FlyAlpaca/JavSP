@@ -1,56 +1,65 @@
-"""网页翻译接口"""
+"""网页翻译接口
 
-# 由于翻译服务不走代理，而且需要自己的错误处理机制，因此不通过base.py来管理网络请求
+各引擎函数成功返回 str，失败抛出 TranslateError。
+translate() 作为统一入口，捕获异常并返回结果。
+"""
+
 import logging
-import random
-import time
-import uuid
-from hashlib import md5
+import re
 
-import requests
-from pydantic_core import Url
-
-__all__ = ["translate", "translate_movie_info"]
-
+__all__ = ["translate", "translate_movie_info", "TranslateError"]
 
 from javsp.config import (
-    BaiduTranslateEngine,
+    AlibabaTranslateEngine,
+    AnthropicEngine,
     BingTranslateEngine,
     Cfg,
-    ClaudeTranslateEngine,
-    OpenAITranslateEngine,
+    GoogleTranslateEngine,
+    OpenAICompatibleEngine,
 )
 from javsp.datatype import MovieInfo
-from javsp.web.base import read_proxy
+from javsp.web.base import Request
 
 logger = logging.getLogger(__name__)
+
+# 模块级 Request 实例，自动继承代理/超时/UA 配置
+_request = Request()
+
+
+class TranslateError(Exception):
+    """翻译失败异常"""
+
+    def __init__(self, engine: str, message: str):
+        self.engine = engine
+        super().__init__(f"{engine}: {message}")
 
 
 def translate_movie_info(info: MovieInfo):
     """根据配置翻译影片信息"""
+    engine = Cfg().translator.engine
+    if engine is None:
+        return True
+
     errors = []
+
     # 翻译标题
     if info.title and Cfg().translator.fields.title and info.ori_title is None:
-        result = translate(info.title, Cfg().translator.engine, info.actress)
-        if "trans" in result:
+        try:
+            translated = translate(info.title, engine)
             info.ori_title = info.title
-            info.title = result["trans"]
-            # 如果有的话，附加断句信息
-            if "orig_break" in result:
-                setattr(info, "ori_title_break", result["orig_break"])
-            if "trans_break" in result:
-                setattr(info, "title_break", result["trans_break"])
-        else:
-            errors.append("翻译标题时出错: " + result["error"])
+            info.title = translated
+        except TranslateError as e:
+            errors.append(f"翻译标题时出错: {e}")
+
     # 翻译简介
     if info.plot and Cfg().translator.fields.plot:
-        result = translate(info.plot, Cfg().translator.engine, info.actress)
-        if "trans" in result:
-            # 只有翻译过plot的影片才可能需要ori_plot属性，因此在运行时动态添加，而不添加到类型定义里
-            setattr(info, "ori_plot", info.plot)
-            info.plot = result["trans"]
-        else:
-            errors.append("翻译简介时出错: " + result["error"])
+        try:
+            translated = translate(info.plot, engine)
+            info.ori_plot = info.plot
+            info.plot = translated
+        except TranslateError as e:
+            errors.append(f"翻译简介时出错: {e}")
+
     if errors:
         for e in errors:
             logger.error(e)
@@ -58,221 +67,228 @@ def translate_movie_info(info: MovieInfo):
     return True
 
 
-def translate(
-    texts,
-    engine: (BaiduTranslateEngine | BingTranslateEngine | ClaudeTranslateEngine | OpenAITranslateEngine | None),
-    actress=[],
-):
-    """
-    翻译入口：对错误进行处理并且统一返回格式
+def translate(texts, engine) -> str:
+    """翻译入口
+
+    Args:
+        texts: 待翻译文本
+        engine: 翻译引擎配置
 
     Returns:
-        dict: 翻译正常: {'trans': '译文', 'orig_break':['原句1', ...], 'trans_break': ['译句1', ...]}
-              仅在能判断分句时有breaks字段，子句末尾可能有换行符\n
-              翻译出错: {'error': 'baidu: 54000: PARAM_FROM_TO_OR_Q_EMPTY'}
+        str: 翻译结果
+
+    Raises:
+        TranslateError: 翻译失败
     """
-    rtn = {}
-    err_msg = ""
-    if engine.name == "baidu":
-        result = baidu_translate(texts, engine.app_id, engine.api_key)
-        if "error_code" not in result:
-            # 百度翻译的结果中的组表示的是按换行符分隔的不同段落，而不是句子
-            paragraphs = [i["dst"] for i in result["trans_result"]]
-            rtn = {"trans": "\n".join(paragraphs)}
-        else:
-            err_msg = "{}: {}: {}".format(engine, result["error_code"], result["error_msg"])
-    elif engine.name == "bing":
-        # 使用动态词典保护原文中的女优名，防止翻译后认不出来
-        for i in actress:
-            texts = texts.replace(i, f'<mstrans:dictionary translation="{i}">{i}</mstrans:dictionary>')
-        result = bing_translate(texts, api_key=engine.api_key)
-        if "error" not in result:
-            sentLen = result[0]["translations"][0]["sentLen"]
-            orig_break, trans_break = [], []
-            # 对原文进行断句
-            remaining = texts
-            for i in sentLen["srcSentLen"]:
-                orig_break.append(remaining[:i])
-                remaining = remaining[i:]
-            # 对译文进行断句
-            remaining = result[0]["translations"][0]["text"]
-            for i in sentLen["transSentLen"]:
-                # Bing会在译文的每个句尾添加一个空格，这并不符合中文的标点习惯，所以去掉这个空格
-                trans_break.append(remaining[:i].rstrip(" "))
-                remaining = remaining[i:]
-            trans = "".join(trans_break)
-            rtn = {"trans": trans, "orig_break": orig_break, "trans_break": trans_break}
-        else:
-            err_msg = "{}: {}: {}".format(engine, result["error"]["code"], result["error"]["message"])
-    elif engine.name == "claude":
-        try:
-            result = claude_translate(texts, engine.api_key)
-            if "error_code" not in result:
-                rtn = {"trans": result}
-            else:
-                err_msg = "{}: {}: {}".format(engine, result["error_code"], result["error_msg"])
-        except Exception as e:
-            err_msg = f"{engine}: {-2}: Exception: {repr(e)}"
-    elif engine.name == "openai":
-        try:
-            result = openai_translate(texts, engine.url, engine.api_key, engine.model)
-            if "error_code" not in result:
-                rtn = {"trans": result}
-            else:
-                err_msg = "{}: {}: {}".format(engine, result["error_code"], result["error_msg"])
-        except Exception as e:
-            err_msg = f"{engine}: {-2}: Exception: {repr(e)}"
-    elif engine.name == "google":
-        try:
-            result = google_trans(texts)
-            # 经测试，翻译成功时会带有'sentences'字段；失败时不带，也没有故障码
-            if "sentences" in result:
-                # Google会对句子分组，完整的译文需要自行拼接
-                orig_break = [i["orig"] for i in result["sentences"]]
-                trans_break = [i["trans"] for i in result["sentences"]]
-                trans = "".join(trans_break)
-                rtn = {
-                    "trans": trans,
-                    "orig_break": orig_break,
-                    "trans_break": trans_break,
-                }
-            else:
-                err_msg = "{}: {}: {}".format(engine, result["error_code"], result["error_msg"])
-        except Exception as e:
-            err_msg = f"{engine}: {-2}: Exception: {repr(e)}"
-    else:
-        return {"trans": texts}
+    if engine is None:
+        return texts
 
-    if rtn == {}:
-        rtn["error"] = err_msg
+    engine_map = {
+        "openai_compatible": openai_compatible_translate,
+        "anthropic": anthropic_translate,
+        "google": google_translate,
+        "bing": bing_translate,
+        "alibaba": alibaba_translate,
+    }
 
-    return rtn
+    handler = engine_map.get(engine.type)
+    if handler is None:
+        return texts
+
+    return handler(texts, engine)
 
 
-def baidu_translate(texts, app_id, api_key, to="zh"):
-    """使用百度翻译文本（默认翻译为简体中文）"""
-    api_url = "https://api.fanyi.baidu.com/api/trans/vip/translate"
-    headers = {"Content-Type": "application/x-www-form-urlencoded"}
-    salt = random.randint(0, 0x7FFFFFFF)
-    sign_input = app_id + texts + str(salt) + api_key
-    sign = md5(sign_input.encode("utf-8")).hexdigest()
-    payload = {
-        "appid": app_id,
+# =============================================================================
+# Google Translate (免费，无需 API Key)
+# =============================================================================
+def google_translate(texts, engine: GoogleTranslateEngine) -> str:
+    """使用 Google Translate 非官方 API 进行翻译"""
+    url = "https://translate.google.com/translate_a/single"
+    params = {
+        "client": "gtx",
+        "sl": engine.source_language,
+        "tl": engine.target_language,
+        "dt": "t",
         "q": texts,
-        "from": "auto",
-        "to": to,
-        "salt": salt,
-        "sign": sign,
     }
-    # 由于百度标准版限制QPS为1，连续翻译标题和简介会超限，因此需要添加延时
-    now = time.perf_counter()
-    last_access = getattr(baidu_translate, "_last_access", -1)
-    wait = 1.0 - (now - last_access)
-    if wait > 0:
-        time.sleep(wait)
-    r = requests.post(api_url, params=payload, headers=headers)
-    result = r.json()
-    baidu_translate._last_access = time.perf_counter()
-    return result
+    try:
+        import urllib.parse
 
-
-def bing_translate(texts, api_key, to="zh-Hans"):
-    """使用Bing翻译文本（默认翻译为简体中文）"""
-    api_url = "https://api.cognitive.microsofttranslator.com/translate"
-    params = {"api-version": "3.0", "to": to, "includeSentenceLength": True}
-    headers = {
-        "Ocp-Apim-Subscription-Key": api_key,
-        "Ocp-Apim-Subscription-Region": "global",
-        "Content-type": "application/json",
-        "X-ClientTraceId": str(uuid.uuid4()),
-    }
-    body = [{"text": texts}]
-    r = requests.post(api_url, params=params, headers=headers, json=body)
-    result = r.json()
-    return result
-
-
-_google_trans_wait = 60
-
-
-def google_trans(texts, to="zh_CN"):
-    """使用Google翻译文本（默认翻译为简体中文）"""
-    # API: https://www.jianshu.com/p/ce35d89c25c3
-    # client参数的选择: https://github.com/lmk123/crx-selection-translate/issues/223#issue-184432017
-    global _google_trans_wait
-    url = f"https://translate.google.com.hk/translate_a/single?client=gtx&dt=t&dj=1&ie=UTF-8&sl=auto&tl={to}&q={texts}"
-    proxies = read_proxy()
-    r = requests.get(url, proxies=proxies)
-    while r.status_code == 429:
-        logger.warning(f"HTTP {r.status_code}: {r.reason}: Google翻译请求超限，将等待{_google_trans_wait}秒后重试")
-        time.sleep(_google_trans_wait)
-        r = requests.get(url, proxies=proxies)
-        if r.status_code == 429:
-            _google_trans_wait += random.randint(60, 90)
-    if r.status_code == 200:
+        full_url = url + "?" + urllib.parse.urlencode(params)
+        r = _request.get(full_url, delay_raise=True)
+        r.raise_for_status()
         result = r.json()
-    else:
-        result = {"error_code": r.status_code, "error_msg": r.reason}
-    time.sleep(4)  # Google翻译的API有QPS限制，因此需要等待一段时间
-    return result
+        translated_parts = []
+        if result and isinstance(result, list):
+            for sentence in result[0]:
+                if isinstance(sentence, list) and sentence:
+                    translated_parts.append(sentence[0])
+        translated = "".join(translated_parts)
+        if translated:
+            return translated
+        raise TranslateError("google", "no translation returned")
+    except TranslateError:
+        raise
+    except Exception as e:
+        raise TranslateError("google", str(e)) from e
 
 
-def claude_translate(texts, api_key, to="zh_CN"):
-    """使用Claude翻译文本（默认翻译为简体中文）"""
-    api_url = "https://api.anthropic.com/v1/messages"
-    headers = {
-        "x-api-key": api_key,
-        "context-type": "application/json",
-        "anthropic-version": "2023-06-01",
-    }
-    data = {
-        "model": "claude-3-haiku-20240307",
-        "system": f"Translate the following Japanese paragraph into {to}, while leaving non-Japanese text, names, or text that does not look like Japanese untranslated. Reply with the translated text only, do not add any text that is not in the original content.",
-        "max_tokens": 1024,
-        "messages": [{"role": "user", "content": texts}],
-    }
-    r = requests.post(api_url, headers=headers, json=data)
-    if r.status_code == 200:
-        result = r.json().get("content", [{}])[0].get("text", "").strip()
-    else:
-        result = {
-            "error_code": r.status_code,
-            "error_msg": r.json().get("error", {}).get("message", r.reason),
+# =============================================================================
+# Bing Translate (免费，无需 API Key)
+# =============================================================================
+def bing_translate(texts, engine: BingTranslateEngine) -> str:
+    """使用 Bing Translator API 进行翻译"""
+    try:
+        # 第一步：获取 token
+        token_url = "https://edge.microsoft.com/translate/auth"
+        token_r = _request.get(token_url, delay_raise=True)
+        token_r.raise_for_status()
+        jwt_token = token_r.text
+
+        # 第二步：调用翻译 API
+        api_url = "https://api.cognitive.microsofttranslator.com/translate"
+        params = {
+            "to": engine.target_language,
+            "api-version": "3.0",
         }
-    return result
+        if engine.source_language and engine.source_language != "auto":
+            params["from"] = engine.source_language
+        saved_headers = _request.headers.copy()
+        _request.headers["Authorization"] = f"Bearer {jwt_token}"
+        _request.headers["Content-Type"] = "application/json"
+        try:
+            import urllib.parse
+
+            full_url = api_url + "?" + urllib.parse.urlencode(params)
+            r = _request.post_json(full_url, json_data=[{"text": texts}], delay_raise=True)
+        finally:
+            _request.headers = saved_headers
+        r.raise_for_status()
+        result = r.json()
+        if result and isinstance(result, list) and len(result) > 0:
+            translated = result[0].get("translations", [{}])[0].get("text", "")
+            if translated:
+                return translated
+        raise TranslateError("bing", "no translation returned")
+    except TranslateError:
+        raise
+    except Exception as e:
+        raise TranslateError("bing", str(e)) from e
 
 
-def openai_translate(texts, url: Url, api_key: str, model: str, to="zh_CN"):
-    """使用 OpenAI 翻译文本（默认翻译为简体中文）"""
-    api_url = str(url)
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}",
+# =============================================================================
+# Alibaba Translate (免费，无需 API Key)
+# =============================================================================
+def alibaba_translate(texts, engine: AlibabaTranslateEngine) -> str:
+    """使用阿里翻译 Web 接口进行翻译"""
+    url = "https://translate.alibaba.com/api/translate/text"
+    params = {
+        "srcLang": engine.source_language,
+        "tgtLang": engine.target_language,
+        "domain": "general",
+        "query": texts,
     }
+    try:
+        import urllib.parse
+
+        full_url = url + "?" + urllib.parse.urlencode(params)
+        saved_headers = _request.headers.copy()
+        _request.headers["Referer"] = "https://translate.alibaba.com/"
+        try:
+            r = _request.get(full_url, delay_raise=True)
+        finally:
+            _request.headers = saved_headers
+        r.raise_for_status()
+        result = r.json()
+        translated = result.get("data", {}).get("translateText", "")
+        if translated:
+            translated = re.sub(r"<[^>]+>", "", translated)
+            return translated
+        raise TranslateError("alibaba", "no translation returned")
+    except TranslateError:
+        raise
+    except Exception as e:
+        raise TranslateError("alibaba", str(e)) from e
+
+
+# =============================================================================
+# OpenAI-compatible
+# =============================================================================
+def openai_compatible_translate(texts, engine: OpenAICompatibleEngine) -> str:
+    api_url = str(engine.base_url)
+    if not api_url.endswith("/chat/completions"):
+        api_url = api_url.rstrip("/") + "/chat/completions"
+
     data = {
+        "model": engine.model,
         "messages": [
-            {
-                "role": "system",
-                "content": f"Translate the following Japanese paragraph into {to}, while leaving non-Japanese text, names, or text that does not look like Japanese untranslated. Reply with the translated text only, do not add any text that is not in the original content.",
-            },
+            {"role": "system", "content": engine.system_prompt},
             {"role": "user", "content": texts},
         ],
-        "model": model,
-        "temperature": 0,
-        "max_tokens": 1024,
+        "temperature": engine.temperature,
+        "max_tokens": engine.max_tokens,
     }
-    r = requests.post(api_url, headers=headers, json=data)
-    if r.status_code == 200:
-        if "error" in r.json():
-            result = {
-                "error_code": r.status_code,
-                "error_msg": r.json().get("error", {}).get("message", ""),
-            }
-        else:
-            result = r.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip()
-    else:
-        result = {
-            "error_code": r.status_code,
-            "error_msg": r.reason,
-        }
-    return result
+
+    try:
+        saved_headers = _request.headers.copy()
+        _request.headers["Content-Type"] = "application/json"
+        _request.headers["Authorization"] = f"Bearer {engine.api_key}"
+        try:
+            r = _request.post_json(api_url, json_data=data, delay_raise=True)
+        finally:
+            _request.headers = saved_headers
+        r.raise_for_status()
+        resp = r.json()
+        if "error" in resp:
+            raise TranslateError("openai_compatible", str(resp["error"]))
+        choices = resp.get("choices", [])
+        if not choices:
+            raise TranslateError("openai_compatible", "empty choices in response")
+        content = choices[0].get("message", {}).get("content", "").strip()
+        if not content:
+            raise TranslateError("openai_compatible", "no translation returned")
+        return content
+    except TranslateError:
+        raise
+    except Exception as e:
+        raise TranslateError("openai_compatible", str(e)) from e
+
+
+# =============================================================================
+# Anthropic
+# =============================================================================
+def anthropic_translate(texts, engine: AnthropicEngine) -> str:
+    api_url = str(engine.base_url)
+    if not api_url.endswith("/messages"):
+        api_url = api_url.rstrip("/") + "/messages"
+
+    data = {
+        "model": engine.model,
+        "max_tokens": engine.max_tokens,
+        "temperature": engine.temperature,
+        "system": engine.system_prompt,
+        "messages": [{"role": "user", "content": texts}],
+    }
+
+    try:
+        saved_headers = _request.headers.copy()
+        _request.headers["x-api-key"] = engine.api_key
+        _request.headers["content-type"] = "application/json"
+        _request.headers["anthropic-version"] = "2023-06-01"
+        try:
+            r = _request.post_json(api_url, json_data=data, delay_raise=True)
+        finally:
+            _request.headers = saved_headers
+        r.raise_for_status()
+        resp = r.json()
+        content_list = resp.get("content", [])
+        if not content_list:
+            raise TranslateError("anthropic", "empty content in response")
+        content = content_list[0].get("text", "").strip()
+        if not content:
+            raise TranslateError("anthropic", "no translation returned")
+        return content
+    except TranslateError:
+        raise
+    except Exception as e:
+        raise TranslateError("anthropic", str(e)) from e
