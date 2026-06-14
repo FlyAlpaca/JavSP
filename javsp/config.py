@@ -196,7 +196,7 @@ class SlimefaceEngine(BaseConfig):
 
 
 class CoverCrop(BaseConfig):
-    engine: SlimefaceEngine | None
+    engine: SlimefaceEngine | None = None
     on_id_pattern: list[str]
 
 
@@ -287,7 +287,7 @@ class TranslateField(BaseConfig):
 
 
 class Translator(BaseConfig):
-    engine: TranslateEngine = Field(..., discriminator="type")
+    engine: TranslateEngine = Field(default=None, discriminator="type")
     fields: TranslateField = TranslateField()
 
 
