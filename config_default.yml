@@ -133,7 +133,7 @@ summarizer:
         - '^HHL'
       # 要使用的图像识别引擎，详细配置见文档 https://github.com/Yuukiy/JavSP/wiki/AI-%7C-%E4%BA%BA%E8%84%B8%E8%AF%86%E5%88%AB
       # NOTE: 此处无法直接对应，请参照注释手动填入
-      engine: null # null表示禁用图像剪裁
+      # 不设置 engine 表示禁用图像剪裁
       ## 使用Slimeface: {{{
       # engine: 
       #   name: slimeface
@@ -151,14 +151,13 @@ summarizer:
 
 ################################
 translator:
-  # 翻译引擎配置，留空(engine: null)表示禁用翻译
+  # 翻译引擎配置，不设置 engine 表示禁用翻译
   # 支持以下引擎类型:
   #   openai_compatible: 任何兼容 OpenAI API 的服务商 (OpenAI, Groq, DeepSeek, 硅基流动等)
   #   anthropic: Claude 原生 API
   #   google: Google 翻译（免费，无需 API Key，大陆需代理）
   #   bing: Bing 翻译（免费，无需 API Key）
   #   alibaba: 阿里翻译（免费，无需 API Key，大陆可用）
-  engine: null
 
   ## 使用 OpenAI-compatible API (支持 OpenAI, DeepSeek, Groq, 硅基流动等): {{{
   # engine:
