@@ -21,7 +21,6 @@ dependencies = [
     "tqdm>=4.67",
     # https://stackoverflow.com/questions/446209/possible-values-from-sys-platform
     "pywin32>=311; sys_platform == 'win32'",
-    "pywin32-ctypes>=0.2.2; sys_platform == 'win32'",
     "cryptography>=48.0",
     "pycryptodome>=3.20.0",
     "lxml[html-clean]>=6.0",
@@ -59,11 +58,12 @@ raw-options = {local_scheme = "no-local-version"}
 [tool.hatch.build.targets.wheel]
 packages = ["javsp"]
 
-# ----- uv 解析配置：默认走清华源 -----
-[[tool.uv.index]]
-name = "mirrors"
-url = "https://pypi.tuna.tsinghua.edu.cn/simple/"
-default = true
+# ----- uv 解析配置 -----
+# 本地开发可取消注释使用清华源加速；CI 环境在海外，默认使用 PyPI
+# [[tool.uv.index]]
+# name = "mirrors"
+# url = "https://pypi.tuna.tsinghua.edu.cn/simple/"
+# default = true
 
 # ----- 工具配置 -----
 [tool.pytest.ini_options]

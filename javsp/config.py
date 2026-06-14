@@ -13,6 +13,9 @@ from javsp.lib import resource_path
 
 _logger = logging.getLogger(__name__)
 
+DEFAULT_CONFIG_FILE = "config_default.yml"
+USER_CONFIG_FILE = "config.yml"
+
 
 class Scanner(BaseConfig):
     ignored_id_pattern: list[str]
@@ -221,46 +224,71 @@ class Summarizer(BaseConfig):
     extra_fanarts: ExtraFanartSummarize
 
 
-class BaiduTranslateEngine(BaseConfig):
-    name: Literal["baidu"]
-    app_id: str
-    api_key: str
-
-
-class BingTranslateEngine(BaseConfig):
-    name: Literal["bing"]
-    api_key: str
-
-
-class ClaudeTranslateEngine(BaseConfig):
-    name: Literal["claude"]
-    api_key: str
-
-
-class OpenAITranslateEngine(BaseConfig):
-    name: Literal["openai"]
-    url: Url
+class OpenAICompatibleEngine(BaseConfig):
+    type: Literal["openai_compatible"]
+    base_url: Url
     api_key: str
     model: str
+    system_prompt: str = (
+        "Translate the following Japanese text into Chinese. "
+        "Keep non-Japanese text, names, and any content that does not look like Japanese unchanged. "
+        "Reply with the translated text only, do not add any text that is not in the original content."
+    )
+    temperature: float = 0.3
+    max_tokens: int = 2048
+
+
+class AnthropicEngine(BaseConfig):
+    type: Literal["anthropic"]
+    base_url: Url = Url("https://api.anthropic.com/v1")
+    api_key: str
+    model: str = "claude-3-5-sonnet-20241022"
+    system_prompt: str = (
+        "Translate the following Japanese text into Chinese. "
+        "Keep non-Japanese text, names, and any content that does not look like Japanese unchanged. "
+        "Reply with the translated text only, do not add any text that is not in the original content."
+    )
+    max_tokens: int = 2048
+    temperature: float = 0.3
 
 
 class GoogleTranslateEngine(BaseConfig):
-    name: Literal["google"]
+    """Google 翻译（免费，无需 API Key）"""
+
+    type: Literal["google"]
+    source_language: str = "auto"
+    target_language: str = "zh-CN"
+
+
+class BingTranslateEngine(BaseConfig):
+    """Bing 翻译（免费，无需 API Key）"""
+
+    type: Literal["bing"]
+    source_language: str = "auto"
+    target_language: str = "zh-Hans"
+
+
+class AlibabaTranslateEngine(BaseConfig):
+    """阿里翻译（免费，无需 API Key）"""
+
+    type: Literal["alibaba"]
+    source_language: str = "auto"
+    target_language: str = "zh"
 
 
 TranslateEngine: TypeAlias = (
-    BaiduTranslateEngine | BingTranslateEngine | ClaudeTranslateEngine | OpenAITranslateEngine | GoogleTranslateEngine | None
+    OpenAICompatibleEngine | AnthropicEngine | GoogleTranslateEngine | BingTranslateEngine | AlibabaTranslateEngine | None
 )
 
 
 class TranslateField(BaseConfig):
-    title: bool
-    plot: bool
+    title: bool = True
+    plot: bool = True
 
 
 class Translator(BaseConfig):
-    engine: TranslateEngine = Field(..., discriminator="name")
-    fields: TranslateField
+    engine: TranslateEngine = Field(..., discriminator="type")
+    fields: TranslateField = TranslateField()
 
 
 class Other(BaseConfig):
@@ -278,9 +306,22 @@ def get_config_source():
     parser.add_argument("-c", "--config", help="使用指定的配置文件")
     args, _ = parser.parse_known_args()
     sources = []
-    if args.config is None:
-        args.config = resource_path("config.yml")
-    sources.append(FileSource(file=args.config))
+
+    # 1. 始终加载默认模板配置
+    default_config = resource_path(DEFAULT_CONFIG_FILE)
+    sources.append(FileSource(file=default_config))
+
+    # 2. 加载用户配置（如果存在），覆盖默认值
+    if args.config is not None:
+        # 用户通过 -c 指定了配置文件
+        sources.append(FileSource(file=args.config))
+    else:
+        # 与默认配置同目录的 config.yml
+        user_config = resource_path(USER_CONFIG_FILE)
+        if Path(user_config).exists():
+            sources.append(FileSource(file=user_config))
+
+    # 3. 环境变量和命令行参数优先级最高
     sources.append(EnvSource(prefix="JAVSP_", allow_all=True))
     sources.append(CLArgSource(prefix="o"))
     return sources

@@ -25,8 +25,7 @@ try:
 except ImportError:
     USE_GUI = False
 
-from javsp.lib import re_escape, resource_path
-from javsp.prompt import prompt
+from javsp.lib import prompt, re_escape, resource_path
 from javsp.web.base import download, request_get
 
 __all__ = [

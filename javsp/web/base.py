@@ -118,6 +118,20 @@ class Request:
             r.raise_for_status()
         return r
 
+    def post_json(self, url, json_data, cookies=None, timeout=None, delay_raise=False):
+        """发送 JSON POST 请求"""
+        r = self.__post(
+            url,
+            json=json_data,
+            headers=self.headers,
+            proxies=self.proxies,
+            cookies=cookies if cookies is not None else self.cookies,
+            timeout=timeout if timeout is not None else self.timeout,
+        )
+        if not delay_raise:
+            r.raise_for_status()
+        return r
+
     def head(self, url, cookies=None, timeout=None, delay_raise=True):
         r = self.__head(
             url,
@@ -248,19 +262,21 @@ def select_fc2_cover(movie):
 def is_connectable(url, timeout=3):
     """测试与指定url的连接"""
     try:
-        requests.get(url, headers=headers, timeout=timeout)
+        req = Request()
+        req.get(url, timeout=timeout)
         return True
-    except requests.exceptions.RequestException as e:
+    except Exception as e:
         logger.debug(f"Not connectable: {url}\n" + repr(e))
         return False
 
 
-def urlretrieve(url, filename=None, reporthook=None, headers=None):
-    if headers is None:
-        headers = {}
-    else:
-        headers = headers.copy()
-    with contextlib.closing(requests.get(url, headers=headers, proxies=read_proxy(), stream=True)) as r:
+def urlretrieve(url, filename=None, reporthook=None, extra_headers=None):
+    """下载文件，走统一的 Request 出口"""
+    req = Request()
+    if extra_headers:
+        for k, v in extra_headers.items():
+            req.headers[k] = v
+    with contextlib.closing(req.get(url, delay_raise=True, timeout=Cfg().network.timeout.total_seconds() * 3)) as r:
         header = r.headers
         with open(filename, "wb") as fp:
             bs = 1024
@@ -295,7 +311,7 @@ def download(url, output_path, desc=None):
     slash_pos = url.find("/", 8)
     referrer["referer"] = url[: slash_pos + 1] if slash_pos != -1 else url + "/"
     with DownloadProgressBar(unit="B", unit_scale=True, miniters=1, desc=desc, leave=False) as t:
-        urlretrieve(url, filename=output_path, reporthook=t.update_to, headers=referrer)
+        urlretrieve(url, filename=output_path, reporthook=t.update_to, extra_headers=referrer)
         info = {k: t.format_dict[k] for k in ("total", "elapsed", "rate")}
         return info
 

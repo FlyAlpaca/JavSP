@@ -151,45 +151,67 @@ summarizer:
 
 ################################
 translator:
-  # 翻译引擎，可选: google, bing, baidu, claude(haiku), openai （Google可以直接免费使用。留空表示禁用翻译功能）
-  # 进阶功能的文档 https://github.com/Yuukiy/JavSP/wiki/Translation-%7C-%E7%BF%BB%E8%AF%91
+  # 翻译引擎配置，留空(engine: null)表示禁用翻译
+  # 支持以下引擎类型:
+  #   openai_compatible: 任何兼容 OpenAI API 的服务商 (OpenAI, Groq, DeepSeek, 硅基流动等)
+  #   anthropic: Claude 原生 API
+  #   google: Google 翻译（免费，无需 API Key，大陆需代理）
+  #   bing: Bing 翻译（免费，无需 API Key）
+  #   alibaba: 阿里翻译（免费，无需 API Key，大陆可用）
   engine: null
-  ## 使用百度翻译: {{{
-  # engine: 
-  #   name: baidu
-  #   # 百度翻译的APP ID和密钥
-  #   app_id: ''
+
+  ## 使用 OpenAI-compatible API (支持 OpenAI, DeepSeek, Groq, 硅基流动等): {{{
+  # engine:
+  #   type: openai_compatible
+  #   base_url: 'https://api.openai.com/v1'
   #   api_key: ''
+  #   model: 'gpt-4o-mini'
+  #   # 可选：自定义系统提示词
+  #   # system_prompt: "将以下日文翻译成中文，保留非日文内容不变。只输出译文，不添加额外内容。"
+  #   temperature: 0.3
+  #   max_tokens: 2048
   ## }}}
-  ## 使用必应翻译: {{{
-  # engine: 
-  #   name: bing
-  #   # 微软必应翻译（Azure 认知服务 → 翻译）的密钥
+
+  ## 使用 Anthropic Claude API: {{{
+  # engine:
+  #   type: anthropic
   #   api_key: ''
+  #   model: 'claude-3-5-sonnet-20241022'
+  #   # 可选：自定义 API 地址（默认为官方地址，可设为中转代理）
+  #   # base_url: 'https://api.anthropic.com/v1'
   ## }}}
-  ## 使用Claude翻译: {{{
-  # engine: 
-  #   name: claude
-  #   # Claude的密钥 (使用haiku模型)
-  #   api_key: ''
+
+  ## 使用 Google 翻译（免费，无需 API Key，大陆需代理）: {{{
+  # engine:
+  #   type: google
+  #   # source_language 设为 auto 时自动检测源语言
+  #   source_language: auto
+  #   target_language: zh-CN
   ## }}}
-  ## 使用OpenAI翻译: {{{
-  # engine: 
-  #   name: openai
-  #   # OpenAI API（默认使用 Groq，可替换成任何兼容 OpenAI 的第三方 API）
-  #   url: 'https://api.groq.com/openai/v1/chat/completions'
-  #   api_key: ''
-  #   # 要使用的模型（默认使用 Groq 的 llama-3.1-70b-versatile 模型，若使用 OpenAI 官方 API 的话一般模型为 gpt-3.5-turbo）
-  #   model: llama-3.1-70b-versatile
+
+  ## 使用 Bing 翻译（免费，无需 API Key，推荐）: {{{
+  # engine:
+  #   type: bing
+  #   # source_language 设为 auto 时自动检测源语言（不传 from 参数）
+  #   source_language: auto
+  #   target_language: zh-Hans
   ## }}}
-  
+
+  ## 使用阿里翻译（免费，无需 API Key，大陆可用）: {{{
+  # engine:
+  #   type: alibaba
+  #   # source_language 设为 auto 时自动检测源语言
+  #   source_language: auto
+  #   target_language: zh
+  ## }}}
+
   # 是否翻译各个字段
-  fields: 
+  fields:
     # 是否翻译标题
     title: true
     # 是否翻译剧情简介
     plot: true
-  
+
 ################################
 other:
   # 是否在stdin/stdout进行交互

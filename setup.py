@@ -9,7 +9,7 @@ proj_root = os.path.abspath(os.path.dirname(__file__))
 
 
 include_files: list[tuple[str, str]] = [
-    (f"{proj_root}/config.yml", "config.yml"),
+    (f"{proj_root}/config_default.yml", "config_default.yml"),
     (f"{proj_root}/data", "data"),
     (f"{proj_root}/image", "image"),
 ]
@@ -28,7 +28,7 @@ for file in os.listdir("javsp/web"):
         includes.append("javsp.web." + name)
 
 packages = [
-    "pendulum"  # pydantic_extra_types depends on pendulum
+    "pendulum",  # pydantic_extra_types depends on pendulum
 ]
 
 build_exe = {

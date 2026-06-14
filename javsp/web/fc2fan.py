@@ -6,11 +6,10 @@ import os
 import re
 
 import lxml.html
-import requests
 
 from javsp.config import Cfg
 from javsp.datatype import MovieInfo
-from javsp.web.base import read_proxy, resp2html
+from javsp.web.base import Request, resp2html
 from javsp.web.exceptions import CrawlerError, MovieNotFoundError, WebsiteError
 
 logger = logging.getLogger(__name__)
@@ -27,7 +26,8 @@ def parse_data(movie: MovieInfo):
         html = lxml.html.parse(html_file)
     else:
         url = f"https://fc2club.top/html/{movie.dvdid}.html"
-        r = requests.get(url, proxies=read_proxy())
+        req = Request()
+        r = req.get(url, delay_raise=True)
         if r.status_code == 404:
             raise MovieNotFoundError(__name__, movie.dvdid)
         elif r.text == "":

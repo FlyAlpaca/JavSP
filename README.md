@@ -42,17 +42,15 @@
 
 功能修改日志：[ChangeLog](./CHANGELOG.md)
 
-如果你之前使用的是config.ini，请重新配置JavSP，或者通过[这个脚本](./tools/config_migration.py)来将其迁移到最新的config.yml。
-
 ## [安装并运行JavSP](https://github.com/Yuukiy/JavSP/wiki/%E5%AE%89%E8%A3%85%E5%B9%B6%E8%BF%90%E8%A1%8CJavSP)
 
 ## 使用
 
 软件开箱即用。如果想让软件更符合你的使用需求，也许你需要更改配置文件:
 
-> 以任意文本编辑器打开 `config.yml`，根据各个配置项的说明选择你需要的配置即可。
+> 在程序同目录下创建 `config.yml`，只需写需要覆盖的配置项即可（未配置的项使用 `config_default.yml` 中的默认值）。
 
-此外软件也支持从命令行指定运行参数（命令行参数的优先级高于配置文件）。运行 `JavSP -h` 查看支持的参数列表
+此外软件也支持通过 `-c` 参数指定配置文件路径，以及从环境变量（`JAVSP_` 前缀）和命令行参数覆盖配置。运行 `JavSP -h` 查看支持的参数列表
 
 更详细的使用说明请前往 [JavSP Wiki](https://github.com/Yuukiy/JavSP/wiki) 查看
 
@@ -60,7 +58,7 @@
 
 ## 问题反馈
 
-如果使用中遇到了 Bug，请[前往 Issue 区反馈](https://github.com/Yuukiy/JavSP/issues)（提问前请先搜索是否已有类似问题）
+如果使用中遇到了 Bug，请[前往 Issue 区反馈](https://github.com/darksoap/JavSP/issues)（提问前请先搜索是否已有类似问题）
 
 ## 参与贡献
 
