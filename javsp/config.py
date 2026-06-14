@@ -322,7 +322,7 @@ def get_config_source():
             sources.append(FileSource(file=user_config))
 
     # 3. 环境变量和命令行参数优先级最高
-    sources.append(EnvSource(prefix="JAVSP_", allow_all=True))
+    sources.append(EnvSource(prefix="JAVSP_", allow_all=True, nested_separator="__"))
     sources.append(CLArgSource(prefix="o"))
     return sources
 
