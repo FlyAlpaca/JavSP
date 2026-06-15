@@ -5,10 +5,7 @@
 import os
 import sys
 
-import pretty_errors
 from tqdm import tqdm
-
-pretty_errors.configure(display_link=True)
 
 
 file_dir = os.path.dirname(__file__)

@@ -184,9 +184,7 @@ def parse_data(movie: MovieInfo):
 
 
 if __name__ == "__main__":
-    import pretty_errors
-
-    pretty_errors.configure(display_link=True)
+    
     base_url = permanent_url
     movie = MovieInfo("IPX-177")
     try:

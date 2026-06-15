@@ -327,7 +327,4 @@ def download(url, output_path, desc=None):
 
 
 if __name__ == "__main__":
-    import pretty_errors
-
-    pretty_errors.configure(display_link=True)
     download("https://www.javbus.com/pics/cover/6n54_b.jpg", "cover.jpg")

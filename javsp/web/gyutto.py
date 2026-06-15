@@ -87,9 +87,7 @@ def parse_data(movie: MovieInfo):
 
 
 if __name__ == "__main__":
-    import pretty_errors
-
-    pretty_errors.configure(display_link=True)
+    
     logger.root.handlers[1].level = logging.DEBUG
     movie = MovieInfo("gyutto-266923")
 

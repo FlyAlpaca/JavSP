@@ -14,11 +14,9 @@ if sys.stderr and hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8")
 
 import colorama
-import pretty_errors
 from colorama import Fore, Style
 from tqdm import tqdm
 
-pretty_errors.configure(display_link=True)
 
 from javsp.print import TqdmOut
 

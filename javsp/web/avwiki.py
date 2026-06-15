@@ -75,9 +75,7 @@ def parse_data(movie: MovieInfo):
 
 
 if __name__ == "__main__":
-    import pretty_errors
-
-    pretty_errors.configure(display_link=True)
+    
 
     movie = MovieInfo("259LUXU-593")
     try:
