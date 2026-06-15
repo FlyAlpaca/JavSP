@@ -10,6 +10,7 @@ proj_root = os.path.abspath(os.path.dirname(__file__))
 
 include_files: list[tuple[str, str]] = [
     (f"{proj_root}/config_default.yml", "config_default.yml"),
+    (f"{proj_root}/config.yml", "config.yml"),
     (f"{proj_root}/data", "data"),
     (f"{proj_root}/image", "image"),
 ]

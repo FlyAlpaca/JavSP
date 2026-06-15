@@ -1,4 +1,17 @@
-# vim:foldmethod=marker 
+# vim:foldmethod=marker
+# ============================================================================
+# 这是默认配置文件，请勿直接修改！
+#
+# 自定义配置请编辑同目录下的 config.yml，只需写你要修改的部分即可，
+# 未写的字段会自动使用本文件的默认值。
+# 例如，只修改代理地址和输入目录：
+#   network:
+#     proxy_server: 'http://127.0.0.1:7890'
+#   scanner:
+#     input_directory: '/home/user/Videos'
+#
+# 首次使用？请参考同目录下的 config.yml 示例文件。
+# ============================================================================
 ################################
 scanner:
   # 推测番号前忽略文件名中的特定字符串（忽略大小写，以英文分号;分隔）
@@ -31,7 +44,7 @@ network:
     avsox: 'https://avsox.click'
     javbus: 'https://www.seedmm.help'
     javdb: 'https://javdb368.com'
-    javlib: 'https://www.y78k.com'
+    javlib: 'https://www.c97k.com'
   # 网络问题导致抓取数据失败时的重试次数，通常3次就差不多了
   retry: 3
   # https://en.wikipedia.org/wiki/ISO_8601#Durations

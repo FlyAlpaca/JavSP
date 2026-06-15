@@ -4,6 +4,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Literal, TypeAlias
 
+import yaml
 from confz import BaseConfig, CLArgSource, EnvSource, FileSource
 from pydantic import ByteSize, Field, NonNegativeInt, PositiveInt, model_validator
 from pydantic_core import Url
@@ -297,6 +298,15 @@ class Other(BaseConfig):
     auto_update: bool
 
 
+def _is_non_empty_yaml(file_path: str) -> bool:
+    """检查 YAML 文件是否包含有效配置（非纯注释）"""
+    try:
+        with open(file_path, encoding="utf-8") as f:
+            return yaml.safe_load(f) is not None
+    except Exception:
+        return False
+
+
 def get_config_source():
     parser = ArgumentParser(
         prog="JavSP",
@@ -311,14 +321,14 @@ def get_config_source():
     default_config = resource_path(DEFAULT_CONFIG_FILE)
     sources.append(FileSource(file=default_config))
 
-    # 2. 加载用户配置（如果存在），覆盖默认值
+    # 2. 加载用户配置（如果存在且非空），覆盖默认值
     if args.config is not None:
         # 用户通过 -c 指定了配置文件
         sources.append(FileSource(file=args.config))
     else:
         # 与默认配置同目录的 config.yml
         user_config = resource_path(USER_CONFIG_FILE)
-        if Path(user_config).exists():
+        if Path(user_config).exists() and _is_non_empty_yaml(user_config):
             sources.append(FileSource(file=user_config))
 
     # 3. 环境变量和命令行参数优先级最高
