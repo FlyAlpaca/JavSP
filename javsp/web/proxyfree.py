@@ -53,11 +53,22 @@ def _get_javbus_urls() -> list:
 
 def _get_javlib_urls() -> list:
     html = get_html("https://github.com/javlibcom")
-    text = html.xpath("//div[@class='p-note user-profile-bio mb-3 js-user-profile-bio f4']")[0].text_content()
-    match = re.search(r"[\w\.]+", text, re.A)
+    # GitHub bio 的 class 可能变化，优先用 data-bio-text 属性，回退到 p-note class
+    bio_el = html.xpath("//div[@data-bio-text]")
+    if not bio_el:
+        bio_el = html.xpath("//div[contains(@class, 'p-note')]")
+    if not bio_el:
+        return []
+    text = bio_el[0].text_content()
+    # bio 格式如 "== c97k ==" 或 "== www.c97k.com =="
+    match = re.search(r"([\w][-\w\.]*\w)", text, re.A)
     if match:
-        domain = f"https://www.{match.group(0)}.com"
-        return [domain]
+        domain = match.group(1)
+        # 如果不含点号，视为裸域名，补全为 www.xxx.com
+        if "." not in domain:
+            domain = f"www.{domain}.com"
+        return [f"https://{domain}"]
+    return []
 
 
 def _get_javdb_urls() -> list:

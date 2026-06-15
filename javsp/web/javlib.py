@@ -5,8 +5,8 @@ from urllib.parse import urlsplit
 
 from javsp.config import Cfg, CrawlerID
 from javsp.datatype import MovieInfo
-from javsp.web.base import Request, read_proxy, resp2html, xpath_first
-from javsp.web.exceptions import CrawlerError, MovieDuplicateError, MovieNotFoundError
+from javsp.web.base import Request, is_cloudflare_blocked, read_proxy, resp2html, xpath_first
+from javsp.web.exceptions import CrawlerError, MovieDuplicateError, MovieNotFoundError, SiteBlocked
 from javsp.web.proxyfree import get_proxy_free_url
 
 # 初始化Request实例
@@ -41,33 +41,54 @@ XP = {
 def init_network_cfg():
     """设置合适的代理模式和base_url
 
-    优先级：免代理地址（无代理访问）> 永久域名（代理访问）
+    优先级：免代理地址（无代理搜索）> 代理访问永久域名
     """
-    request.timeout = 5
+    request.timeout = Cfg().network.timeout.total_seconds()
     # 1. 优先尝试免代理地址（config配置 + 自动获取）
     proxy_free_url = get_proxy_free_url("javlib", str(Cfg().network.proxy_free[CrawlerID.javlib]))
     if proxy_free_url:
         request.proxies = {}
-        try:
-            resp = request.get(proxy_free_url, delay_raise=True)
-            if resp.status_code == 200:
-                request.timeout = Cfg().network.timeout.total_seconds()
-                return proxy_free_url
-        except Exception as e:
-            logger.debug(f"免代理地址不可用: {proxy_free_url}: {e}")
+        return proxy_free_url
     # 2. 回退到代理访问永久域名
     if Cfg().network.proxy_server:
         request.proxies = read_proxy()
-        try:
-            resp = request.get(permanent_url, delay_raise=True)
-            if resp.status_code == 200:
-                request.timeout = Cfg().network.timeout.total_seconds()
-                return permanent_url
-        except Exception as e:
-            logger.debug(f"代理访问永久域名失败: {e}")
-    logger.warning("无法绕开JavLib的反爬机制")
-    request.timeout = Cfg().network.timeout.total_seconds()
+        return permanent_url
+    # 3. 无代理也无配置，直接尝试永久域名
+    request.proxies = {}
     return permanent_url
+
+
+def _try_search(dvdid: str):
+    """尝试搜索，返回 (resp, html) 或在所有地址被拦截时抛出异常"""
+    global base_url
+    # 候选地址列表：免代理地址 > 代理访问永久域名
+    candidates = []
+    proxy_free_url = get_proxy_free_url("javlib", str(Cfg().network.proxy_free[CrawlerID.javlib]))
+    if proxy_free_url:
+        candidates.append((proxy_free_url, {}))
+    if Cfg().network.proxy_server:
+        candidates.append((permanent_url, read_proxy()))
+    candidates.append((permanent_url, {}))
+
+    for url, proxies in candidates:
+        base_url = url
+        request.proxies = proxies
+        search_url = f"{url}/cn/vl_searchbyid.php?keyword={dvdid}"
+        try:
+            resp = request.get(search_url, delay_raise=True)
+            if is_cloudflare_blocked(resp):
+                logger.debug(f"JavLib地址被拦截: {url}")
+                continue
+            html = resp2html(resp)
+            # 验证页面包含 JavLib 特征内容
+            if html.xpath("//div[@id='rightcolumn']") or html.xpath("//div[@id='video_title']"):
+                return resp, html
+            logger.debug(f"JavLib地址返回无效内容: {url}")
+        except Exception as e:
+            logger.debug(f"JavLib地址访问失败: {url}: {e}")
+            continue
+
+    raise SiteBlocked(f"JavLib所有地址均不可用，无法搜索: {dvdid}")
 
 
 # TODO: 发现JavLibrary支持使用cid搜索，会直接跳转到对应的影片页面，也许可以利用这个功能来做cid到dvdid的转换
@@ -79,10 +100,17 @@ def parse_data(movie: MovieInfo):
         logger.debug(f"JavLib网络配置: {base_url}, proxy={request.proxies}")
     url = new_url = f"{base_url}/cn/vl_searchbyid.php?keyword={movie.dvdid}"
     resp = request.get(url)
-    html = resp2html(resp)
-    if resp.history:
+    # 如果被反爬拦截，自动回退尝试其他地址
+    if is_cloudflare_blocked(resp):
+        logger.debug(f"JavLib当前地址被拦截: {base_url}，尝试其他地址")
+        resp, html = _try_search(movie.dvdid)
+    else:
+        html = resp2html(resp)
+    # 判断是否发生了重定向：resp.history 非空（标准行为）或 resp.url 与请求 URL 不同（部分镜像的行为）
+    is_redirected = bool(resp.history) or resp.url != url
+    if is_redirected:
         if urlsplit(resp.url).netloc == urlsplit(base_url).netloc:
-            # 出现301重定向通常且新老地址netloc相同时，说明搜索到了影片且只有一个结果
+            # 重定向到同域名，说明搜索到了影片且只有一个结果
             new_url = resp.url
         else:
             # 重定向到了不同的netloc时，新地址并不是影片地址。这种情况下新地址中丢失了path字段，

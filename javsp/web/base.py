@@ -25,6 +25,7 @@ __all__ = [
     "post_html",
     "request_get",
     "resp2html",
+    "is_cloudflare_blocked",
     "is_connectable",
     "download",
     "get_resp_text",
@@ -42,6 +43,15 @@ headers = {
 logger = logging.getLogger(__name__)
 # 删除js脚本相关的tag，避免网页检测到没有js运行环境时强行跳转，影响调试
 cleaner = Cleaner(kill_tags=["script", "noscript"])
+
+
+def is_cloudflare_blocked(resp) -> bool:
+    """检查响应是否被CloudFlare反爬拦截"""
+    if resp.status_code == 403:
+        return True
+    if b"Just a moment" in resp.content:
+        return True
+    return False
 
 
 def read_proxy():
@@ -100,7 +110,7 @@ class Request:
             timeout=timeout if timeout is not None else self.timeout,
         )
         if not delay_raise:
-            if r.status_code == 403 and b">Just a moment...<" in r.content:
+            if is_cloudflare_blocked(r):
                 raise SiteBlocked(f"403 Forbidden: 无法通过CloudFlare检测: {url}")
             r.raise_for_status()
         return r
