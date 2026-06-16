@@ -12,6 +12,10 @@ on:
     - cron: "9 9 * * 3,6,0"
   workflow_dispatch:
 
+concurrency:
+  group: test-web-funcs-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test-web-crawlers:
     name: Test web crawlers

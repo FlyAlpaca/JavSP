@@ -15,6 +15,10 @@ on:
       - '**/*.md'
   workflow_dispatch:
 
+concurrency:
+  group: cx-freeze-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     name: Build binaries on ${{ matrix.os }}
