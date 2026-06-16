@@ -15,6 +15,10 @@ on:
       - '**/*.md'
   workflow_dispatch:
 
+concurrency:
+  group: test-basic-funcs-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test-basic-funcs:
     name: Test basic funcs on ${{ matrix.os }}
