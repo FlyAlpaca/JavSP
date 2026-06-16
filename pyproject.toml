@@ -10,7 +10,7 @@ license = "GPL-3.0-only"
 authors = [
     {name = "Yuukiy", email = "76897913+Yuukiy@users.noreply.github.com"},
 ]
-requires-python = ">=3.10,<3.16"
+requires-python = ">=3.11,<3.16"
 dynamic = ["version"]
 dependencies = [
     "curl_cffi>=0.15",
@@ -70,7 +70,7 @@ pythonpath = ["."]
 testpaths = ["unittest"]
 
 [tool.ruff]
-target-version = "py314"
+target-version = "py311"
 line-length = 130
 
 [tool.ruff.lint]

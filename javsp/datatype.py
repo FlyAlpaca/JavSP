@@ -4,12 +4,13 @@ import csv
 import json
 import logging
 import os
+import re
 import shutil
 from functools import cached_property
-from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, PrivateAttr, model_validator
 
+from javsp.avid import get_id, normalize_id
 from javsp.config import Cfg
 from javsp.lib import detect_special_attr, resource_path
 
@@ -30,41 +31,41 @@ class MovieInfo(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     # 标识字段（构造时必须提供其中之一）
-    dvdid: Optional[str] = None  # DVD ID，即通常的番号
-    cid: Optional[str] = None  # DMM Content ID
+    dvdid: str | None = None  # DVD ID，即通常的番号
+    cid: str | None = None  # DMM Content ID
 
     # 影片元数据字段
-    url: Optional[str] = None  # 影片页面的URL
-    plot: Optional[str] = None  # 故事情节
-    ori_plot: Optional[str] = None  # 原始故事情节，仅在简介被翻译过时才对此字段赋值
-    cover: Optional[str] = None  # 封面图片（URL）
-    big_cover: Optional[str] = None  # 高清封面图片（URL）
-    genre: Optional[list[str]] = None  # 影片分类的标签
-    genre_id: Optional[list[str]] = None  # 影片分类的标签的ID
-    genre_norm: Optional[list[str]] = None  # 统一后的影片分类的标签
-    score: Optional[float] = None  # 评分（10分制，两位浮点数）
-    title: Optional[str] = None  # 影片标题（不含番号）
-    ori_title: Optional[str] = None  # 原始影片标题，仅在标题被处理过时才对此字段赋值
-    magnet: Optional[list[str]] = None  # 磁力链接
-    serial: Optional[str] = None  # 系列
-    actress: Optional[list[str]] = None  # 出演女优
-    actress_pics: Optional[dict[str, str]] = None  # 出演女优的头像
-    director: Optional[str] = None  # 导演
-    duration: Optional[str] = None  # 影片时长
-    producer: Optional[str] = None  # 制作商
-    publisher: Optional[str] = None  # 发行商
-    uncensored: Optional[bool] = None  # 是否为无码影片
-    publish_date: Optional[str] = None  # 发布日期
-    preview_pics: Optional[list[str]] = None  # 预览图片（URL）
-    preview_video: Optional[str] = None  # 预览视频（URL）
+    url: str | None = None  # 影片页面的URL
+    plot: str | None = None  # 故事情节
+    ori_plot: str | None = None  # 原始故事情节，仅在简介被翻译过时才对此字段赋值
+    cover: str | None = None  # 封面图片（URL）
+    big_cover: str | None = None  # 高清封面图片（URL）
+    genre: list[str] | None = None  # 影片分类的标签
+    genre_id: list[str] | None = None  # 影片分类的标签的ID
+    genre_norm: list[str] | None = None  # 统一后的影片分类的标签
+    score: float | None = None  # 评分（10分制，两位浮点数）
+    title: str | None = None  # 影片标题（不含番号）
+    ori_title: str | None = None  # 原始影片标题，仅在标题被处理过时才对此字段赋值
+    magnet: list[str] | None = None  # 磁力链接
+    serial: str | None = None  # 系列
+    actress: list[str] | None = None  # 出演女优
+    actress_pics: dict[str, str] | None = None  # 出演女优的头像
+    director: str | None = None  # 导演
+    duration: str | None = None  # 影片时长
+    producer: str | None = None  # 制作商
+    publisher: str | None = None  # 发行商
+    uncensored: bool | None = None  # 是否为无码影片
+    publish_date: str | None = None  # 发布日期
+    preview_pics: list[str] | None = None  # 预览图片（URL）
+    preview_video: str | None = None  # 预览视频（URL）
 
     # 动态属性（由汇总/命名逻辑设置，不参与序列化）
-    nfo_title: Optional[str] = None
-    label: Optional[str] = None
-    covers: Optional[list[str]] = None
-    big_covers: Optional[list[str]] = None
-    title_break: Optional[list[str]] = None
-    ori_title_break: Optional[list[str]] = None
+    nfo_title: str | None = None
+    label: str | None = None
+    covers: list[str] | None = None
+    big_covers: list[str] | None = None
+    title_break: list[str] | None = None
+    ori_title_break: list[str] | None = None
 
     # 私有属性（不参与序列化和 model_fields）
     _success: bool = PrivateAttr(default=False)
@@ -228,16 +229,28 @@ class Movie:
             expression = f"('{self.dvdid}')"
         return __class__.__name__ + expression
 
-    def rename_files(self, use_hardlink: bool = False) -> None:
-        """根据命名规则移动（重命名）影片文件"""
+    def rename_files(self, use_hardlink: bool = False) -> list:
+        """根据命名规则移动（重命名）影片文件
+
+        Args:
+            use_hardlink: 为 True 时创建硬链接而非移动源文件（源文件保留）。
+
+        Returns:
+            list[(src, dst)]: 所有已移动文件的(原路径, 新路径)列表
+        """
 
         def move_file(src: str, dst: str):
-            """移动（重命名）文件并记录信息到日志"""
+            """移动（重命名）文件并记录信息到日志
+
+            影片文件目标已存在时抛 FileExistsError 以中断流程（避免覆盖整理产物）；
+            字幕文件目标已存在时由调用方捕获并 warning 跳过（字幕是附属文件）。
+            """
             abs_dst = os.path.abspath(dst)
             # shutil.move might overwrite dst file
             if os.path.exists(abs_dst):
                 raise FileExistsError(f"File exists: {abs_dst}")
             if use_hardlink:
+                # 硬链接模式：源文件保留不动，仅在目标位置创建一个新的硬链接
                 try:
                     os.link(src, abs_dst)
                 except OSError:
@@ -251,64 +264,71 @@ class Movie:
             # 目前StreamHandler并未设置filter，为了避免显示中出现重复的日志，这里暂时只能用debug级别
             filemove_logger.debug(f'移动（重命名）文件: \n  原路径: "{src}"\n  新路径: "{abs_dst}"')
 
-        new_paths = []
-        dir = os.path.dirname(self.files[0])
+        moved_files = []
+        src_dir = os.path.dirname(self.files[0])
         if len(self.files) == 1:
             fullpath = self.files[0]
             ext = os.path.splitext(fullpath)[1]
             newpath = os.path.join(self.save_dir, self.basename + ext)
             move_file(fullpath, newpath)
-            new_paths.append(newpath)
+            moved_files.append((fullpath, newpath))
         else:
             for i, fullpath in enumerate(self.files, start=1):
                 ext = os.path.splitext(fullpath)[1]
                 newpath = os.path.join(self.save_dir, self.basename + f"-CD{i}" + ext)
                 move_file(fullpath, newpath)
-                new_paths.append(newpath)
-        self.new_paths = new_paths
-        try:
-            if len(os.listdir(dir)) == 0:
-                os.rmdir(dir)
-        except OSError:
-            pass
+                moved_files.append((fullpath, newpath))
 
         # 移动匹配的字幕文件（基于番号模糊匹配：IPZ-380 == ipz380 == ipz00380）
         if Cfg().summarizer.match_subtitles:
-            import re as _re
-
-            from javsp.avid import get_id, normalize_id
-
             movie_norm_id = normalize_id(self.dvdid)
             if movie_norm_id:
                 sub_dir = os.path.dirname(self.files[0])
-                if not os.path.isdir(sub_dir):
-                    return
-                # 先过滤出目录中的字幕文件，没有则直接跳过后续匹配逻辑
-                sub_files = [
-                    f
-                    for f in sorted(os.listdir(sub_dir))
-                    if os.path.isfile(os.path.join(sub_dir, f)) and os.path.splitext(f)[1].lower() in (".srt", ".ass")
-                ]
-                if not sub_files:
-                    return
-                for f in sub_files:
-                    f_path = os.path.join(sub_dir, f)
-                    f_stem, f_ext = os.path.splitext(f)
-                    sub_id = get_id(f_stem)
-                    if sub_id and normalize_id(sub_id) == movie_norm_id:
-                        if len(self.files) == 1:
-                            target_basename = self.basename
-                        else:
-                            target_basename = self.basename
-                            cd_m = _re.search(r"cd(\d+)$", f_stem, _re.I)
-                            if cd_m:
-                                target_basename += f"-CD{cd_m.group(1)}"
-                        new_sub_path = os.path.join(self.save_dir, target_basename + f_ext.lower())
-                        try:
-                            move_file(f_path, new_sub_path)
-                            logger.info(f"已移动字幕文件: '{f}'")
-                        except FileExistsError:
-                            logger.warning(f"字幕文件已存在，跳过: '{new_sub_path}'")
+                if os.path.isdir(sub_dir):
+                    # 先过滤出目录中的字幕文件，没有则直接跳过后续匹配逻辑
+                    sub_files = [
+                        f
+                        for f in sorted(os.listdir(sub_dir))
+                        if os.path.isfile(os.path.join(sub_dir, f)) and os.path.splitext(f)[1].lower() in (".srt", ".ass")
+                    ]
+                    if sub_files:
+                        # 收集所有番号匹配的字幕
+                        matched_subs = []
+                        for f in sub_files:
+                            f_path = os.path.join(sub_dir, f)
+                            f_stem, f_ext = os.path.splitext(f)
+                            sub_id = get_id(f_stem)
+                            if sub_id and normalize_id(sub_id) == movie_norm_id:
+                                matched_subs.append((f_path, f_stem, f_ext))
+                        # 多CD视频与字幕数量不匹配时仅 warning，仍按规则一起移动
+                        if len(self.files) > 1 and len(matched_subs) not in (0, len(self.files)):
+                            logger.warning(
+                                f"多CD视频({len(self.files)}个)与匹配字幕({len(matched_subs)}个)数量不一致，仍将一起移动"
+                            )
+                        for f_path, f_stem, f_ext in matched_subs:
+                            if len(self.files) == 1:
+                                target_basename = self.basename
+                            else:
+                                target_basename = self.basename
+                                cd_m = re.search(r"cd(\d+)$", f_stem, re.I)
+                                if cd_m:
+                                    target_basename += f"-CD{cd_m.group(1)}"
+                            new_sub_path = os.path.join(self.save_dir, target_basename + f_ext.lower())
+                            try:
+                                move_file(f_path, new_sub_path)
+                                logger.info(f"已移动字幕文件: '{f_path}'")
+                                moved_files.append((f_path, new_sub_path))
+                            except FileExistsError:
+                                logger.warning(f"字幕文件已存在，跳过: '{new_sub_path}'")
+
+        # 清理空目录：放在所有文件移动之后，避免提前删除仍含字幕的源目录
+        try:
+            if os.path.isdir(src_dir) and len(os.listdir(src_dir)) == 0:
+                os.rmdir(src_dir)
+        except OSError:
+            pass
+
+        return moved_files
 
 
 class GenreMap(dict):

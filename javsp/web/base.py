@@ -17,7 +17,7 @@ from requests.models import Response
 from tqdm import tqdm
 
 from javsp.config import Cfg
-from javsp.web.exceptions import CrawlerError, SiteBlocked
+from javsp.web.exceptions import CrawlerError
 
 __all__ = [
     "Request",
@@ -25,7 +25,7 @@ __all__ = [
     "post_html",
     "request_get",
     "resp2html",
-    "is_cloudflare_blocked",
+    "is_cloudflare_challenge",
     "is_connectable",
     "download",
     "get_resp_text",
@@ -37,7 +37,10 @@ __all__ = [
 
 
 headers = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+    )
 }
 
 logger = logging.getLogger(__name__)
@@ -45,12 +48,33 @@ logger = logging.getLogger(__name__)
 cleaner = Cleaner(kill_tags=["script", "noscript"])
 
 
-def is_cloudflare_blocked(resp) -> bool:
-    """检查响应是否被CloudFlare反爬拦截"""
-    if resp.status_code == 403:
-        return True
-    if b"Just a moment" in resp.content:
-        return True
+def is_cloudflare_challenge(resp) -> bool:
+    """判断响应是否为CloudFlare挑战/拦截页面
+
+    CloudFlare的反爬是产品级别的，所有站点被拦截时返回的都是同一套标准页面：
+    - JS Challenge / Managed Challenge: 403/503 + "Just a moment..." + challenges.cloudflare.com
+    - WAF Block: 403 + 错误码(如1020=地区封禁)
+
+    此函数只负责判断"是不是CF挑战页面"，站点特定的错误码解析等逻辑
+    由各站点爬虫自行处理。
+    """
+    if resp.status_code not in (403, 503):
+        return False
+    try:
+        content = resp.content
+        # CloudFlare JS Challenge / Managed Challenge 标准页面
+        if b"Just a moment" in content:
+            return True
+        # 旧版CF浏览器验证
+        if b"cf-browser-verification" in content:
+            return True
+        # CF Turnstile/Challenge 脚本
+        if b"cf-challenge" in content:
+            return True
+        if b"challenges.cloudflare.com" in content:
+            return True
+    except Exception:
+        pass
     return False
 
 
@@ -87,17 +111,18 @@ class Request:
             self.__head = self._scraper_monitor(self.scraper.head)
 
     def _scraper_monitor(self, func):
-        """监控curl_cffi的工作状态，遇到不支持的Challenge时尝试退回常规的requests请求"""
+        """监控curl_cffi的工作状态，遇到不支持的Challenge时直接抛出异常
+
+        注意：不再回退到requests，因为requests无法绕过CloudFlare TLS指纹检测，
+        回退只会导致403而无法真正解决问题。
+        """
 
         def wrapper(*args, **kw):
             try:
                 return func(*args, **kw)
             except curl_cffi.CurlError as e:
-                logger.debug(f"无法通过CloudFlare检测: '{e}', 尝试退回常规的requests请求")
-                if func == self.scraper.get:
-                    return requests.get(*args, **kw)
-                else:
-                    return requests.post(*args, **kw)
+                logger.debug(f"curl_cffi请求失败: '{e}'")
+                raise
 
         return wrapper
 
@@ -110,8 +135,6 @@ class Request:
             timeout=timeout if timeout is not None else self.timeout,
         )
         if not delay_raise:
-            if is_cloudflare_blocked(r):
-                raise SiteBlocked(f"403 Forbidden: 无法通过CloudFlare检测: {url}")
             r.raise_for_status()
         return r
 

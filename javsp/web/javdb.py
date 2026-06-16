@@ -8,7 +8,7 @@ from javsp.avid import guess_av_type
 from javsp.chromium import get_browsers_cookies
 from javsp.config import Cfg, CrawlerID
 from javsp.datatype import GenreMap, MovieInfo
-from javsp.web.base import Request, resp2html, xpath_first
+from javsp.web.base import Request, is_cloudflare_challenge, resp2html, xpath_first
 from javsp.web.exceptions import (
     CrawlerError,
     CredentialError,
@@ -113,6 +113,10 @@ def get_html_wrapper(url):
             html = resp2html(r)
             return html
     elif r.status_code in (403, 503):
+        if is_cloudflare_challenge(r):
+            # CF挑战页面：无法通过，直接报错
+            raise SiteBlocked(f"JavDB: 无法通过CloudFlare检测: {url}")
+        # 非CF挑战的403/503：解析站点特定的错误码
         html = resp2html(r)
         code_tag = html.xpath(XP["cf_code"])
         error_code = code_tag[0].text if code_tag else None
@@ -174,7 +178,7 @@ def parse_data(movie: MovieInfo):
         new_url = movie_urls[index]
         try:
             html2 = get_html_wrapper(new_url)
-        except SitePermissionError, CredentialError:
+        except (SitePermissionError, CredentialError):
             # 不开VIP不让看，过分。决定榨出能获得的信息，毕竟有时候只有这里能找到标题和封面
             box = html.xpath(XP["search_box"])[index]
             movie.url = new_url

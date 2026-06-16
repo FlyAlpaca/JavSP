@@ -5,7 +5,7 @@ from urllib.parse import urlsplit
 
 from javsp.config import Cfg, CrawlerID
 from javsp.datatype import MovieInfo
-from javsp.web.base import Request, is_cloudflare_blocked, read_proxy, resp2html, xpath_first
+from javsp.web.base import Request, is_cloudflare_challenge, read_proxy, resp2html, xpath_first
 from javsp.web.exceptions import CrawlerError, MovieDuplicateError, MovieNotFoundError, SiteBlocked
 from javsp.web.proxyfree import get_proxy_free_url
 
@@ -38,37 +38,25 @@ XP = {
 }
 
 
-def init_network_cfg():
-    """设置合适的代理模式和base_url
+def _try_search(dvdid: str, preferred_url: str = None):
+    """尝试搜索，返回 (resp, html) 或在所有地址被拦截时抛出异常
 
-    优先级：免代理地址（无代理搜索）> 代理访问永久域名
+    地址优先级：preferred_url(重定向发现的新地址) > 免代理地址 > 代理访问永久域名
     """
-    request.timeout = Cfg().network.timeout.total_seconds()
-    # 1. 优先尝试免代理地址（config配置 + 自动获取）
-    proxy_free_url = get_proxy_free_url("javlib", str(Cfg().network.proxy_free[CrawlerID.javlib]))
-    if proxy_free_url:
-        request.proxies = {}
-        return proxy_free_url
-    # 2. 回退到代理访问永久域名
-    if Cfg().network.proxy_server:
-        request.proxies = read_proxy()
-        return permanent_url
-    # 3. 无代理也无配置，直接尝试永久域名
-    request.proxies = {}
-    return permanent_url
-
-
-def _try_search(dvdid: str):
-    """尝试搜索，返回 (resp, html) 或在所有地址被拦截时抛出异常"""
     global base_url
-    # 候选地址列表：免代理地址 > 代理访问永久域名
+    request.timeout = Cfg().network.timeout.total_seconds()
+    # 候选地址列表：优先使用重定向发现的新地址，然后是免代理地址
     candidates = []
+    if preferred_url:
+        candidates.append((preferred_url, {}))
     proxy_free_url = get_proxy_free_url("javlib", str(Cfg().network.proxy_free[CrawlerID.javlib]))
     if proxy_free_url:
         candidates.append((proxy_free_url, {}))
     if Cfg().network.proxy_server:
         candidates.append((permanent_url, read_proxy()))
-    candidates.append((permanent_url, {}))
+    else:
+        # 无代理配置时直接尝试永久域名（直连）
+        candidates.append((permanent_url, {}))
 
     for url, proxies in candidates:
         base_url = url
@@ -76,7 +64,7 @@ def _try_search(dvdid: str):
         search_url = f"{url}/cn/vl_searchbyid.php?keyword={dvdid}"
         try:
             resp = request.get(search_url, delay_raise=True)
-            if is_cloudflare_blocked(resp):
+            if is_cloudflare_challenge(resp):
                 logger.debug(f"JavLib地址被拦截: {url}")
                 continue
             html = resp2html(resp)
@@ -95,17 +83,10 @@ def _try_search(dvdid: str):
 def parse_data(movie: MovieInfo):
     """解析指定番号的影片数据"""
     global base_url
-    if not base_url:
-        base_url = init_network_cfg()
-        logger.debug(f"JavLib网络配置: {base_url}, proxy={request.proxies}")
+    # 直接使用_try_search，按优先级尝试所有地址（免代理优先）
+    # 如果base_url已被重定向更新过，作为preferred_url传入避免被重置
+    resp, html = _try_search(movie.dvdid, preferred_url=base_url if base_url else None)
     url = new_url = f"{base_url}/cn/vl_searchbyid.php?keyword={movie.dvdid}"
-    resp = request.get(url)
-    # 如果被反爬拦截，自动回退尝试其他地址
-    if is_cloudflare_blocked(resp):
-        logger.debug(f"JavLib当前地址被拦截: {base_url}，尝试其他地址")
-        resp, html = _try_search(movie.dvdid)
-    else:
-        html = resp2html(resp)
     # 判断是否发生了重定向：resp.history 非空（标准行为）或 resp.url 与请求 URL 不同（部分镜像的行为）
     is_redirected = bool(resp.history) or resp.url != url
     if is_redirected:
@@ -184,7 +165,6 @@ def parse_data(movie: MovieInfo):
 
 
 if __name__ == "__main__":
-    
     base_url = permanent_url
     movie = MovieInfo("IPX-177")
     try:
