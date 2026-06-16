@@ -75,7 +75,7 @@ def parse_data(movie: MovieInfo):
 
 
 if __name__ == "__main__":
-    
+
 
     movie = MovieInfo("259LUXU-593")
     try:
