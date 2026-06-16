@@ -17,7 +17,6 @@ import colorama
 from colorama import Fore, Style
 from tqdm import tqdm
 
-
 from javsp.print import TqdmOut
 
 # 将StreamHandler的stream修改为TqdmOut，以与Tqdm协同工作
@@ -83,7 +82,7 @@ def RunNormalMode(all_movies):
     """普通整理模式"""
 
     # 运行统计
-    stats = {"total": len(all_movies), "success": 0, "failed": 0, "failed_list": []}
+    stats = {"total": len(all_movies), "success": 0, "failed": 0, "success_list": [], "failed_list": [], "filemove_list": []}
 
     def check_step(result, msg="步骤错误"):
         """检查一个整理步骤的结果，并负责更新tqdm的进度"""
@@ -96,8 +95,9 @@ def RunNormalMode(all_movies):
     def step_with_id(step_name, fn):
         """执行步骤，为异常补充番号上下文"""
         try:
-            fn()
+            result = fn()
             inner_bar.update()
+            return result
         except Exception as e:
             movie_id = movie.dvdid or movie.cid or "未知番号"
             # 如果异常信息已包含番号则不再重复添加
@@ -206,7 +206,12 @@ def RunNormalMode(all_movies):
             step_with_id("写入NFO", lambda: write_nfo(movie.info, movie.nfo_file))
             if Cfg().summarizer.move_files:
                 inner_bar.set_description("移动影片文件")
-                step_with_id("移动影片文件", lambda: movie.rename_files(Cfg().summarizer.path.hard_link))
+                moved_files = step_with_id("移动影片文件", lambda: movie.rename_files(Cfg().summarizer.path.hard_link))
+                # 收集文件移动信息
+                if Cfg().summarizer.filemove_log and moved_files:
+                    movie_id = movie.dvdid or movie.cid or "未知番号"
+                    for src, dst in moved_files:
+                        stats["filemove_list"].append((movie_id, src, dst))
                 logger.info(f"整理完成，相关文件已保存到: {movie.save_dir}\n")
             else:
                 logger.info(f"刮削完成，相关文件已保存到: {movie.nfo_file}\n")
@@ -215,6 +220,7 @@ def RunNormalMode(all_movies):
                 time.sleep(Cfg().crawler.sleep_after_scraping.total_seconds())
             return_movies.append(movie)
             stats["success"] += 1
+            stats["success_list"].append(movie.dvdid or movie.cid or "未知番号")
         except Exception as e:
             movie_id = movie.dvdid or movie.cid or "未知番号"
             logger.error(f"整理失败: {e}")
@@ -244,6 +250,11 @@ def print_summary(stats):
     print("  运行统计".center(width))
     print("-" * width)
     print(f"  总计: {total}  成功: {success}  失败: {failed}")
+    if stats["success_list"]:
+        print("-" * width)
+        print("  成功详情:")
+        for movie_id in stats["success_list"]:
+            print(f"    {movie_id}")
     if stats["failed_list"]:
         print("-" * width)
         print("  失败详情:")
@@ -251,6 +262,15 @@ def print_summary(stats):
             # 截断过长的原因
             short_reason = reason if len(reason) <= 60 else reason[:57] + "..."
             print(f"    {movie_id}: {short_reason}")
+    if stats["filemove_list"]:
+        print("-" * width)
+        print("  文件移动详情:")
+        for movie_id, src, dst in stats["filemove_list"]:
+            src_rel = os.path.relpath(src)
+            dst_rel = os.path.relpath(dst)
+            print(f"    [{movie_id}]")
+            print(f"      {src_rel}")
+            print(f"      -> {dst_rel}")
     print("=" * width)
     print()
 
@@ -294,7 +314,7 @@ def entry():
         Cfg()
     except ValidationError as e:
         for err in e.errors():
-            loc = " → ".join(str(l) for l in err["loc"])
+            loc = " → ".join(str(part) for part in err["loc"])
             msg = err["msg"]
             print(f"配置错误 [{loc}]: {msg}")
         input("按回车键退出...")
@@ -317,12 +337,11 @@ def entry():
     print("扫描影片文件...")
     recognized = scan_movies(root)
     movie_count = len(recognized)
-    recognize_fail = []
     error_exit(movie_count, "未找到影片文件")
     logger.info(f"扫描影片文件：共找到 {movie_count} 部影片")
     if Cfg().scanner.manual:
         reviewMovieID(recognized, root)
-    _, stats = RunNormalMode(recognized + recognize_fail)
+    _, stats = RunNormalMode(recognized)
 
     print_summary(stats)
     if Cfg().other.interactive:

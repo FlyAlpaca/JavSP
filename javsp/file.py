@@ -214,7 +214,8 @@ def get_remaining_path_len(path):
     """计算当前系统支持的最大路径长度与给定路径长度的差值"""
     # TODO: 支持不同的操作系统
     fullpath = os.path.abspath(path)
-    # Windows: If the length exceeds ~256 characters, you will be able to see the path/files via Windows/File Explorer, but may not be able to delete/move/rename these paths/files
+    # Windows: If the length exceeds ~256 characters, you will be able to see the path/files
+    # via Windows/File Explorer, but may not be able to delete/move/rename these paths/files
     length = len(fullpath.encode("utf-8")) if Cfg().summarizer.path.length_by_byte else len(fullpath)
     remaining = Cfg().summarizer.path.length_maximum - length
     return remaining

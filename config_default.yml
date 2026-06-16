@@ -85,6 +85,8 @@ summarizer:
   move_files: true
   # 是否匹配并移动同名的本地字幕文件（.srt/.ass），需 move_files 为 true
   match_subtitles: true
+  # 是否在运行统计中显示文件移动详情（原路径 -> 新路径），默认关闭
+  filemove_log: false
 
   # 路径相关的选项
   path: 

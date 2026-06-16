@@ -4,8 +4,8 @@ import logging
 
 from javsp.config import Cfg, CrawlerID
 from javsp.datatype import GenreMap, MovieInfo
-from javsp.web.base import request_get, resp2html, xpath_first
-from javsp.web.exceptions import CrawlerError, MovieNotFoundError
+from javsp.web.base import is_cloudflare_challenge, request_get, resp2html, xpath_first
+from javsp.web.exceptions import CrawlerError, MovieNotFoundError, SiteBlocked
 
 logger = logging.getLogger(__name__)
 genre_map = GenreMap("data/genre_javbus.csv")
@@ -44,6 +44,8 @@ def parse_data(movie: MovieInfo):
     """
     url = f"{base_url}/{movie.dvdid}"
     resp = request_get(url, delay_raise=True)
+    if is_cloudflare_challenge(resp):
+        raise SiteBlocked(f"JavBus: 无法通过CloudFlare检测: {url}")
     # 疑似JavBus检测到类似爬虫的行为时会要求登录，不过发现目前不需要登录也可以从重定向前的网页中提取信息
     if resp.history and resp.history[0].status_code == 302:
         html = resp2html(resp.history[0])
@@ -122,7 +124,6 @@ def parse_clean_data(movie: MovieInfo):
 
 
 if __name__ == "__main__":
-    
     logger.root.handlers[1].level = logging.DEBUG
 
     movie = MovieInfo("NANP-030")

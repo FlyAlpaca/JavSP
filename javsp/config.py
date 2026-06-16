@@ -1,6 +1,6 @@
 import logging
 from argparse import ArgumentParser, RawTextHelpFormatter
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Literal, TypeAlias
 
@@ -28,7 +28,7 @@ class Scanner(BaseConfig):
     manual: bool
 
 
-class CrawlerID(str, Enum):
+class CrawlerID(StrEnum):
     avsox = "avsox"
     avwiki = "avwiki"
     dl_getchu = "dl_getchu"
@@ -114,7 +114,7 @@ class CrawlerSelect(BaseConfig):
         raise Exception("Unknown crawler type")
 
 
-class MovieInfoField(str, Enum):
+class MovieInfoField(StrEnum):
     dvdid = "dvdid"
     cid = "cid"
     url = "url"
@@ -141,7 +141,7 @@ class MovieInfoField(str, Enum):
     preview_video = "preview_video"
 
 
-class UseJavDBCover(str, Enum):
+class UseJavDBCover(StrEnum):
     yes = "yes"
     no = "no"
     fallback = "fallback"
@@ -218,6 +218,7 @@ class Summarizer(BaseConfig):
     title: TitleSummarize
     move_files: bool = True
     match_subtitles: bool = True
+    filemove_log: bool = False
     path: PathSummarize
     nfo: NFOSummarize
     cover: CoverSummarize
@@ -312,6 +313,9 @@ def get_config_source():
         prog="JavSP",
         description="汇总多站点数据的AV元数据刮削器",
         formatter_class=RawTextHelpFormatter,
+        # 禁用前缀缩写匹配：避免 pytest 等工具传入的参数（如 --co）被误解析为
+        # --config 的缩写而导致 SystemExit，从而破坏测试收集和模块导入。
+        allow_abbrev=False,
     )
     parser.add_argument("-c", "--config", help="使用指定的配置文件")
     args, _ = parser.parse_known_args()
