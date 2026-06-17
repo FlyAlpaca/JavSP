@@ -102,20 +102,23 @@ def translate(texts, engine) -> str:
 # Google Translate (免费，无需 API Key)
 # =============================================================================
 def google_translate(texts, engine: GoogleTranslateEngine) -> str:
-    """使用 Google Translate 非官方 API 进行翻译"""
+    """使用 Google Translate 非官方 API 进行翻译
+
+    使用 POST 方法以避免 GET URL 长度限制（约2000字符），支持翻译长文本。
+    """
     url = "https://translate.google.com/translate_a/single"
     params = {
         "client": "gtx",
         "sl": engine.source_language,
         "tl": engine.target_language,
         "dt": "t",
-        "q": texts,
     }
+    data = {"q": texts}
     try:
         import urllib.parse
 
         full_url = url + "?" + urllib.parse.urlencode(params)
-        r = _request.get(full_url, delay_raise=True)
+        r = _request.post(full_url, data=data, delay_raise=True)
         r.raise_for_status()
         result = r.json()
         translated_parts = []

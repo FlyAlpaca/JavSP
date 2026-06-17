@@ -297,6 +297,7 @@ def collect_actress_alias(type=0, use_original=True):
 
     typeList = ["censored", "uncensored", "western"]
     page_url = f"{base_url}/actors/{typeList[type]}"
+    total_count = 0
     while True:
         try:
             html = get_html_wrapper(page_url)
@@ -305,6 +306,7 @@ def collect_actress_alias(type=0, use_original=True):
             count = 0
             for actor in actors:
                 count += 1
+                total_count += 1
                 actor.xpath("strong/text()")[0].strip()
                 actor_url = actor.xpath("@href")[0]
 
@@ -323,7 +325,7 @@ def collect_actress_alias(type=0, use_original=True):
 
                 # 将信息添加到actressAliasMap中
                 actressAliasMap[names_list[-1 if use_original else 0]] = names_list + aliases_list
-                print(f"{count} --- {names_list[-1 if use_original else 0]}: {names_list + aliases_list}")
+                print(f"{total_count} --- {names_list[-1 if use_original else 0]}: {names_list + aliases_list}")
 
                 if count == 10:
                     # 将数据写回文件
@@ -340,11 +342,11 @@ def collect_actress_alias(type=0, use_original=True):
                     actressAliasMap = {}  # 重置actressAliasMap
 
                     print(
-                        f"已爬取 {count} 个女优，数据已更新并写回文件:",
+                        f"已爬取 {total_count} 个女优，数据已更新并写回文件:",
                         actressAliasFilePath,
                     )
 
-                    # 重置计数器
+                    # 重置批次计数器
                     count = 0
 
                 time.sleep(max(1, 10 * random.random()))  # 随机等待 1-10 秒
@@ -370,7 +372,7 @@ def collect_actress_alias(type=0, use_original=True):
     with open(actressAliasFilePath, "w", encoding="utf-8") as file:
         json.dump(existing_data, file, ensure_ascii=False, indent=2)
 
-    print(f"已爬取 {count} 个女优，数据已更新并写回文件:", actressAliasFilePath)
+    print(f"已爬取 {total_count} 个女优，数据已更新并写回文件:", actressAliasFilePath)
 
 
 if __name__ == "__main__":

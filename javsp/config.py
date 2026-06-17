@@ -100,17 +100,8 @@ class CrawlerSelect(BaseConfig):
         ]
 
     def __getitem__(self, index) -> list[str]:
-        match index:
-            case "normal":
-                return self.normal
-            case "fc2":
-                return self.fc2
-            case "cid":
-                return self.cid
-            case "getchu":
-                return self.getchu
-            case "gyutto":
-                return self.gyutto
+        if index in ("normal", "fc2", "cid", "getchu", "gyutto"):
+            return getattr(self, index)
         raise Exception("Unknown crawler type")
 
 
@@ -299,16 +290,16 @@ class Other(BaseConfig):
     auto_update: bool
 
 
-def _is_non_empty_yaml(file_path: str) -> bool:
-    """检查 YAML 文件是否包含有效配置（非纯注释）"""
-    try:
-        with open(file_path, encoding="utf-8") as f:
-            return yaml.safe_load(f) is not None
-    except Exception:
-        return False
-
-
 def get_config_source():
+    """构建配置源列表，使用缓存避免重复计算
+
+    缓存一旦生成便不会刷新，因为配置源在程序启动时由命令行参数和文件决定，
+    运行期间不会改变。如果未来需要动态刷新配置，需先置 _config_sources = None。
+    """
+    global _config_sources
+    if _config_sources is not None:
+        return _config_sources
+
     parser = ArgumentParser(
         prog="JavSP",
         description="汇总多站点数据的AV元数据刮削器",
@@ -327,18 +318,25 @@ def get_config_source():
 
     # 2. 加载用户配置（如果存在且非空），覆盖默认值
     if args.config is not None:
-        # 用户通过 -c 指定了配置文件
         sources.append(FileSource(file=args.config))
     else:
-        # 与默认配置同目录的 config.yml
         user_config = resource_path(USER_CONFIG_FILE)
-        if Path(user_config).exists() and _is_non_empty_yaml(user_config):
-            sources.append(FileSource(file=user_config))
+        if Path(user_config).exists():
+            try:
+                with open(user_config, encoding="utf-8") as f:
+                    if yaml.safe_load(f) is not None:
+                        sources.append(FileSource(file=user_config))
+            except Exception:
+                pass
 
     # 3. 环境变量和命令行参数优先级最高
     sources.append(EnvSource(prefix="JAVSP_", allow_all=True, nested_separator="__"))
     sources.append(CLArgSource(prefix="o"))
+    _config_sources = sources
     return sources
+
+
+_config_sources = None
 
 
 class Cfg(BaseConfig):

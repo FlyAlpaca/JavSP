@@ -233,7 +233,7 @@ def resp2html(resp, encoding="utf-8") -> lxml.html.HtmlComment:
     return html
 
 
-def post_html(url, data, encoding="utf-8", cookies={}):
+def post_html(url, data, encoding="utf-8", cookies=None):
     """使用post方法访问指定网页并返回经lxml解析后的document"""
     resp = request_post(url, data, cookies=cookies)
     text = get_resp_text(resp, encoding=encoding)

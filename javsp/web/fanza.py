@@ -102,7 +102,7 @@ def _gql_request(query, variables):
     saved_headers = request.headers.copy()
     request.headers.update(_GQL_HEADERS)
     try:
-        r = request.post(gql_url, data=payload, delay_raise=True)
+        r = request.post_json(gql_url, json_data=payload, delay_raise=True)
     finally:
         request.headers = saved_headers
     if r.status_code == 403:
@@ -348,7 +348,6 @@ def parse_data(movie: MovieInfo):
 
 
 if __name__ == "__main__":
-
     logger.root.handlers[1].level = logging.DEBUG
 
     movie = MovieInfo(cid="ipx00177")

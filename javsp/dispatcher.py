@@ -31,12 +31,9 @@ def import_crawlers():
     """按配置文件的抓取器顺序导入爬虫模块"""
     unknown_mods = []
     for _, mods in Cfg().crawler.selection.items():
-        valid_mods = []
         for name in mods:
             try:
-                import_name = "javsp.web." + name
-                __import__(import_name)
-                valid_mods.append(import_name)
+                __import__("javsp.web." + name)
             except ModuleNotFoundError:
                 unknown_mods.append(name)
     if unknown_mods:

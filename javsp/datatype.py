@@ -18,6 +18,25 @@ logger = logging.getLogger(__name__)
 filemove_logger = logging.getLogger("filemove")
 
 
+def setup_filemove_log(cfg, log_dir=None):
+    """配置 filemove_logger 的 FileHandler，将文件移动详情写入 filemove.log
+
+    Args:
+        cfg: 配置对象
+        log_dir: 日志文件存放目录，为 None 时使用当前工作目录
+    """
+    if not cfg.summarizer.filemove_log:
+        return
+    if any(isinstance(h, logging.FileHandler) for h in filemove_logger.handlers):
+        return
+    log_path = "filemove.log" if log_dir is None else os.path.join(log_dir, "filemove.log")
+    filemove_handler = logging.FileHandler(log_path, encoding="utf-8")
+    filemove_handler.setLevel(logging.DEBUG)
+    filemove_handler.setFormatter(logging.Formatter("%(asctime)s - %(message)s"))
+    filemove_logger.addHandler(filemove_handler)
+    filemove_logger.setLevel(logging.DEBUG)
+
+
 class MovieInfo(BaseModel):
     """影片元数据信息
 
