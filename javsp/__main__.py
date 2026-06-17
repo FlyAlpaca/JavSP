@@ -29,7 +29,7 @@ logger = logging.getLogger("main")
 
 from javsp.__version__ import __version__
 from javsp.config import Cfg
-from javsp.datatype import Movie
+from javsp.datatype import Movie, filemove_logger
 from javsp.dispatcher import import_crawlers, parallel_crawler
 from javsp.file import get_fmt_size, scan_movies
 from javsp.func import check_update, get_scan_dir
@@ -333,6 +333,14 @@ def entry():
     # 导入抓取器，必须在chdir之前
     import_crawlers()
     os.chdir(root)
+
+    # 配置文件移动日志：如果启用，将文件移动详情记录到 filemove.log
+    if Cfg().summarizer.filemove_log:
+        filemove_handler = logging.FileHandler("filemove.log", encoding="utf-8")
+        filemove_handler.setLevel(logging.DEBUG)
+        filemove_handler.setFormatter(logging.Formatter("%(asctime)s - %(message)s"))
+        filemove_logger.addHandler(filemove_handler)
+        filemove_logger.setLevel(logging.DEBUG)
 
     print("扫描影片文件...")
     recognized = scan_movies(root)
