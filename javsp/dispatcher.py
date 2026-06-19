@@ -6,6 +6,7 @@ import threading
 import time
 
 import requests
+from tqdm import tqdm
 
 try:
     import curl_cffi
@@ -53,7 +54,7 @@ def parallel_crawler(movie: Movie, tqdm_bar=None):
                 movie_id = info.dvdid or info.cid
                 logger.debug(f"{short_name}: 抓取成功: '{movie_id}': '{info.url}'")
                 info._success = True
-                if isinstance(tqdm_bar, type(tqdm_bar)) and hasattr(tqdm_bar, "set_description"):
+                if isinstance(tqdm_bar, tqdm) and hasattr(tqdm_bar, "set_description"):
                     tqdm_bar.set_description(f"{short_name}: 抓取完成")
                 break
             except MovieNotFoundError as e:
@@ -65,7 +66,7 @@ def parallel_crawler(movie: Movie, tqdm_bar=None):
                 failed_crawlers.append((short_name, str(e)))
                 break
             except (SiteBlocked, SitePermissionError, CredentialError) as e:
-                logger.warning(e)
+                logger.debug(e)
                 failed_crawlers.append((short_name, str(e)))
                 break
             except requests.exceptions.RequestException as e:

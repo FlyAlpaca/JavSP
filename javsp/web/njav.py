@@ -111,7 +111,8 @@ def parse_data(movie: MovieInfo):
     movie.title = title
     movie.genre = genre
     movie.actress = actress
-    movie.duration = str(strftime_to_minutes(duration_str))
+    if duration_str:
+        movie.duration = str(strftime_to_minutes(duration_str))
     movie.publish_date = publish_date
     movie.publisher = publisher
     movie.producer = producer

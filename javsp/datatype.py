@@ -85,6 +85,7 @@ class MovieInfo(BaseModel):
     big_covers: list[str] | None = None
     title_break: list[str] | None = None
     ori_title_break: list[str] | None = None
+    field_sources: dict[str, str] | None = None  # 字段级数据来源追踪，如 {"title": "javbus", "actress": "javdb"}
 
     # 私有属性（不参与序列化和 model_fields）
     _success: bool = PrivateAttr(default=False)

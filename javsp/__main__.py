@@ -42,6 +42,14 @@ from javsp.web.base import download
 from javsp.web.translate import translate_movie_info
 
 
+def _group_sources_by_crawler(field_sources: dict[str, str]) -> dict[str, list[str]]:
+    """将字段来源按爬虫分组，返回 {crawler: [field1, field2, ...]}"""
+    by_crawler = {}
+    for field, crawler in field_sources.items():
+        by_crawler.setdefault(crawler, []).append(field)
+    return by_crawler
+
+
 def reviewMovieID(all_movies, root):
     """人工检查每一部影片的番号"""
     count = len(all_movies)
@@ -116,6 +124,12 @@ def _process_single_movie(movie, total_step, stats, cfg):
             movie_id = movie.dvdid or movie.cid or "未知番号"
             raise Exception(f"[{movie_id}] 汇总数据失败：必需字段缺失 ({missing_keys})")
         inner_bar.update()
+
+        # 记录字段来源摘要到日志
+        if movie.info and movie.info.field_sources:
+            by_crawler = _group_sources_by_crawler(movie.info.field_sources)
+            summary_parts = [f"{c}({', '.join(fs)})" for c, fs in by_crawler.items()]
+            logger.debug(f"数据来源: {'; '.join(summary_parts)}")
 
         if cfg.translator.engine:
             inner_bar.set_description("翻译影片信息")
@@ -193,8 +207,13 @@ def _process_single_movie(movie, total_step, stats, cfg):
             moved_files = step_with_id("移动影片文件", lambda: movie.rename_files(cfg.summarizer.path.hard_link))
             if cfg.summarizer.filemove_log and moved_files:
                 movie_id = movie.dvdid or movie.cid or "未知番号"
+                # 构建来源摘要用于 filemove 日志
+                source_info = ""
+                if movie.info and movie.info.field_sources:
+                    by_crawler = _group_sources_by_crawler(movie.info.field_sources)
+                    source_info = " | 来源: " + ", ".join(f"{c}({', '.join(fs)})" for c, fs in by_crawler.items())
                 for src, dst in moved_files:
-                    stats["filemove_list"].append((movie_id, src, dst))
+                    stats["filemove_list"].append((movie_id, src, dst, source_info))
             logger.info(f"整理完成，相关文件已保存到: {movie.save_dir}\n")
         else:
             logger.info(f"刮削完成，相关文件已保存到: {movie.nfo_file}\n")
@@ -223,8 +242,14 @@ def RunNormalMode(all_movies, cfg):
             if movie != all_movies[-1] and cfg.crawler.sleep_after_scraping > Duration(0):
                 time.sleep(cfg.crawler.sleep_after_scraping.total_seconds())
             return_movies.append(movie)
+            movie_id = movie.dvdid or movie.cid or "未知番号"
+            # 收集数据来源摘要
+            source_summary = ""
+            if movie.info and movie.info.field_sources:
+                by_crawler = _group_sources_by_crawler(movie.info.field_sources)
+                source_summary = " | " + ", ".join(f"{c}[{len(fs)}]" for c, fs in by_crawler.items())
             stats["success"] += 1
-            stats["success_list"].append(movie.dvdid or movie.cid or "未知番号")
+            stats["success_list"].append((movie_id, source_summary))
         except Exception as e:
             movie_id = movie.dvdid or movie.cid or "未知番号"
             logger.error(f"整理失败: {e}")
@@ -255,8 +280,8 @@ def print_summary(stats):
     if stats["success_list"]:
         print("-" * width)
         print("  成功详情:")
-        for movie_id in stats["success_list"]:
-            print(f"    {movie_id}")
+        for movie_id, source_summary in stats["success_list"]:
+            print(f"    {movie_id}{source_summary}")
     if stats["failed_list"]:
         print("-" * width)
         print("  失败详情:")
@@ -267,10 +292,10 @@ def print_summary(stats):
     if stats["filemove_list"]:
         print("-" * width)
         print("  文件移动详情:")
-        for movie_id, src, dst in stats["filemove_list"]:
+        for movie_id, src, dst, source_info in stats["filemove_list"]:
             src_rel = os.path.relpath(src)
             dst_rel = os.path.relpath(dst)
-            print(f"    [{movie_id}]")
+            print(f"    [{movie_id}]{source_info}")
             print(f"      {src_rel}")
             print(f"      -> {dst_rel}")
     print("=" * width)
@@ -324,6 +349,10 @@ def entry():
 
     load_actress_aliases()
 
+    # 启用 debug 模式时将根日志级别设为 DEBUG
+    if cfg.other.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
+
     colorama.init(autoreset=True)
 
     # 检查更新
@@ -349,10 +378,13 @@ def entry():
     _, stats = RunNormalMode(recognized, cfg)
 
     print_summary(stats)
-    if cfg.other.interactive:
-        wait_exit(5)
+    if cfg.other.auto_exit:
+        if cfg.other.interactive:
+            wait_exit(5)
+        else:
+            time.sleep(5)
     else:
-        time.sleep(5)
+        input("整理完成，按回车键退出...")
     sys.exit(0)
 
 

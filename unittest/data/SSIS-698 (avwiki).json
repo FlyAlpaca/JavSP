@@ -3,7 +3,8 @@
   "cid": null,
   "url": "https://av-wiki.net/SSIS-698",
   "plot": null,
-  "cover": "https://pics.dmm.co.jp/digital/video/ssis00698/ssis00698pl.jpg",
+  "ori_plot": null,
+  "cover": "https://awsimgsrc.dmm.co.jp/pics_dig/digital/video/ssis00698/ssis00698pl.jpg?f=webp",
   "big_cover": null,
   "genre": null,
   "genre_id": null,
@@ -26,5 +27,12 @@
   "uncensored": false,
   "publish_date": "2023-05-05",
   "preview_pics": null,
-  "preview_video": null
+  "preview_video": null,
+  "nfo_title": null,
+  "label": null,
+  "covers": null,
+  "big_covers": null,
+  "title_break": null,
+  "ori_title_break": null,
+  "field_sources": null
 }

@@ -234,3 +234,7 @@ other:
   check_update: true
   # 是否允许检查到新版本时自动下载
   auto_update: false
+  # 是否启用调试模式（输出详细的爬虫抓取日志、网络请求详情等）
+  debug: false
+  # 整理完成后是否自动退出程序（false时需按回车键退出）
+  auto_exit: true

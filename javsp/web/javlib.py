@@ -58,6 +58,7 @@ def _try_search(dvdid: str, preferred_url: str = None):
         # 无代理配置时直接尝试永久域名（直连）
         candidates.append((permanent_url, {}))
 
+    failures = []
     for url, proxies in candidates:
         base_url = url
         request.proxies = proxies
@@ -65,18 +66,22 @@ def _try_search(dvdid: str, preferred_url: str = None):
         try:
             resp = request.get(search_url, delay_raise=True)
             if is_cloudflare_challenge(resp):
+                failures.append(f"{url}: Cloudflare拦截")
                 logger.debug(f"JavLib地址被拦截: {url}")
                 continue
             html = resp2html(resp)
             # 验证页面包含 JavLib 特征内容
             if html.xpath("//div[@id='rightcolumn']") or html.xpath("//div[@id='video_title']"):
                 return resp, html
+            failures.append(f"{url}: 页面内容无效")
             logger.debug(f"JavLib地址返回无效内容: {url}")
         except Exception as e:
+            failures.append(f"{url}: {e}")
             logger.debug(f"JavLib地址访问失败: {url}: {e}")
             continue
 
-    raise SiteBlocked(f"JavLib所有地址均不可用，无法搜索: {dvdid}")
+    detail = "; ".join(failures)
+    raise SiteBlocked(f"JavLib: 所有地址均不可用 ({len(candidates)}个候选): {detail}")
 
 
 # TODO: 发现JavLibrary支持使用cid搜索，会直接跳转到对应的影片页面，也许可以利用这个功能来做cid到dvdid的转换

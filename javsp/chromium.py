@@ -14,7 +14,7 @@ import os
 import sqlite3
 import sys
 import tempfile
-from datetime import datetime
+from datetime import UTC, datetime
 from glob import glob
 from hashlib import pbkdf2_hmac
 from shutil import copyfile
@@ -357,7 +357,7 @@ def convert_chrome_utc(chrome_utc):
     second = int(chrome_utc / 1e6)
     if second > 0:  # 考虑chrome_utc为0的情况
         second = second - 11644473600
-    unix_utc = datetime.fromtimestamp(second)
+    unix_utc = datetime.fromtimestamp(second, tz=UTC)
     return unix_utc
 
 
@@ -380,7 +380,7 @@ def get_cookies(cookies_file, decrypter, host_pattern="javdb%.com"):
             (host_pattern,),
         )
         # 将查询结果按照host_key进行组织
-        now = datetime.now()
+        now = datetime.now(UTC)
         records = {}
         for host_key, name, encrypted_value, expires_utc in cursor.fetchall():
             d = records.setdefault(host_key, {})

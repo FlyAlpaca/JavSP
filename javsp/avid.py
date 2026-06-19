@@ -49,6 +49,7 @@ def normalize_id(avid: str) -> str:
 # 识别规则定义
 # =============================================================================
 
+
 class _KeywordRule:
     """关键词规则：先检查关键词，再用正则提取番号"""
 
@@ -69,8 +70,8 @@ class _KeywordRule:
 class _PatternRule:
     """正则规则：直接用正则匹配"""
 
-    def __init__(self, pattern, formatter):
-        self.pattern = re.compile(pattern, re.I)
+    def __init__(self, pattern, formatter, flags=re.I):
+        self.pattern = re.compile(pattern, flags)
         self.formatter = formatter
 
     def match(self, norm):
@@ -149,7 +150,7 @@ _PATTERN_RULES: list[_PatternRule] = [
     _PatternRule(
         r"(T[23]8[-_]\d{3})",
         lambda m: m.group(1),
-        # 注意：TMA 番号区分大小写，不使用 re.I
+        flags=0,  # 注意：TMA 番号区分大小写，不使用 re.I
     ),
     # 东热 n, k 系列
     _PatternRule(
@@ -165,7 +166,7 @@ _PATTERN_RULES: list[_PatternRule] = [
     _PatternRule(
         r"(\d{6}[-_]\d{2,3})",
         lambda m: m.group(1),
-        # 注意：纯数字番号区分大小写无意义，但也不需要 re.I
+        flags=0,
     ),
 ]
 
@@ -185,6 +186,7 @@ def _format_no_sep(m):
 # =============================================================================
 # 核心：从文件路径提取番号
 # =============================================================================
+
 
 def get_id(filepath_str: str) -> str:
     """从给定的文件路径中提取番号（DVD ID）"""
@@ -274,6 +276,7 @@ def get_cid(filepath: str) -> str:
 # =============================================================================
 # 番号类型判断
 # =============================================================================
+
 
 def guess_av_type(avid: str) -> str:
     """识别给定的番号所属的分类: normal, fc2, cid, getchu, gyutto"""

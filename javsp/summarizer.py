@@ -48,6 +48,7 @@ def info_summary(movie: Movie, all_info: dict[str, MovieInfo]):
     # 按照优先级取出各个爬虫获取到的信息
     attrs = MovieInfo.get_merge_fields()
     covers, big_covers = [], []
+    field_sources = {}  # 记录每个字段来自哪个爬虫
     for name, data in all_info.items():
         absorbed = []
         # 遍历所有属性，如果某一属性当前值为空而爬取的数据中含有该属性，则采用爬虫的属性
@@ -70,6 +71,9 @@ def info_summary(movie: Movie, all_info: dict[str, MovieInfo]):
                 if (not current) and (incoming):
                     setattr(final_info, attr, incoming)
                     absorbed.append(attr)
+            # 记录字段来源（仅记录首次填充该字段的爬虫）
+            if attr in absorbed and attr not in field_sources:
+                field_sources[attr] = name
         if absorbed:
             logger.debug(f"从'{name}'中获取了字段: " + " ".join(absorbed))
     # 使用网站的番号作为番号
@@ -85,10 +89,15 @@ def info_summary(movie: Movie, all_info: dict[str, MovieInfo]):
         if id_weight:
             id_weight = {k: v for k, v in sorted(id_weight.items(), key=lambda x: len(x[1]), reverse=True)}
             final_id = list(id_weight.keys())[0]
+            original_id = movie.dvdid or movie.cid
+            if final_id and final_id != original_id:
+                logger.debug(f"番号更正: '{original_id}' -> '{final_id}' (来源: {', '.join(id_weight[final_id])})")
             if movie.dvdid:
                 final_info.dvdid = final_id
             else:
                 final_info.cid = final_id
+    else:
+        logger.debug(f"respect_site_avid=False, 保留文件名识别的番号: '{movie.dvdid or movie.cid}'")
     # javdb封面有水印，优先采用其他站点的封面
     javdb_cover = getattr(all_info.get("javdb"), "cover", None)
     if javdb_cover is not None:
@@ -116,7 +125,7 @@ def info_summary(movie: Movie, all_info: dict[str, MovieInfo]):
         final_info.genre.append("无码流出/破解")
 
     # 女优别名固定
-    if Cfg().crawler.normalize_actress_name and bool(final_info.actress_pics):
+    if Cfg().crawler.normalize_actress_name and final_info.actress:
         final_info.actress = [resolve_alias(i) for i in final_info.actress]
         if final_info.actress_pics:
             final_info.actress_pics = {resolve_alias(key): value for key, value in final_info.actress_pics.items()}
@@ -127,5 +136,6 @@ def info_summary(movie: Movie, all_info: dict[str, MovieInfo]):
         logger.error(f"所有抓取器均未获取到字段: {missing_keys}，抓取失败")
         return missing_keys
     # 必需字段均已获得了值：将最终的数据附加到movie
+    final_info.field_sources = field_sources
     movie.info = final_info
     return None

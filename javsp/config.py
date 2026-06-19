@@ -288,6 +288,8 @@ class Other(BaseConfig):
     interactive: bool
     check_update: bool
     auto_update: bool
+    debug: bool = False
+    auto_exit: bool = True
 
 
 def get_config_source():

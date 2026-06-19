@@ -75,16 +75,16 @@ def parse_data(movie: MovieInfo):
     score_tag = info.xpath(XP["score_img"])
     if score_tag:
         score = int(score_tag[0][5:7]) / 5  # /10*2
-        movie.score = str(score)
+        movie.score = f"{score:.2f}"
     serial_tag = info.xpath(XP["serial"])
     if serial_tag:
-        movie.serial = serial_tag[0]
+        movie.serial = str(serial_tag[0])
     preview_video_tag = info.xpath(XP["preview_video"])
     if preview_video_tag:
         movie.preview_video = preview_video_tag[0]
     plot_tag = info.xpath(XP["plot"])
     if plot_tag:
-        movie.plot = plot_tag[0]
+        movie.plot = str(plot_tag[0])
     preview_pics = html.xpath(XP["preview_pics"])
     if len(preview_pics) == 0:
         # 尝试搜索另一种布局下的封面，需要使用onerror过滤掉明明没有封面时网站往里面塞的默认URL
@@ -109,7 +109,6 @@ def parse_data(movie: MovieInfo):
 
 
 if __name__ == "__main__":
-
     logger.root.handlers[1].level = logging.DEBUG
 
     movie = MovieInfo("SCUTE-1177")

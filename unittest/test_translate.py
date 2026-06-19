@@ -15,7 +15,6 @@ from javsp.config import (
     AlibabaTranslateEngine,
     AnthropicEngine,
     BingTranslateEngine,
-    Cfg,
     GoogleTranslateEngine,
     OpenAICompatibleEngine,
 )
@@ -310,7 +309,7 @@ class TestGoogleTranslate:
             "ja",
         ]
         mock_resp.raise_for_status = MagicMock()
-        mock_req.get.return_value = mock_resp
+        mock_req.post.return_value = mock_resp
 
         result = translate("生意気な妹にニーハイを履かせ", engine)
         assert "过膝袜" in result
@@ -321,7 +320,7 @@ class TestGoogleTranslate:
         mock_resp.status_code = 200
         mock_resp.json.return_value = []
         mock_resp.raise_for_status = MagicMock()
-        mock_req.get.return_value = mock_resp
+        mock_req.post.return_value = mock_resp
 
         with pytest.raises(TranslateError) as exc_info:
             translate("テスト", engine)
@@ -329,7 +328,7 @@ class TestGoogleTranslate:
 
     @patch("javsp.web.translate._request")
     def test_exception(self, mock_req, engine):
-        mock_req.get.side_effect = Exception("Connection error")
+        mock_req.post.side_effect = Exception("Connection error")
         with pytest.raises(TranslateError) as exc_info:
             translate("テスト", engine)
         assert "google" in str(exc_info.value)
@@ -342,12 +341,12 @@ class TestGoogleTranslate:
         mock_resp.status_code = 200
         mock_resp.json.return_value = [[["test translation", "テスト", None, None, 10]]]
         mock_resp.raise_for_status = MagicMock()
-        mock_req.get.return_value = mock_resp
+        mock_req.post.return_value = mock_resp
 
         result = translate("テスト", engine)
         assert "test" in result.lower()
         # 验证 URL 中包含自定义语言参数
-        called_url = mock_req.get.call_args[0][0]
+        called_url = mock_req.post.call_args[0][0]
         assert "sl=ja" in called_url
         assert "tl=en" in called_url
 
@@ -670,7 +669,7 @@ class TestParametrized:
         mock_resp.status_code = 200
         mock_resp.json.return_value = [[["翻译结果", text, None, None, 10]]]
         mock_resp.raise_for_status = MagicMock()
-        mock_req.get.return_value = mock_resp
+        mock_req.post.return_value = mock_resp
 
         result = translate(text, google_engine)
         assert result == "翻译结果"
