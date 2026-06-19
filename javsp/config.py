@@ -4,7 +4,6 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Literal, TypeAlias
 
-import yaml
 from confz import BaseConfig, CLArgSource, EnvSource, FileSource
 from pydantic import ByteSize, Field, NonNegativeInt, PositiveInt, model_validator
 from pydantic_core import Url
@@ -14,8 +13,7 @@ from javsp.lib import resource_path
 
 _logger = logging.getLogger(__name__)
 
-DEFAULT_CONFIG_FILE = "config_default.yml"
-USER_CONFIG_FILE = "config.yml"
+USER_CONFIG_FILE = "config/config.yml"
 
 
 class Scanner(BaseConfig):
@@ -314,24 +312,13 @@ def get_config_source():
     args, _ = parser.parse_known_args()
     sources = []
 
-    # 1. 始终加载默认模板配置
-    default_config = resource_path(DEFAULT_CONFIG_FILE)
-    sources.append(FileSource(file=default_config))
-
-    # 2. 加载用户配置（如果存在且非空），覆盖默认值
+    # 1. 加载配置文件：-c 指定则用指定文件，否则使用 config.yml
     if args.config is not None:
         sources.append(FileSource(file=args.config))
     else:
-        user_config = resource_path(USER_CONFIG_FILE)
-        if Path(user_config).exists():
-            try:
-                with open(user_config, encoding="utf-8") as f:
-                    if yaml.safe_load(f) is not None:
-                        sources.append(FileSource(file=user_config))
-            except Exception:
-                pass
+        sources.append(FileSource(file=resource_path(USER_CONFIG_FILE)))
 
-    # 3. 环境变量和命令行参数优先级最高
+    # 2. 环境变量和命令行参数优先级最高
     sources.append(EnvSource(prefix="JAVSP_", allow_all=True, nested_separator="__"))
     sources.append(CLArgSource(prefix="o"))
     _config_sources = sources

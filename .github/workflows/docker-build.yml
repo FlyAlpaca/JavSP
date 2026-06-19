@@ -7,10 +7,10 @@ on:
       - "v*"
 
 env:
-  # Use docker.io for Docker Hub if empty
-  REGISTRY: ghcr.io
-  # github.repository as <account>/repo
-  IMAGE_NAME: ${{ github.repository }}
+  GHCR_REGISTRY: ghcr.io
+  GHCR_IMAGE: ${{ github.repository }}
+  DH_REGISTRY: docker.io
+  DH_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/javsp
 
 jobs:
   build-and-push:
@@ -23,39 +23,111 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v6
         with:
-          # Fetch all history for all tags and branches
           fetch-depth: 0
 
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v4
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Extract version from tag
+        id: version
+        run: |
+          # Tag 推送：v1.10.0.1 → 1.10.0.1；手动触发：用 git describe 或回退到 0.0.0.0
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            VERSION="${{ github.ref_name }}"
+            VERSION="${VERSION#v}"
+          else
+            VERSION="$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0.0")"
+            VERSION="${VERSION#v}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Docker meta
-        id: meta
+      # ──────────────────────────────────────────────
+      #  ghcr.io
+      # ──────────────────────────────────────────────
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.GHCR_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker meta (ghcr.io)
+        id: meta-ghcr
         uses: docker/metadata-action@v6
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          bake-target: javsp
+          images: ${{ env.GHCR_REGISTRY }}/${{ env.GHCR_IMAGE }}
+          tags: |
+            type=match,pattern=v(\d+\.\d+\.\d+\.\d+),group=1
+            type=raw,value=dev,enable=${{ github.event_name == 'workflow_dispatch' }}
           labels: |
             org.opencontainers.image.title=JavSP
             org.opencontainers.image.description=AV metadata scraper
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.licenses=GPL-3.0-only
 
-      - name: Build and push Docker image
+      - name: Build and push to ghcr.io
         uses: docker/build-push-action@v7
         with:
           context: .
           file: ./docker/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.meta-ghcr.outputs.tags }}
+          labels: ${{ steps.meta-ghcr.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Clean up old ghcr.io images
+        run: |
+          OWNER="${{ github.repository_owner }}"
+          PKG="javsp"
+          UNTAGGED=$(gh api --paginate "users/$OWNER/packages/container/$PKG/versions" \
+            --jq '.[] | select(.metadata.container.tags | length == 0) | .id')
+          if [ -z "$UNTAGGED" ]; then
+            echo "No untagged versions to clean up"
+            exit 0
+          fi
+          for ver in $UNTAGGED; do
+            echo "Deleting untagged version: $ver"
+            gh api --method DELETE "users/$OWNER/packages/container/$PKG/versions/$ver" || true
+          done
+          echo "Cleanup complete"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ──────────────────────────────────────────────
+      #  Docker Hub
+      # ──────────────────────────────────────────────
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.DH_REGISTRY }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker meta (Docker Hub)
+        id: meta-dh
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.DH_REGISTRY }}/${{ env.DH_IMAGE }}
+          tags: |
+            type=match,pattern=v(\d+\.\d+\.\d+\.\d+),group=1
+            type=raw,value=dev,enable=${{ github.event_name == 'workflow_dispatch' }}
+
+      - name: Build and push to Docker Hub
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./docker/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta-dh.outputs.tags }}
+          labels: ${{ steps.meta-dh.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

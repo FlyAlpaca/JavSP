@@ -2,7 +2,7 @@
 
 # Jav Scraper Package - Continuum
 
-> 本项目是 [JavSP](https://github.com/Yuukiy/JavSP) 的延续版本（community continue），在原项目基础上进行维护和改进。
+> 本项目是 [JavSP](https://github.com/Yuukiy/JavSP) 的延续版本（community continue），在 [darksoap/JavSP](https://github.com/darksoap/JavSP) 基础上增加 Docker 支持。
 
 **汇总多站点数据的AV元数据刮削器**
 
@@ -13,8 +13,7 @@
 **i18n**: This project currently supports only Chinese. However, if you're willing, you can [vote here](https://github.com/Yuukiy/JavSP/discussions/157) for the language you'd like to see added
 
 ![Python 3.14](https://img.shields.io/badge/python-3.14-green.svg)
-[![稳定版](https://img.shields.io/github/v/release/darksoap/JavSP)](https://github.com/darksoap/JavSP/releases/latest)
-[![尝鲜版 (CI)](https://img.shields.io/github/actions/workflow/status/darksoap/JavSP/cx_freeze.yml?label=%E5%B0%9D%E9%B2%9C%E7%89%88%20%28CI%29)](https://github.com/darksoap/JavSP/actions/workflows/cx_freeze.yml)
+[![Docker Build](https://img.shields.io/github/actions/workflow/status/FlyAlpaca/JavSP/docker-build.yml?label=docker)](https://github.com/FlyAlpaca/JavSP/pkgs/container/javsp)
 ![License](https://img.shields.io/github/license/Yuukiy/JavSP)
 [![LICENSE](https://img.shields.io/badge/license-Anti%20996-blue.svg)](https://github.com/996icu/996.ICU/blob/master/LICENSE)
 [![996.icu](https://img.shields.io/badge/link-996.icu-red.svg)](https://996.icu)
@@ -42,6 +41,39 @@
 
 功能修改日志：[ChangeLog](./CHANGELOG.md)
 
+## Docker
+
+支持 `linux/amd64` 和 `linux/arm64` 双架构。镜像托管在 GitHub Container Registry (ghcr.io) 和 Docker Hub。
+
+### 快速开始
+
+```bash
+docker run -d \
+  --name javsp \
+  -v /path/to/media:/media \
+  -v /path/to/config:/app/config \
+  ghcr.io/FlyAlpaca/javsp:latest
+```
+
+也可从 Docker Hub 拉取：
+
+```bash
+docker pull haobiubiu/javsp:latest
+```
+
+### 挂载说明
+
+| 容器路径 | 说明 |
+|-----------|------|
+| `/media` | 影片文件目录 |
+| `/app/config` | 配置文件目录，首次启动后会自动生成 `config_default.yml`，可在此基础上创建 `config.yml` 覆盖默认配置 |
+
+### 可用标签
+
+- `latest` — 最新的稳定版
+- `v1.10.0.x` — 指定版本
+- `dev` — 手动触发的开发构建
+
 ## [安装并运行JavSP](https://github.com/Yuukiy/JavSP/wiki/%E5%AE%89%E8%A3%85%E5%B9%B6%E8%BF%90%E8%A1%8CJavSP)
 
 ## 使用
@@ -58,7 +90,7 @@
 
 ## 问题反馈
 
-如果使用中遇到了 Bug，请[前往 Issue 区反馈](https://github.com/darksoap/JavSP/issues)（提问前请先搜索是否已有类似问题）
+如果使用中遇到了 Bug，请[前往 Issue 区反馈](https://github.com/FlyAlpaca/JavSP/issues)（提问前请先搜索是否已有类似问题）
 
 ## 参与贡献
 
