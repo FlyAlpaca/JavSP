@@ -24,7 +24,7 @@ scanner:
     - 'Carib(beancom)?'
     - '[^a-z\d](f?hd|lt)[^a-z\d]'
   # 整理哪个文件夹下的影片？（此项留空时将在运行时询问）
-  input_directory: null
+  input_directory: '/media'
   # 哪些后缀的文件应当视为影片？
   filename_extensions: [.3gp, .avi, .f4v, .flv, .iso, .m2ts, .m4v, .mkv, .mov, .mp4, .mpeg, .rm, .rmvb, .ts, .vob, .webm, .wmv, .strm, .mpg]
   # 扫描影片文件时忽略指定的文件夹
@@ -33,7 +33,7 @@ scanner:
   # 格式要求：https://docs.pydantic.dev/2.0/usage/types/bytesize/
   minimum_size: 232MiB
   skip_nfo_dir: yes
-  manual: yes
+  manual: no
 ################################
 network:
   # 设置代理服务器地址，支持 http, socks5/socks5h 代理，比如'http://127.0.0.1:1080'
@@ -89,7 +89,7 @@ summarizer:
   filemove_log: false
 
   # 路径相关的选项
-  path: 
+  path:
     # 存放影片、封面等文件的文件夹路径
     output_folder_pattern: '#整理完成/{actress}/[{num}] {title}'
     # 影片、封面、nfo信息文件等的文件名将基于下面的规则来创建
@@ -150,7 +150,7 @@ summarizer:
       # NOTE: 此处无法直接对应，请参照注释手动填入
       # 不设置 engine 表示禁用图像剪裁
       ## 使用Slimeface: {{{
-      # engine: 
+      # engine:
       #   name: slimeface
       ## }}}
 
@@ -204,11 +204,11 @@ translator:
   ## }}}
 
   ## 使用 Bing 翻译（免费，无需 API Key，推荐）: {{{
-  # engine:
-  #   type: bing
-  #   # source_language 设为 auto 时自动检测源语言（不传 from 参数）
-  #   source_language: auto
-  #   target_language: zh-Hans
+  engine:
+    type: bing
+    # source_language 设为 auto 时自动检测源语言（不传 from 参数）
+    source_language: auto
+    target_language: zh-Hans
   ## }}}
 
   ## 使用阿里翻译（免费，无需 API Key，大陆可用）: {{{

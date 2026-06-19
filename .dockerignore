@@ -6,6 +6,15 @@
 **/*.log
 unittest/
 tools/
-docker/
-*.md
+docker/*
+!docker/entrypoint.sh
+CHANGELOG.md
 LICENSE
+.git/
+# 用户配置文件不入镜像，运行时通过 -v 挂载
+config.yml
+# 以下图片仅 Windows GUI/打包使用，Docker 运行时不需要
+image/JavSP.svg
+image/JavSP.ico
+# 版本文件由 CI build-arg 生成，不依赖本地
+javsp/VERSION

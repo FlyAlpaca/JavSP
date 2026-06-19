@@ -19,9 +19,20 @@ from tqdm import tqdm
 
 from javsp.print import TqdmOut
 
-# 将StreamHandler的stream修改为TqdmOut，以与Tqdm协同工作
+# 初始化 logging，输出到 stdout（Docker 实时日志窗口默认只显示 stdout）
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s %(levelname)s:%(name)s: %(message)s",
+    stream=sys.stdout,
+)
+
+# 关闭第三方库的 DEBUG 日志
+logging.getLogger("PIL").setLevel(logging.WARNING)
+
+# 将毫秒分隔符从逗号改为点号，并将 StreamHandler 的 stream 改为 TqdmOut 以与 tqdm 协同
 root_logger = logging.getLogger()
 for handler in root_logger.handlers:
+    handler.formatter.default_msec_format = "%s.%03d"
     if type(handler) is logging.StreamHandler:
         handler.stream = TqdmOut
 
@@ -129,7 +140,9 @@ def _process_single_movie(movie, total_step, stats, cfg):
                 os.makedirs(movie.save_dir)
         except OSError as e:
             movie_id = movie.dvdid or movie.cid or "未知番号"
-            raise Exception(f"[{movie_id}] 创建目标文件夹失败: {movie.save_dir}: {e}") from e
+            raise Exception(
+                f"[{movie_id}] 创建目标文件夹失败: {movie.save_dir}: {e}"
+            ) from e
 
         inner_bar.set_description("下载封面图片")
         movie_id = movie.dvdid or movie.cid or "未知番号"
@@ -162,7 +175,9 @@ def _process_single_movie(movie, total_step, stats, cfg):
         step_with_id("处理封面", lambda: process_poster(movie))
 
         if cfg.summarizer.extra_fanarts.enabled:
-            scrape_interval = cfg.summarizer.extra_fanarts.scrap_interval.total_seconds()
+            scrape_interval = (
+                cfg.summarizer.extra_fanarts.scrap_interval.total_seconds()
+            )
             inner_bar.set_description("下载剧照")
             if movie.info.preview_pics:
                 extrafanartdir = os.path.join(movie.save_dir, "extrafanart")
@@ -176,9 +191,13 @@ def _process_single_movie(movie, total_step, stats, cfg):
                         if valid_pic(fanart_destination):
                             filesize = get_fmt_size(fanart_destination)
                             width, height = get_pic_size(fanart_destination)
-                            elapsed = time.strftime("%M:%S", time.gmtime(info["elapsed"]))
+                            elapsed = time.strftime(
+                                "%M:%S", time.gmtime(info["elapsed"])
+                            )
                             speed = get_fmt_size(info["rate"]) + "/s"
-                            logger.info(f"已下载剧照{pic_url} {idx}.png: {width}x{height}, {filesize} [{elapsed}, {speed}]")
+                            logger.info(
+                                f"已下载剧照{pic_url} {idx}.png: {width}x{height}, {filesize} [{elapsed}, {speed}]"
+                            )
                         else:
                             logger.warning(f"下载剧照{idx}失败: {pic_url}")
                     except Exception as e:
@@ -190,7 +209,10 @@ def _process_single_movie(movie, total_step, stats, cfg):
         step_with_id("写入NFO", lambda: write_nfo(movie.info, movie.nfo_file))
         if cfg.summarizer.move_files:
             inner_bar.set_description("移动影片文件")
-            moved_files = step_with_id("移动影片文件", lambda: movie.rename_files(cfg.summarizer.path.hard_link))
+            moved_files = step_with_id(
+                "移动影片文件",
+                lambda: movie.rename_files(cfg.summarizer.path.hard_link),
+            )
             if cfg.summarizer.filemove_log and moved_files:
                 movie_id = movie.dvdid or movie.cid or "未知番号"
                 for src, dst in moved_files:
@@ -204,7 +226,14 @@ def _process_single_movie(movie, total_step, stats, cfg):
 
 def RunNormalMode(all_movies, cfg):
     """普通整理模式"""
-    stats = {"total": len(all_movies), "success": 0, "failed": 0, "success_list": [], "failed_list": [], "filemove_list": []}
+    stats = {
+        "total": len(all_movies),
+        "success": 0,
+        "failed": 0,
+        "success_list": [],
+        "failed_list": [],
+        "filemove_list": [],
+    }
 
     # 基础步骤：并发抓取(1) + 汇总(1) + 生成文件名(1) + 校验save_dir(1) + 下载封面(1) + 处理封面(1) + 写入NFO(1) = 7
     total_step = 7
@@ -220,7 +249,9 @@ def RunNormalMode(all_movies, cfg):
     for movie in outer_bar:
         try:
             _process_single_movie(movie, total_step, stats, cfg)
-            if movie != all_movies[-1] and cfg.crawler.sleep_after_scraping > Duration(0):
+            if movie != all_movies[-1] and cfg.crawler.sleep_after_scraping > Duration(
+                0
+            ):
                 time.sleep(cfg.crawler.sleep_after_scraping.total_seconds())
             return_movies.append(movie)
             stats["success"] += 1
