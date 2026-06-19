@@ -236,3 +236,42 @@ def test_scan_movies__n_video_with_ad(prepare_files):
     dvdids = {m.dvdid for m in movies}
     assert dvdids == {"ABC-123", "DEF-456"}
     assert all(len(i.files) == 1 for i in movies)
+
+
+# 多个分片以 -CDx 编号（无点号分隔）
+@pytest.mark.parametrize("files", [("ABC-123-CD1.mp4", "ABC-123-CD2.mp4", "ABC-123-CD3.mp4")])
+def test_scan_movies__cdx_dash(prepare_files):
+    movies = scan_movies(prepare_files)
+    assert len(movies) == 1
+    assert movies[0].dvdid == "ABC-123"
+    assert len(movies[0].files) == 3
+    basenames = [os.path.basename(i) for i in movies[0].files]
+    assert basenames[0] == "ABC-123-CD1.mp4"
+    assert basenames[1] == "ABC-123-CD2.mp4"
+    assert basenames[2] == "ABC-123-CD3.mp4"
+
+
+# 多个分片以纯数字 -1/-2 编号（无 CD 字母、无点号分隔）
+@pytest.mark.parametrize("files", [("ABC-123-1.mp4", "ABC-123-2.mp4", "ABC-123-3.mp4")])
+def test_scan_movies__dash_numbers(prepare_files):
+    movies = scan_movies(prepare_files)
+    assert len(movies) == 1
+    assert movies[0].dvdid == "ABC-123"
+    assert len(movies[0].files) == 3
+    basenames = [os.path.basename(i) for i in movies[0].files]
+    assert basenames[0] == "ABC-123-1.mp4"
+    assert basenames[1] == "ABC-123-2.mp4"
+    assert basenames[2] == "ABC-123-3.mp4"
+
+
+# 多个分片以大小写混合的字母编号
+@pytest.mark.parametrize("files", [("ABC-123-a.mp4", "ABC-123-B.mp4", "ABC-123-C.mp4")])
+def test_scan_movies__mixed_case_letters(prepare_files):
+    movies = scan_movies(prepare_files)
+    assert len(movies) == 1
+    assert movies[0].dvdid == "ABC-123"
+    assert len(movies[0].files) == 3
+    basenames = [os.path.basename(i) for i in movies[0].files]
+    assert basenames[0] == "ABC-123-a.mp4"
+    assert basenames[1] == "ABC-123-B.mp4"
+    assert basenames[2] == "ABC-123-C.mp4"

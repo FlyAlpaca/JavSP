@@ -59,8 +59,13 @@ def parse_data(movie: MovieInfo):
     html = resp2html(r, base_encode)
     container = html.xpath(XP["info_container"])
 
+    producer = None
+    genre = []
+    publish_date = None
     for row in container:
         key = row.xpath(".//dt/text()")
+        if not key:
+            continue
         if key[0] == "サークル":
             producer = "".join(row.xpath(".//dd/a/text()"))
         elif key[0] == "ジャンル":
@@ -68,10 +73,14 @@ def parse_data(movie: MovieInfo):
         elif key[0] == "配信開始日":
             date = row.xpath(".//dd/text()")
             date_str = "".join(date)
-            date_time = time.strptime(date_str, "%Y年%m月%d日")
-            publish_date = time.strftime("%Y-%m-%d", date_time)
+            try:
+                date_time = time.strptime(date_str, "%Y年%m月%d日")
+                publish_date = time.strftime("%Y-%m-%d", date_time)
+            except ValueError:
+                logger.debug(f"gyutto日期解析失败: {date_str}")
 
-    plot = html.xpath(XP["plot"])[0]
+    plot_tags = html.xpath(XP["plot"])
+    plot = plot_tags[0] if plot_tags else None
 
     movie.title = get_movie_title(html)
     movie.cover = get_movie_img(html, 0)
@@ -79,6 +88,9 @@ def parse_data(movie: MovieInfo):
     movie.dvdid = id_uc
     movie.url = url
     movie.producer = producer
+    movie.genre = genre if genre else None
+    movie.publish_date = publish_date
+    movie.plot = plot
     # movie.actress = actress
     # movie.duration = duration
     movie.publish_date = publish_date
@@ -87,7 +99,6 @@ def parse_data(movie: MovieInfo):
 
 
 if __name__ == "__main__":
-
     logger.root.handlers[1].level = logging.DEBUG
     movie = MovieInfo("gyutto-266923")
 

@@ -67,3 +67,8 @@
 #    hard_link: false
 #  nfo:
 #    title_pattern: '{num} {title}'
+
+# --- 调试模式 ---
+# 启用后输出详细的爬虫抓取日志、网络请求详情等
+#other:
+#  debug: true

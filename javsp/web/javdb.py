@@ -138,7 +138,7 @@ def get_user_info(site, cookies):
         request.cookies = cookies
         html = request.get_html(f"https://{site}/users/profile")
     except Exception as e:
-        logger.info("JavDB: 获取用户信息时出错")
+        logger.warning("JavDB: 获取用户信息时出错")
         logger.debug(e, exc_info=True)
         return
     # 扫描浏览器得到的Cookies对应的临时域名可能会过期，因此需要先判断域名是否仍然指向JavDB的站点
@@ -208,7 +208,12 @@ def parse_data(movie: MovieInfo):
         movie.preview_video = preview_video
     dvdid = xpath_first(info, XP["info_dvdid"], label=_SITE).text_content()
     publish_date = xpath_first(info, XP["info_date"], label=_SITE).getnext().text
-    duration = xpath_first(info, XP["info_duration"], label=_SITE).getnext().text.replace("分鍾", "").strip()
+    duration_tag = xpath_first(info, XP["info_duration"], label=_SITE)
+    duration = (
+        duration_tag.getnext().text.replace("分鍾", "").strip()
+        if duration_tag and duration_tag.getnext() and duration_tag.getnext().text
+        else None
+    )
     director_tag = xpath_first(info, XP["info_director"], required=False, label=_SITE)
     if director_tag is not None:
         movie.director = director_tag.getnext().text_content().strip()
@@ -227,9 +232,10 @@ def parse_data(movie: MovieInfo):
         movie.serial = serial_tag.getnext().text_content().strip()
     score_tag = xpath_first(info, XP["score_stars"], required=False, label=_SITE)
     if score_tag is not None:
-        score_str = score_tag.tail
-        score = re.search(r"([\d.]+)分", score_str).group(1)
-        movie.score = f"{float(score) * 2:.2f}"
+        score_str = score_tag.tail or ""
+        score_match = re.search(r"([\d.]+)分", score_str)
+        if score_match:
+            movie.score = f"{float(score_match.group(1)) * 2:.2f}"
     genre_tags = info.xpath(XP["info_genre"])
     genre, genre_id = [], []
     for tag in genre_tags:
@@ -243,7 +249,7 @@ def parse_data(movie: MovieInfo):
     actors_tag = xpath_first(info, XP["info_actor"], label=_SITE)
     all_actors = actors_tag.xpath("a/text()")
     genders = actors_tag.xpath("strong/text()")
-    actress = [i for i in all_actors if genders[all_actors.index(i)] == "♀"]
+    actress = [actor for actor, gender in zip(all_actors, genders) if gender == "♀"]
     magnet = container.xpath(XP["magnet"])
 
     movie.dvdid = dvdid

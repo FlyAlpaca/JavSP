@@ -7,7 +7,6 @@ import sys
 
 from tqdm import tqdm
 
-
 file_dir = os.path.dirname(__file__)
 data_dir = os.path.abspath(os.path.join(file_dir, "../unittest/data"))
 sys.path.insert(0, os.path.abspath(os.path.join(file_dir, "..")))

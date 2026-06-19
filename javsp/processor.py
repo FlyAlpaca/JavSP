@@ -13,7 +13,7 @@ from javsp.cropper import get_cropper
 from javsp.datatype import Movie
 from javsp.file import get_fmt_size, get_remaining_path_len, replace_illegal_chars
 from javsp.func import split_by_punc
-from javsp.image import LabelPostion, add_label_to_poster, get_pic_size, valid_pic
+from javsp.image import LabelPosition, add_label_to_poster, get_pic_size, valid_pic
 from javsp.lib import resource_path
 from javsp.web.base import download
 
@@ -53,7 +53,6 @@ def generate_names(movie: Movie):
     info.nfo_title = nfo_title
 
     # 使用字典填充模板，生成相关文件的路径（多分片影片要考虑CD-x部分）
-    "" if len(movie.files) <= 1 else "-CD1"
     if info.title_break is not None:
         title_break = info.title_break
     else:
@@ -215,7 +214,7 @@ def process_poster(movie: Movie):
 
     if Cfg().summarizer.cover.add_label:
         if movie.hard_sub:
-            fanart_cropped = add_label_to_poster(fanart_cropped, SUBTITLE_MARK_FILE, LabelPostion.BOTTOM_RIGHT)
+            fanart_cropped = add_label_to_poster(fanart_cropped, SUBTITLE_MARK_FILE, LabelPosition.BOTTOM_RIGHT)
         if movie.uncensored:
-            fanart_cropped = add_label_to_poster(fanart_cropped, UNCENSORED_MARK_FILE, LabelPostion.BOTTOM_LEFT)
+            fanart_cropped = add_label_to_poster(fanart_cropped, UNCENSORED_MARK_FILE, LabelPosition.BOTTOM_LEFT)
     fanart_cropped.save(movie.poster_file)

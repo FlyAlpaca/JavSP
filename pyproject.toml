@@ -41,7 +41,6 @@ dev = [
 
 [project.scripts]
 javsp = "javsp.__main__:entry"
-server = "javsp.server:entry"
 
 [project.urls]
 Repository = "https://github.com/Yuukiy/JavSP"

@@ -16,14 +16,14 @@ import os
 import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from javsp.config import cfg
 from javsp.web.base import get_html
+from javsp.web.proxyfree import get_proxy_free_url
 
 
 def get_javbus_genre():
     """获取JavBus的genre各语言对照列表"""
     record = {}  # {id: [cn_url, zh_tw, ja, en]}
-    base_url = cfg.ProxyFree.javbus
+    base_url = get_proxy_free_url("javbus")
     subsite_urls = {
         "normal": ["/genre", "/ja/genre", "/en/genre"],
         "uncensored": ["/uncensored/genre", "/ja/uncensored/genre", "/en/uncensored/genre"],
@@ -54,7 +54,7 @@ def get_javdb_genre():
     # JavDB的genre id有重复且各子站内的含义不同，但是'tags?c2=1'的形式不重复，所以可以合并成一个数据文件
     # FC2 部分的数据需要登录，待实现FC2的解析功能时一并添加
     record = {}
-    base_url = cfg.ProxyFree.javdb
+    base_url = get_proxy_free_url("javdb")
     subsite_urls = {
         "normal": ["/tags?locale=zh", "/tags?locale=en"],
         "uncensored": ["/tags/uncensored?locale=zh", "/tags/uncensored?locale=en"],
@@ -87,7 +87,7 @@ def get_javdb_genre():
 def get_avsox_genre():
     """获取AVSOX的genre各语言对照列表"""
     record = {}
-    base_url = cfg.ProxyFree.avsox
+    base_url = get_proxy_free_url("avsox")
     languages = ["cn", "tw", "en", "ja"]
     for lang in languages:
         html = get_html(f"{base_url}/{lang}/genre")
@@ -107,7 +107,7 @@ def get_avsox_genre():
 def get_javlib_genre():
     """获取JavLibrary的genre各语言对照列表"""
     record = {}
-    base_url = cfg.ProxyFree.javlib
+    base_url = get_proxy_free_url("javlib")
     languages = ["cn", "tw", "en", "ja"]
     for lang in languages:
         html = get_html(f"{base_url}/{lang}/genres.php")

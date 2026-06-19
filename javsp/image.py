@@ -5,7 +5,7 @@ from enum import Enum
 
 from PIL import Image, ImageOps
 
-__all__ = ["valid_pic", "get_pic_size", "add_label_to_poster", "LabelPostion"]
+__all__ = ["valid_pic", "get_pic_size", "add_label_to_poster", "LabelPosition"]
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ def valid_pic(pic_path):
 
 
 # 位置枚举
-class LabelPostion(Enum):
+class LabelPosition(Enum):
     """水印位置枚举"""
 
     TOP_LEFT = 1
@@ -31,18 +31,18 @@ class LabelPostion(Enum):
     BOTTOM_RIGHT = 4
 
 
-def add_label_to_poster(poster: Image.Image, mark_pic_file: Image.Image, pos: LabelPostion) -> Image.Image:
+def add_label_to_poster(poster: Image.Image, mark_pic_file: Image.Image, pos: LabelPosition) -> Image.Image:
     """向poster中添加标签(水印)"""
     mark_img = mark_pic_file.convert("RGBA")
     r, g, b, a = mark_img.split()
     # 计算水印位置
-    if pos == LabelPostion.TOP_LEFT:
+    if pos == LabelPosition.TOP_LEFT:
         box = (0, 0)
-    elif pos == LabelPostion.TOP_RIGHT:
+    elif pos == LabelPosition.TOP_RIGHT:
         box = (poster.size[0] - mark_img.size[0], 0)
-    elif pos == LabelPostion.BOTTOM_LEFT:
+    elif pos == LabelPosition.BOTTOM_LEFT:
         box = (0, poster.size[1] - mark_img.size[1])
-    elif pos == LabelPostion.BOTTOM_RIGHT:
+    elif pos == LabelPosition.BOTTOM_RIGHT:
         box = (poster.size[0] - mark_img.size[0], poster.size[1] - mark_img.size[1])
     poster.paste(mark_img, box=box, mask=a)
     return poster

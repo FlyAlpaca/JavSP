@@ -38,8 +38,7 @@ __all__ = [
 
 headers = {
     "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
     )
 }
 
@@ -222,7 +221,7 @@ def get_html(url, encoding="utf-8"):
     return html
 
 
-def resp2html(resp, encoding="utf-8") -> lxml.html.HtmlComment:
+def resp2html(resp, encoding="utf-8") -> lxml.html.HtmlElement:
     """将request返回的response转换为经lxml解析后的document"""
     text = get_resp_text(resp, encoding=encoding)
     html = lxml.html.fromstring(text)
