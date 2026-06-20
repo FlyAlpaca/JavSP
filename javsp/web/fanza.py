@@ -119,8 +119,8 @@ def _parse_gql_content(content, movie):
     """从GraphQL返回的数据解析影片信息"""
     movie.cid = content["id"]
     movie.title = content.get("title", "")
-    movie.cover = content.get("packageImage", {}).get("largeUrl")
-    movie.big_cover = content.get("packageImage", {}).get("mediumUrl")
+    movie.cover = content.get("packageImage", {}).get("mediumUrl")
+    movie.big_cover = content.get("packageImage", {}).get("largeUrl")
 
     # 日期：优先使用deliveryStartDate（配信開始日）
     date_str = content.get("deliveryStartDate")

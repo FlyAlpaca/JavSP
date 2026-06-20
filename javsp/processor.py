@@ -113,8 +113,9 @@ def generate_names(movie: Movie):
                 return legalize_info()
     else:
         # 以防万一，当整理路径非常深或者标题起始很长一段没有标点符号时，硬性截短生成的名称
-        copyd["title"] = copyd["title"][:remaining]
-        copyd["rawtitle"] = copyd["rawtitle"][:remaining]
+        # remaining 为负数时表示需要削减的字符数，确保截断后长度不为负
+        copyd["title"] = copyd["title"][: max(0, len(copyd["title"]) + remaining)]
+        copyd["rawtitle"] = copyd["rawtitle"][: max(0, len(copyd["rawtitle"]) + remaining)]
         # 如果不整理文件，则保存抓取的数据到当前目录
         if not Cfg().summarizer.move_files:
             save_dir = os.path.dirname(movie.files[0])
@@ -130,6 +131,11 @@ def generate_names(movie: Movie):
         movie.nfo_file = os.path.join(save_dir, Cfg().summarizer.nfo.basename_pattern.format(**copyd) + ".nfo")
         movie.fanart_file = os.path.join(save_dir, Cfg().summarizer.fanart.basename_pattern.format(**copyd) + ".jpg")
         movie.poster_file = os.path.join(save_dir, Cfg().summarizer.cover.basename_pattern.format(**copyd) + ".jpg")
+
+        # 截断后仍超长则给出明确警告，后续文件操作会暴露实际问题
+        long_path = os.path.join(save_dir, basename + longest_ext)
+        if get_remaining_path_len(os.path.abspath(long_path)) <= 0:
+            logger.warning(f"生成的整理路径仍超过长度限制，请检查命名模板或输出目录: {long_path}")
 
         return legalize_info()
 

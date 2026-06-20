@@ -52,7 +52,11 @@ def select_folder(default_dir=""):
     window.withdraw()
     ico_path = resource_path("image/JavSP.ico")
     if os.path.isfile(ico_path):
-        window.iconbitmap(ico_path)
+        try:
+            window.iconbitmap(ico_path)
+        except Exception:
+            # iconbitmap 在部分平台（如 Linux/macOS）不受支持，忽略即可
+            pass
     path = filedialog.askdirectory(initialdir=default_dir)
     if path != "":
         return os.path.normpath(path)

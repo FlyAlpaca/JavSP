@@ -17,9 +17,10 @@ import colorama
 from colorama import Fore, Style
 from tqdm import tqdm
 
-from javsp.print import TqdmOut
+from javsp.print import TqdmOut, install
 
 # 将StreamHandler的stream修改为TqdmOut，以与Tqdm协同工作
+install()
 root_logger = logging.getLogger()
 for handler in root_logger.handlers:
     if type(handler) is logging.StreamHandler:
@@ -247,7 +248,7 @@ def RunNormalMode(all_movies, cfg):
             source_summary = ""
             if movie.info and movie.info.field_sources:
                 by_crawler = _group_sources_by_crawler(movie.info.field_sources)
-                source_summary = " | " + ", ".join(f"{c}[{len(fs)}]" for c, fs in by_crawler.items())
+                source_summary = ", ".join(f"{c}[{len(fs)}]" for c, fs in by_crawler.items())
             stats["success"] += 1
             stats["success_list"].append((movie_id, source_summary))
         except Exception as e:
@@ -281,7 +282,9 @@ def print_summary(stats):
         print("-" * width)
         print("  成功详情:")
         for movie_id, source_summary in stats["success_list"]:
-            print(f"    {movie_id}{source_summary}")
+            print(f"    {movie_id}")
+            if source_summary:
+                print(f"      {source_summary}")
     if stats["failed_list"]:
         print("-" * width)
         print("  失败详情:")

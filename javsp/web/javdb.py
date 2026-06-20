@@ -211,7 +211,7 @@ def parse_data(movie: MovieInfo):
     duration_tag = xpath_first(info, XP["info_duration"], label=_SITE)
     duration = (
         duration_tag.getnext().text.replace("分鍾", "").strip()
-        if duration_tag and duration_tag.getnext() and duration_tag.getnext().text
+        if duration_tag is not None and duration_tag.getnext() is not None and duration_tag.getnext().text
         else None
     )
     director_tag = xpath_first(info, XP["info_director"], required=False, label=_SITE)

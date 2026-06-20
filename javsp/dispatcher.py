@@ -97,12 +97,13 @@ def parallel_crawler(movie: Movie, tqdm_bar=None):
     thread_pool = []
     for mod_partial, info in all_info.items():
         mod = f"javsp.web.{mod_partial}"
-        parser = getattr(sys.modules[mod], "parse_data")
-        # 将all_info中的info实例传递给parser，parser抓取完成后，info实例的值已经完成更新
-        if hasattr(sys.modules[mod], "parse_data_raw"):
-            th = threading.Thread(target=wrapper, name=mod, args=(parser, info, 1))
+        # 优先使用带数据清洗的 parse_clean_data（如 javdb/javbus 会进行 genre 归一化）
+        if hasattr(sys.modules[mod], "parse_clean_data"):
+            parser = getattr(sys.modules[mod], "parse_clean_data")
         else:
-            th = threading.Thread(target=wrapper, name=mod, args=(parser, info, Cfg().network.retry))
+            parser = getattr(sys.modules[mod], "parse_data")
+        # 将all_info中的info实例传递给parser，parser抓取完成后，info实例的值已经完成更新
+        th = threading.Thread(target=wrapper, name=mod, args=(parser, info, Cfg().network.retry))
         th.start()
         thread_pool.append(th)
     # 等待所有线程结束
@@ -140,6 +141,6 @@ def parallel_crawler(movie: Movie, tqdm_bar=None):
         failed_names = {name for name, _ in failed_crawlers}
         logger.info(f"部分抓取器失败: {', '.join(sorted(failed_names))}")
 
-    # 删除all_info中键名中的'web.'
-    all_info = {k[4:]: v for k, v in all_info.items()}
+    # 删除all_info中键名中的'javsp.web.'前缀
+    all_info = {k.replace("javsp.web.", ""): v for k, v in all_info.items()}
     return all_info

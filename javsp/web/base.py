@@ -308,7 +308,8 @@ def urlretrieve(url, filename=None, reporthook=None, extra_headers=None):
     if extra_headers:
         for k, v in extra_headers.items():
             req.headers[k] = v
-    with contextlib.closing(req.get(url, delay_raise=True, timeout=Cfg().network.timeout.total_seconds() * 3)) as r:
+    with contextlib.closing(req.get(url, timeout=Cfg().network.timeout.total_seconds() * 3)) as r:
+        r.raise_for_status()
         header = r.headers
         with open(filename, "wb") as fp:
             bs = 1024
@@ -330,7 +331,7 @@ def urlretrieve(url, filename=None, reporthook=None, extra_headers=None):
 def download(url, output_path, desc=None):
     """下载指定url的资源"""
     # 支持“下载”本地资源，以供fc2fan的本地镜像所使用
-    if not url.startswith("http"):
+    if not url.startswith(("http://", "https://")):
         start_time = time.time()
         shutil.copyfile(url, output_path)
         filesize = os.path.getsize(url)
