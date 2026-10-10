@@ -23,15 +23,15 @@ def test_remove_trail_actor_in_title():
     assert title2 == run(combine([title2] + names), names)
 
 
-def test_noninteractive_scan_directory_never_prompts(tmp_path, monkeypatch):
-    monkeypatch.setattr(func, "prompt", lambda *args: raise_prompt())
+def test_scan_directory_never_prompts(tmp_path, monkeypatch):
+    monkeypatch.setattr("builtins.input", lambda *args: raise_prompt())
     movie_file = tmp_path / "movie.mp4"
     movie_file.touch()
-    assert func.get_scan_dir(tmp_path, interactive=False) == str(tmp_path)
-    assert func.get_scan_dir(movie_file, interactive=False) is None
-    assert func.get_scan_dir(tmp_path / "missing", interactive=False) is None
-    assert func.get_scan_dir(None, interactive=False) is None
+    assert func.get_scan_dir(tmp_path) == str(tmp_path)
+    assert func.get_scan_dir(movie_file) is None
+    assert func.get_scan_dir(tmp_path / "missing") is None
+    assert func.get_scan_dir(None) is None
 
 
 def raise_prompt():
-    raise AssertionError("非交互模式不应提示选目录")
+    raise AssertionError("容器批处理不应提示选目录")

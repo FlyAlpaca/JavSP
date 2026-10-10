@@ -23,14 +23,6 @@ def test_git_tag_fallback(monkeypatch, tag):
     assert version.get_version() == "2.0.0"
 
 
-def test_frozen_version_file_fallback(monkeypatch, tmp_path):
-    monkeypatch.setattr(version.meta, "version", lambda name: "0.0.0")
-    monkeypatch.setattr("subprocess.run", lambda *a, **kw: SimpleNamespace(returncode=1))
-    monkeypatch.setattr(version, "__file__", str(tmp_path / "__version__.py"))
-    (tmp_path / "VERSION").write_text("2.0.0\n")
-    assert version.get_version() == "2.0.0"
-
-
 def test_release_workflow_matches_both_version_formats():
     root = Path(__file__).resolve().parents[2]
     workflow = yaml.load((root / ".github/workflows/docker-build.yml").read_text(), Loader=yaml.BaseLoader)

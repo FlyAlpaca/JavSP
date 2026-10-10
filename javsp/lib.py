@@ -2,10 +2,9 @@
 
 import os
 import re
-import sys
 from pathlib import Path
 
-__all__ = ["re_escape", "resource_path", "strftime_to_minutes", "detect_special_attr", "prompt"]
+__all__ = ["re_escape", "resource_path", "strftime_to_minutes", "detect_special_attr"]
 
 
 _special_chars_map = {i: "\\" + chr(i) for i in b"()[]{}?*+|^$\\."}
@@ -18,13 +17,8 @@ def re_escape(s: str) -> str:
 
 
 def resource_path(path: str) -> str:
-    """获取一个随代码打包的文件在解压后的路径"""
-    if getattr(sys, "frozen", False):
-        base_path = os.path.dirname(sys.executable)
-        return os.path.join(base_path, path)
-    else:
-        path_joined = Path(__file__).parent.parent / path
-        return str(path_joined)
+    """获取随项目发布的运行时资源路径。"""
+    return str(Path(__file__).parent.parent / path)
 
 
 def strftime_to_minutes(s: str) -> int:
@@ -74,18 +68,3 @@ def detect_special_attr(filepath: str, avid: str = None) -> str:
     # 最终格式化
     result = "".join(sorted(set(result), reverse=True))
     return result
-
-
-def prompt(message: str, what: str) -> str:
-    """交互式输入提示，非交互模式下直接退出"""
-    from javsp.config import Cfg
-
-    if Cfg().other.interactive:
-        return input(message)
-    else:
-        print(f"缺少{what}")
-        exit(1)
-
-
-if __name__ == "__main__":
-    print(detect_special_attr("ipx-177cd1.mp4", "IPX-177"))

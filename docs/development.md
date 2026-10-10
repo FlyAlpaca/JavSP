@@ -4,7 +4,7 @@
 
 | 路径 | 用途 |
 | --- | --- |
-| `javsp/` | CLI、配置、基础数据类型和公共辅助模块 |
+| `javsp/` | 容器命令入口、配置、基础数据类型和公共辅助模块 |
 | `javsp/workflow/` | 流水线编排、阶段事件与结果契约 |
 | `javsp/scan/` | 番号识别与本地文件扫描 |
 | `javsp/crawl/` | 抓取调度与 R18.dev 本地数据源 |
@@ -13,22 +13,22 @@
 | `javsp/publish/` | 路径规划、图片及 NFO 生成、文件提交和恢复 |
 | `javsp/cropper/` | 海报裁剪后端 |
 | `data/` | 运行时分类映射和演员别名，随安装包发布 |
-| `image/` | README 标志、Windows 图标和运行时水印 |
+| `image/` | 运行时水印 |
 | `tests/unit/` | 本地测试，网络请求由 mock 或本地 HTTP 服务提供 |
-| `tests/integration/` | 在线站点测试和 Windows 可执行文件测试 |
+| `tests/integration/` | 在线站点测试 |
 | `tests/data/` | JSON 样本及番号识别数据，不随 wheel 发布 |
 | `tools/` | 抓取样本、更新分类表和查询版本的维护脚本 |
 | `docker/` | 容器构建和入口脚本 |
 | `docs/` | 开发文档 |
 
 `pyproject.toml` 管理依赖、wheel/sdist 构建及检查配置，`uv.lock` 锁定依赖。
-根目录的 `setup.py` 专用于 cx_Freeze 可执行文件构建，仍需保留。
+运行产物仅为 Docker 镜像；本地 Python 环境只用于开发和测试。
 `config_default.yml` 是随包发布的默认配置；用户的 `config.yml` 放在运行目录。
 
 ## 2.0 流水线
 
 `javsp/workflow/models.py` 定义扫描、抓取、阶段事件、输出及单片/批次结果；`javsp/workflow/pipeline.py` 负责逐部影片编排。
-核心组件显式接收配置，CLI 将事件转成进度条，人工番号确认仍在扫描之后完成。
+核心组件显式接收配置，CLI 将事件转成进度条。
 
 代码从上述职责目录导入模块；分层前的根目录模块路径不再提供。
 
@@ -83,12 +83,9 @@ uv run --locked --extra dev pytest tests/integration/test_crawlers.py --run-inte
 
 # 测试免代理域名发现
 uv run --locked --extra dev pytest tests/integration/test_proxyfree.py --run-integration
-
-# 在 Windows 上验证已生成的 dist/JavSP-bin.exe
-uv run --locked --extra dev pytest tests/integration/test_exe.py --run-integration
 ```
 
-集成测试依赖外部站点、凭据或打包产物。Windows 可执行文件测试在缺少环境或产物时跳过。
+集成测试依赖外部站点或凭据。
 在线抓取器测试在本地比较失败时仍会更新对应 JSON 样本，运行后应检查 Git 差异。
 各站点的样本即使内容相同，也保留独立文件以覆盖各自抓取器。
 
@@ -107,7 +104,6 @@ python tools/version.py
 
 Docker 构建上下文排除测试、开发文档、虚拟环境、缓存和本地构建产物。
 wheel 保留运行时资源，避免移动 `data/`、`image/` 或默认配置导致资源查找失败。
-SVG 标志仅保留实际使用的 Roboto 字体，删除导出工具嵌入的其他字体。
 `__pycache__/`、`.pytest_cache/`、`.ruff_cache/` 均为可重新生成的缓存，不应提交。
 
 
@@ -118,6 +114,5 @@ SVG 标志仅保留实际使用的 Roboto 字体，删除导出工具嵌入的�
 更新 tag 后使用 `uv sync --locked --extra dev --reinstall-package javsp` 刷新本地安装元数据；
 `uv run --locked python tools/version.py`、运行时版本和 wheel METADATA 应一致。
 
-无 Git 元数据的构建（Docker）由 `SETUPTOOLS_SCM_PRETEND_VERSION` 传入版本；cx_Freeze 的版本文件仍为构建时生成的
-`javsp/VERSION`，不纳入源码版本控制。Docker 工作流验证三段或四段稳定版本标签，标签推送生成版本号和 `latest`，
+无 Git 元数据的 Docker 构建由 `SETUPTOOLS_SCM_PRETEND_VERSION` 传入版本。Docker 工作流验证三段或四段稳定版本标签，标签推送生成版本号和 `latest`，
 手动触发只生成 `dev`。推送标签会触发发布；本地创建标签不会发布镜像。

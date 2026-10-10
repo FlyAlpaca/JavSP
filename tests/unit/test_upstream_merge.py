@@ -24,14 +24,14 @@ def test_config_subdirectory_and_root_fallback(tmp_path, monkeypatch):
 
 def test_partial_user_config_keeps_defaults(tmp_path, monkeypatch):
     user_config = tmp_path / "config.yml"
-    user_config.write_text("scanner:\n  manual: true\n", encoding="utf-8")
+    user_config.write_text("scanner:\n  minimum_size: 100MiB\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(config, "_config_sources", None)
     sources = config.get_config_source()
     with config.Cfg.change_config_sources(sources):
         cfg = config.Cfg()
-        assert cfg.scanner.manual is True
-        assert cfg.scanner.minimum_size == 232 * 2**20
+        assert cfg.scanner.minimum_size == 100 * 2**20
+        assert cfg.scanner.input_directory.as_posix() == "/media"
 
 
 def test_genre_translation_removal_and_order(tmp_path):

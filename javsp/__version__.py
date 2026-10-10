@@ -10,10 +10,9 @@ def get_version() -> str:
     """获取 JavSP 版本号
 
     优先级：
-    1. 已安装包的元数据（pip install / uv sync 后生效）
+    1. 已安装包的元数据（Docker 镜像构建时写入）
     2. 从 git describe 获取最近 tag（本地源码开发时生效）
-    3. 从 javsp/VERSION 文件读取（cx_freeze 打包产物中使用）
-    4. 回退 0.0.0
+    3. 回退 0.0.0
     """
     # 1. 已安装的包元数据
     try:
@@ -39,14 +38,6 @@ def get_version() -> str:
             if tag.startswith("v"):
                 return tag[1:]
             return tag
-    except Exception:
-        pass
-
-    # 3. 从同目录下的 VERSION 文件读取（cx_freeze 打包时写入，见 CI 流程）
-    try:
-        version_file = Path(__file__).parent / "VERSION"
-        if version_file.exists():
-            return version_file.read_text(encoding="utf-8").strip()
     except Exception:
         pass
 

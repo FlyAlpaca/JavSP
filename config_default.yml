@@ -23,7 +23,7 @@ scanner:
     - '\w+2048\.com'
     - 'Carib(beancom)?'
     - '[^a-z\d](f?hd|lt)[^a-z\d]'
-  # 整理哪个文件夹下的影片？（此项留空时将在运行时询问）
+  # 整理哪个文件夹下的影片？（容器中应指向已挂载的目录）
   input_directory: '/media'
   # 哪些后缀的文件应当视为影片？
   filename_extensions: [.3gp, .avi, .f4v, .flv, .iso, .m2ts, .m4v, .mkv, .mov, .mp4, .mpeg, .rm, .rmvb, .ts, .vob, .webm, .wmv, .strm, .mpg]
@@ -34,8 +34,6 @@ scanner:
   minimum_size: 232MiB
   # 扫描时是否跳过已存在NFO文件的文件夹（yes/true: 跳过）
   skip_nfo_dir: yes
-  # 是否启用手动模式：扫描完成后逐部人工确认/更正番号
-  manual: no
 ################################
 network:
   # 设置代理服务器地址，支持 http, socks5/socks5h 代理，比如'http://127.0.0.1:1080'
@@ -240,13 +238,5 @@ translator:
 
 ################################
 other:
-  # 是否在stdin/stdout进行交互
-  interactive: true
-  # 是否允许检查更新。如果允许，在有新版本时会显示提示信息和新版功能
-  check_update: true
-  # 是否允许检查到新版本时自动下载
-  auto_update: false
   # 是否启用调试模式（输出详细的爬虫抓取日志、网络请求详情等）
   debug: false
-  # 整理完成后是否自动退出程序（false时需按回车键退出）
-  auto_exit: true
