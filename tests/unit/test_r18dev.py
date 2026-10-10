@@ -86,9 +86,10 @@ def dump(title="本地标题", *, duplicate=False, broken=False, blank_preview=F
 
 
 class Response:
-    def __init__(self, url, body):
+    def __init__(self, url, body, size=None):
         self.url = url
         self.raw = io.BytesIO(body)
+        self.headers = {"Content-Length": str(size)} if size is not None else {}
 
     def raise_for_status(self):
         pass
@@ -98,13 +99,26 @@ class Response:
 
 
 class Session:
-    def __init__(self, url, body):
-        self.url, self.body = url, body
+    def __init__(self, url, body, size=None):
+        self.url, self.body, self.size = url, body, size
         self.calls = 0
 
     def get(self, *args, **kwargs):
         self.calls += 1
-        return Response(self.url, self.body)
+        return Response(self.url, self.body, self.size)
+
+
+@pytest.mark.parametrize("known_size", [True, False])
+def test_database_download_progress(tmp_path, capsys, known_size):
+    body = dump()
+    size = len(body) if known_size else None
+    prepare_database(tmp_path / "r18dev.sqlite", False, session=Session(url("2026-10-06"), body, size))
+    output = capsys.readouterr().err
+    assert "下载 R18.dev 数据库" in output
+    if known_size:
+        assert "100%" in output
+    else:
+        assert "100%" not in output
 
 
 def url(date):

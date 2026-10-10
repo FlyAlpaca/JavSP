@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import requests
+from tqdm import tqdm
 
 from javsp.config import Translator
 from javsp.datatype import MovieInfo
@@ -86,17 +87,15 @@ def ensure_model(cfg: Translator, session=None) -> Path:
     try:
         with tempfile.NamedTemporaryFile(prefix=f".{spec.filename}.", suffix=".part", dir=model_dir, delete=False) as file:
             temporary = Path(file.name)
-            downloaded = 0
-            next_report = 256 * 1024 * 1024
             with client.get(spec.url, stream=True, timeout=(30, 120)) as response:
                 response.raise_for_status()
-                for chunk in response.iter_content(chunk_size=4 * 1024 * 1024):
-                    if chunk:
-                        file.write(chunk)
-                        downloaded += len(chunk)
-                        if downloaded >= next_report:
-                            logger.info("模型下载进度: %.1f / %.1f GiB", downloaded / 2**30, spec.size / 2**30)
-                            next_report += 256 * 1024 * 1024
+                with tqdm(
+                    total=spec.size, desc="下载翻译模型", unit="B", unit_scale=True, unit_divisor=1024
+                ) as progress:
+                    for chunk in response.iter_content(chunk_size=4 * 1024 * 1024):
+                        if chunk:
+                            file.write(chunk)
+                            progress.update(len(chunk))
         if not _valid_model(temporary, spec):
             raise TranslateError(f"模型下载校验失败: {spec.filename}")
         temporary.replace(path)
