@@ -49,10 +49,6 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # ──────────────────────────────────────────────
-      #  ghcr.io
-      # ──────────────────────────────────────────────
-
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v4
         with:
@@ -60,11 +56,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Docker meta (ghcr.io)
-        id: meta-ghcr
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.DH_REGISTRY }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker meta
+        id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ${{ env.GHCR_REGISTRY }}/${{ env.GHCR_IMAGE }}
+          images: |
+            ${{ env.GHCR_REGISTRY }}/${{ env.GHCR_IMAGE }}
+            ${{ env.DH_REGISTRY }}/${{ env.DH_IMAGE }}
           flavor: latest=false
           tags: |
             type=match,pattern=^v([0-9]+[.][0-9]+[.][0-9]+([.][0-9]+)?)$,group=1,enable=${{ github.event_name == 'push' }}
@@ -76,15 +81,15 @@ jobs:
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.licenses=GPL-3.0-only
 
-      - name: Build and push to ghcr.io
+      - name: Build once and push to both registries
         uses: docker/build-push-action@v7
         with:
           context: .
           file: ./docker/Dockerfile
           platforms: linux/amd64
           push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta-ghcr.outputs.tags }}
-          labels: ${{ steps.meta-ghcr.outputs.labels }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             VERSION=${{ steps.version.outputs.version }}
           cache-from: type=gha
@@ -107,42 +112,6 @@ jobs:
           echo "Cleanup complete"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # ──────────────────────────────────────────────
-      #  Docker Hub
-      # ──────────────────────────────────────────────
-
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v4
-        with:
-          registry: ${{ env.DH_REGISTRY }}
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Docker meta (Docker Hub)
-        id: meta-dh
-        uses: docker/metadata-action@v6
-        with:
-          images: ${{ env.DH_REGISTRY }}/${{ env.DH_IMAGE }}
-          flavor: latest=false
-          tags: |
-            type=match,pattern=^v([0-9]+[.][0-9]+[.][0-9]+([.][0-9]+)?)$,group=1,enable=${{ github.event_name == 'push' }}
-            type=raw,value=latest,enable=${{ github.event_name == 'push' }}
-            type=raw,value=dev,enable=${{ github.event_name == 'workflow_dispatch' }}
-
-      - name: Build and push to Docker Hub
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: ./docker/Dockerfile
-          platforms: linux/amd64
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta-dh.outputs.tags }}
-          labels: ${{ steps.meta-dh.outputs.labels }}
-          build-args: |
-            VERSION=${{ steps.version.outputs.version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
 
   release:
     name: Create GitHub Release
