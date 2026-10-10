@@ -73,7 +73,7 @@ def _scan_movies(root: str, cfg, result: ScanResult) -> list[Movie]:
                 if filesize < cfg.scanner.minimum_size:
                     small_videos.setdefault(file, []).append(fullpath)
                     continue
-                dvdid = get_id(fullpath)
+                dvdid = get_id(fullpath, cfg)
                 cid = get_cid(fullpath)
                 # 如果文件名能匹配到cid，那么将cid视为有效id，因为此时dvdid多半是错的
                 avid = cid if cid else dvdid
@@ -90,7 +90,7 @@ def _scan_movies(root: str, cfg, result: ScanResult) -> list[Movie]:
     # 多分片影片容易有文件大小低于阈值的子片，进行特殊处理
     has_avid = {}
     for name in list(small_videos.keys()):
-        dvdid = get_id(name)
+        dvdid = get_id(name, cfg)
         cid = get_cid(name)
         avid = cid if cid else dvdid
         if avid in dic:
@@ -174,7 +174,7 @@ def _scan_movies(root: str, cfg, result: ScanResult) -> list[Movie]:
         else:
             mov = Movie(cid=avid)
             # 即使初步识别为cid，也存储dvdid以供误识别时退回到dvdid模式进行抓取
-            mov.dvdid = get_id(files[0])
+            mov.dvdid = get_id(files[0], cfg)
         mov.files = files
         mov.data_src = src
         logger.debug(f"影片数据源类型: {avid}: {src}")

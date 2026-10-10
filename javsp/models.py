@@ -73,6 +73,7 @@ class JobResult:
     output: OutputResult | None = None
     error: JobError | None = None
     cancelled: bool = False
+    interruption: BaseException | None = None
 
     @property
     def success(self) -> bool:

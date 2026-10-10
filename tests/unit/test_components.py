@@ -58,3 +58,12 @@ def test_merge_preserves_source_data_and_tracks_selected_cover():
     assert merged.field_sources["cover"] == "javdb"
     assert info.genre == ["original"] and info.genre_norm is None
     assert movie.info is None
+
+
+def test_scanner_uses_supplied_id_patterns(tmp_path):
+    (tmp_path / "XYZ-999 ABC-123.mp4").write_bytes(b"video")
+    cfg = Cfg()
+    scanner = cfg.scanner.model_copy(update={"minimum_size": 0, "ignored_id_pattern": ["XYZ-999"]})
+    cfg = cfg.model_copy(update={"scanner": scanner})
+    result = Scanner(cfg).scan(str(tmp_path))
+    assert result.movies[0].dvdid == "ABC-123"

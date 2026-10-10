@@ -72,6 +72,17 @@ class JobRunner:
             logger.info(f"整理完成，相关文件已保存到: {movie.save_dir}\n")
             return JobResult(movie, output)
         except BaseException as cause:
+            committed = getattr(self.executor, "committed_result", None) if executing else None
+            if committed is not None:
+                # 提交点之后的取消或清理错误不能把已经完成的影片计为失败。
+                movie.__dict__.update(committed.movie.__dict__)
+                committed.movie = movie
+                cancelled = isinstance(cause, (KeyboardInterrupt, SystemExit, GeneratorExit))
+                if not cancelled:
+                    warning = f"产物已提交，后续清理或通知异常: {cause}"
+                    committed.warnings.append(warning)
+                    logger.warning(warning)
+                return JobResult(movie, committed, cancelled=cancelled, interruption=cause if cancelled else None)
             if executing:
                 stage = self.executor.stage
             recovered = not isinstance(cause, RecoveryError)
@@ -97,6 +108,8 @@ class JobRunner:
             if job.cancelled or (job.error and not job.error.recovered):
                 batch.aborted = True
                 batch.pending = movies[index + 1:]
+                if job.interruption:
+                    batch.error = JobError(movie.dvdid or movie.cid or "未知番号", Stage.DONE, job.interruption)
                 break
             if job.success and index + 1 < len(movies):
                 try:

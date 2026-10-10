@@ -1,5 +1,6 @@
 """只读输出规划和单片输出事务；不提供进程崩溃后的自动恢复。"""
 
+import ctypes
 import errno
 import json
 import logging
@@ -21,6 +22,27 @@ from javsp.nfo import write_nfo
 from javsp.processor import download_cover, download_extra_fanarts, generate_names, process_poster
 
 logger = logging.getLogger(__name__)
+
+
+def _rename_new(source, target):
+    """发布普通文件，原子拒绝已有目标；Linux 使用 RENAME_NOREPLACE。"""
+    if os.name == "nt":
+        # Windows 的 rename 原生拒绝已有目标。
+        os.rename(source, target)
+        return
+    libc = ctypes.CDLL(None, use_errno=True)
+    rename = getattr(libc, "renameat2", None)
+    if rename is not None:
+        rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+        rename.restype = ctypes.c_int
+        if rename(-100, os.fsencode(source), -100, os.fsencode(target), 1) == 0:
+            return
+        error = ctypes.get_errno()
+        if error not in (errno.ENOSYS, errno.EINVAL, errno.ENOTSUP):
+            raise OSError(error, os.strerror(error), str(target))
+    # 缺少不覆盖重命名的平台：link 原子拒绝已有目标，再删除源名称。
+    os.link(source, target)
+    os.unlink(source)
 
 
 def _stamp(path):
@@ -81,7 +103,7 @@ def _file_operations(movie, cfg, hardlink):
         if identity:
             for source in sorted(parent.iterdir()):
                 if source.is_file() and source.suffix.lower() in (".srt", ".ass"):
-                    if normalize_id(get_id(source.stem)) == identity:
+                    if normalize_id(get_id(source.stem, cfg)) == identity:
                         subtitles.append(source)
         if len(movie.files) > 1 and len(subtitles) not in (0, len(movie.files)):
             warnings.append(f"多CD视频({len(movie.files)}个)与匹配字幕({len(subtitles)}个)数量不一致，仍将一起移动")
@@ -153,6 +175,8 @@ class _Entry:
     source_removed: bool = False
     hardlink: bool = False
     source_stamp: tuple | None = None
+    incoming_stamp: tuple | None = None
+    backup_origin_stamp: tuple | None = None
 
 
 class RecoveryError(RuntimeError):
@@ -203,7 +227,7 @@ class _Transaction:
             raise FileExistsError(f"File exists: {operation.target}")
         self.mkdir(Path(operation.target).parent)
         entry = _Entry(operation.target, operation.source, hardlink=operation.hardlink,
-                       source_stamp=operation.source_stamp)
+                       source_stamp=operation.source_stamp, incoming_stamp=operation.source_stamp)
         self.entries.append(entry)
         if operation.hardlink:
             try:
@@ -218,7 +242,7 @@ class _Transaction:
                 logger.warning(f"创建硬链接失败，回退为复制文件: '{operation.source}' -> '{operation.target}'")
         else:
             try:
-                os.rename(operation.source, operation.target)
+                _rename_new(operation.source, operation.target)
                 entry.installed, entry.source_removed = True, True
                 entry.stamp = _stamp(operation.target)
                 return
@@ -232,7 +256,8 @@ class _Transaction:
             raise OSError(f"跨设备复制大小校验失败: {operation.source}")
         if os.path.lexists(operation.target):
             raise FileExistsError(f"File exists: {operation.target}")
-        os.rename(staged, operation.target)
+        entry.incoming_stamp = _stamp(staged)
+        _rename_new(staged, operation.target)
         entry.installed, entry.stamp = True, _stamp(operation.target)
         if not operation.hardlink:
             os.unlink(operation.source)
@@ -241,19 +266,47 @@ class _Transaction:
     def publish(self, staged, target, expected):
         self.check(target, expected)
         self.mkdir(Path(target).parent)
-        entry = _Entry(target)
+        entry = _Entry(target, incoming_stamp=_stamp(staged))
         self.entries.append(entry)
         if expected is not None:
             backup = self.temp(target)
+            entry.backup, entry.backup_origin_stamp = backup, expected
             os.replace(target, backup)
-            entry.backup, entry.backup_stamp = backup, _stamp(backup)
-        os.replace(staged, target)
+            entry.backup_stamp = _stamp(backup)
+            if not self._same_file(entry.backup_stamp, expected):
+                raise OSError(f"产物在备份前被修改: {target}")
+        _rename_new(staged, target)
         entry.installed, entry.stamp = True, _stamp(target)
+
+    @staticmethod
+    def _same_file(current, expected):
+        # rename/link 会改变 ctime；其余信息识别尚未登记完成的原子文件操作。
+        return current is not None and expected is not None and current[:5] == expected[:5]
+
+    def _reconcile(self, entry):
+        """信号可能在系统调用成功后、登记完成前到达，从文件身份补全状态。"""
+        current = _stamp(entry.target)
+        if not entry.installed and self._same_file(current, entry.incoming_stamp):
+            entry.installed, entry.stamp = True, current
+            if entry.source and self._same_file(_stamp(entry.source), entry.source_stamp):
+                entry.source_stamp = _stamp(entry.source)
+        if entry.source and entry.installed and not os.path.lexists(entry.source):
+            entry.source_removed = True
+        if entry.backup and entry.backup_stamp is None:
+            backup_stamp = _stamp(entry.backup)
+            if self._same_file(backup_stamp, entry.backup_origin_stamp):
+                entry.backup_stamp = backup_stamp
+            elif not entry.installed and current == entry.backup_origin_stamp:
+                # 备份移动未发生，旧目标仍在原位置；空占位文件只需清理。
+                entry.backup = None
+            else:
+                raise OSError(f"备份操作状态不明，保留文件: {entry.backup}")
 
     def rollback(self):
         errors = []
         for entry in reversed(self.entries):
             try:
+                self._reconcile(entry)
                 if entry.installed:
                     self.check(entry.target, entry.stamp)
                     if entry.source and entry.source_removed:
@@ -261,7 +314,7 @@ class _Transaction:
                             raise FileExistsError(f"回滚源路径已存在: {entry.source}")
                         # 回跨设备时先复制验证，再删除可恢复的目标副本。
                         try:
-                            os.rename(entry.target, entry.source)
+                            _rename_new(entry.target, entry.source)
                         except OSError as error:
                             if error.errno != errno.EXDEV:
                                 raise
@@ -272,7 +325,7 @@ class _Transaction:
                                 raise OSError(f"回滚复制大小校验失败: {entry.source}")
                             if os.path.lexists(entry.source):
                                 raise FileExistsError(f"回滚源路径已存在: {entry.source}")
-                            os.rename(staged, entry.source)
+                            _rename_new(staged, entry.source)
                             os.unlink(entry.target)
                         entry.source_removed = False
                     else:
@@ -284,7 +337,7 @@ class _Transaction:
                     self.check(entry.backup, entry.backup_stamp)
                     if os.path.lexists(entry.target):
                         raise FileExistsError(f"回滚目标路径已存在: {entry.target}")
-                    os.replace(entry.backup, entry.target)
+                    _rename_new(entry.backup, entry.target)
                     entry.backup = None
                     entry.backup_stamp = None
             except BaseException as error:
@@ -292,12 +345,12 @@ class _Transaction:
         return errors
 
     def preserve(self, cause, errors):
-        payload = {"cause": repr(cause), "errors": errors, "entries": [vars(entry) for entry in self.entries],
-                   "created_dirs": self.created_dirs, "workspaces": list(self.workspaces.values())}
         paths = list(self.workspaces.values())
         if not paths and self.entries:
             self.temp(self.entries[0].target)
             paths = list(self.workspaces.values())
+        payload = {"cause": repr(cause), "errors": errors, "entries": [vars(entry) for entry in self.entries],
+                   "created_dirs": self.created_dirs, "workspaces": paths}
         for workspace in paths:
             try:
                 path = os.path.join(workspace, "recovery.json")
@@ -327,6 +380,7 @@ class OutputExecutor:
     def __init__(self, cfg, on_event=None):
         self.cfg, self.on_event = cfg, on_event
         self.stage = Stage.PREPARE
+        self.committed_result = None
 
     def _emit(self, movie, stage):
         self.stage = stage
@@ -340,7 +394,7 @@ class OutputExecutor:
 
     def _prepare(self, plan, tx):
         movie = _snapshot(plan.movie)
-        artifacts = []
+        artifacts, warnings = [], []
         fanart = tx.temp(movie.fanart_file, ".jpg")
         result = download_cover(movie.info.covers, fanart,
                                 movie.info.big_covers if self.cfg.summarizer.cover.highres else None,
@@ -366,8 +420,9 @@ class OutputExecutor:
             extra = tx.temp(os.path.join(movie.save_dir, "extrafanart", "0.jpg"))
             os.unlink(extra)
             os.mkdir(extra)
-            download_extra_fanarts(staged_movie, self.cfg.summarizer.extra_fanarts.scrap_interval.total_seconds(),
-                                   destination_dir=extra)
+            warnings.extend(download_extra_fanarts(
+                staged_movie, self.cfg.summarizer.extra_fanarts.scrap_interval.total_seconds(), destination_dir=extra
+            ))
             artifacts.extend((str(path), os.path.join(movie.save_dir, "extrafanart", path.name))
                              for path in sorted(Path(extra).iterdir()))
         nfo = tx.temp(movie.nfo_file, ".nfo")
@@ -387,7 +442,7 @@ class OutputExecutor:
             movie.info.field_sources = dict(movie.info.field_sources or {}, cover=source)
         elif movie.info.cover != plan.movie.info.cover and movie.info.field_sources:
             movie.info.field_sources.pop("cover", None)
-        return movie, [(staged, target, _stamp(target)) for staged, target in artifacts]
+        return movie, [(staged, target, _stamp(target)) for staged, target in artifacts], warnings
 
     def execute_files(self, movie, hardlink=False):
         planned = _snapshot(movie)
@@ -396,6 +451,7 @@ class OutputExecutor:
 
     def execute(self, plan: OutputPlan) -> OutputResult:
         tx = _Transaction()
+        self.committed_result = None
         movie = _snapshot(plan.movie)
         warnings = list(plan.warnings)
         for warning in warnings:
@@ -404,7 +460,11 @@ class OutputExecutor:
             self._emit(movie, Stage.PREPARE)
             artifacts = []
             if plan.generate:
-                movie, artifacts = self._prepare(plan, tx)
+                movie, artifacts, prepared_warnings = self._prepare(plan, tx)
+                warnings.extend(prepared_warnings)
+            moved = [(op.source, op.target) for op in plan.operations if not op.skip]
+            if moved:
+                movie.files = [op.target for op in plan.operations if not op.skip and op.source in plan.movie.files]
             self._emit(movie, Stage.COMMIT)
             for operation in plan.operations:
                 if not operation.skip:
@@ -418,6 +478,7 @@ class OutputExecutor:
                     tx.move(operation)
             for staged, target, stamp in artifacts:
                 tx.publish(staged, target, stamp)
+            self.committed_result = OutputResult(movie, moved, [target for _, target, _ in artifacts], warnings)
         except BaseException as cause:
             failed_stage = self.stage
             self._emit(movie, Stage.ROLLBACK)
@@ -426,13 +487,14 @@ class OutputExecutor:
             if errors:
                 paths = tx.preserve(cause, errors)
                 raise RecoveryError(cause, errors, paths) from cause
-            tx.cleanup(remove_dirs=True)
+            for warning in tx.cleanup(remove_dirs=True):
+                logger.warning(warning)
             raise
         # 到这里整片已提交；清理/日志错误不能再把已提交任务误判为可回滚。
-        warnings.extend(tx.cleanup())
-        moved = [(op.source, op.target) for op in plan.operations if not op.skip]
-        if moved:
-            movie.files = [op.target for op in plan.operations if not op.skip and op.source in plan.movie.files]
+        cleanup_warnings = tx.cleanup()
+        warnings.extend(cleanup_warnings)
+        for warning in cleanup_warnings:
+            logger.warning(warning)
         for source, target in moved:
             logger.info(f"重命名文件: '{source}' -> '{target}'")
             filemove_logger.debug(f'移动（重命名）文件: \n  原路径: "{source}"\n  新路径: "{target}"')
@@ -441,4 +503,4 @@ class OutputExecutor:
                 os.rmdir(parent)
             except OSError:
                 pass
-        return OutputResult(movie, moved, [target for _, target, _ in artifacts], warnings)
+        return self.committed_result
