@@ -1,8 +1,11 @@
 """验证批处理失败可被自动化识别。"""
 
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
+from pydantic import ValidationError
 
 from javsp import __main__ as cli
 from javsp import func
@@ -42,6 +45,36 @@ def test_entry_with_missing_noninteractive_directory_exits_without_prompt(tmp_pa
     with pytest.raises(SystemExit) as exc:
         cli.entry()
     assert exc.value.code == 1
+
+
+def test_invalid_config_without_terminal_exits_without_prompt(monkeypatch):
+    with pytest.raises(ValidationError) as exc:
+        Cfg.model_validate({})
+    error = exc.value
+
+    def invalid_config():
+        raise error
+
+    monkeypatch.setattr(cli, "Cfg", invalid_config)
+    monkeypatch.setattr(cli.sys, "stdin", SimpleNamespace(isatty=lambda: False))
+    monkeypatch.setattr("builtins.input", lambda *args: pytest.fail("无终端时不应等待输入"))
+    with pytest.raises(SystemExit) as exit_result:
+        cli.entry()
+    assert exit_result.value.code == 1
+
+
+def test_invalid_config_is_reported_after_cli_startup():
+    result = subprocess.run(
+        [sys.executable, "-m", "javsp", "--oscanner.minimum_size", "invalid"],
+        input="",
+        text=True,
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert "配置错误 [scanner → minimum_size]" in result.stdout
+    assert "Traceback" not in result.stderr
 
 
 def test_batch_continues_and_counts_failure(monkeypatch):

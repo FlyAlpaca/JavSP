@@ -7,7 +7,6 @@ from javsp.crawl.dispatcher import CrawlerExecutor
 from javsp.metadata.summarizer import MetadataMerger
 from javsp.publish.output import OutputExecutor, OutputPlanner, RecoveryError
 from javsp.scan.file import Scanner
-from javsp.web.translate import translate_movie_info
 from javsp.workflow.models import BatchResult, JobError, JobResult, Stage, StageEvent
 
 logger = logging.getLogger(__name__)
@@ -58,6 +57,8 @@ class JobRunner:
             emit(Stage.MERGE)
             working.info = self.merger.merge(working, result)
             if self.cfg.translator.engine:
+                from javsp.web.translate import translate_movie_info
+
                 emit(Stage.TRANSLATE)
                 translate_movie_info(working.info, self.cfg)
             emit(Stage.PLAN)
