@@ -298,7 +298,7 @@ def get_pic_path(fanart_path, url):
 
 
 def process_poster(movie: Movie):
-    """处理封面图片：裁剪、添加标签"""
+    """处理封面图片：裁剪、添加标签，并生成文件夹封面缩略图"""
 
     def should_use_ai_crop_match(label):
         for r in Cfg().summarizer.cover.crop.on_id_pattern:
@@ -310,8 +310,8 @@ def process_poster(movie: Movie):
     if movie.info.uncensored or movie.data_src == "fc2" or should_use_ai_crop_match(movie.info.label.upper()):
         crop_engine = Cfg().summarizer.cover.crop.engine
     cropper = get_cropper(crop_engine)
-    fanart_image = Image.open(movie.fanart_file)
-    fanart_cropped = cropper.crop(fanart_image)
+    with Image.open(movie.fanart_file) as fanart_image:
+        fanart_cropped = cropper.crop(fanart_image)
 
     if Cfg().summarizer.cover.add_label:
         if movie.hard_sub:
@@ -319,3 +319,10 @@ def process_poster(movie: Movie):
         if movie.uncensored:
             fanart_cropped = add_label_to_poster(fanart_cropped, UNCENSORED_MARK_FILE, LabelPosition.BOTTOM_LEFT)
     fanart_cropped.save(movie.poster_file)
+
+    folder_cover = os.path.join(movie.save_dir, "folder.jpg")
+    # 自定义命名已使用 folder.jpg 时保留原图，避免缩略图覆盖海报或横版封面。
+    if os.path.abspath(folder_cover) not in {os.path.abspath(movie.poster_file), os.path.abspath(movie.fanart_file)}:
+        with fanart_cropped.convert("RGB") as thumbnail:
+            thumbnail.thumbnail((300, 450), Image.Resampling.LANCZOS)
+            thumbnail.save(folder_cover, format="JPEG")

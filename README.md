@@ -12,6 +12,8 @@
 
 剧照最多同时下载 3 张，并按 `summarizer.extra_fanarts.scrap_interval` 统一控制请求启动间隔。全部剧照保留原有编号，等待下载任务全部结束后继续整理，最后一张完成后不再额外等待；单张下载失败会记录警告并继续处理其他图片。
 
+整理时使用裁剪并添加水印后的海报生成文件夹封面 `folder.jpg`，按原比例缩小到不超过 300×450 像素，小图不放大。自定义海报或横版封面名称为 `folder.jpg` 时保留原图；关闭文件移动时，该封面生成在影片所在目录，同目录多部影片会使用最后处理的封面。
+
 **WebUI**: UI界面不是[此项目的目标](https://github.com/Yuukiy/JavSP/issues/148)。
 
 **i18n**: This project currently supports only Chinese. However, if you're willing, you can [vote here](https://github.com/Yuukiy/JavSP/discussions/157) for the language you'd like to see added
@@ -36,8 +38,8 @@
 - [x] 自动检查和更新新版本
 - [x] 翻译标题和剧情简介
 - [x] 匹配本地字幕
-- [ ] 使用小缩略图创建文件夹封面
-- [ ] 保持不同站点间 genre 分类的统一
+- [x] 使用小缩略图创建文件夹封面
+- [x] 保持不同站点间 genre 分类的统一
 - [ ] 不同的运行模式（抓取数据+整理，仅抓取数据）
 - [ ] 可选：所有站点均抓取失败时由人工介入
 
