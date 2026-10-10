@@ -4,9 +4,10 @@ import json
 import logging
 
 from javsp.config import Cfg, UseJavDBCover
-from javsp.datatype import Movie, MovieInfo
+from javsp.datatype import GenreMap, Movie, MovieInfo
 from javsp.func import remove_trail_actor_in_title
 from javsp.lib import resource_path
+from javsp.models import CrawlResult
 
 logger = logging.getLogger(__name__)
 
@@ -14,33 +15,37 @@ logger = logging.getLogger(__name__)
 actressAliasMap: dict = {}
 
 
-def load_actress_aliases():
+def load_actress_aliases(cfg=None):
     """加载女优别名映射表"""
     global actressAliasMap
-    if Cfg().crawler.normalize_actress_name:
+    cfg = cfg if cfg is not None else Cfg()
+    if cfg.crawler.normalize_actress_name:
         actressAliasFilePath = resource_path("data/actress_alias.json")
         with open(actressAliasFilePath, encoding="utf-8") as file:
             actressAliasMap = json.load(file)
 
 
-def resolve_alias(name):
+def resolve_alias(name, aliases=None):
     """将别名解析为固定的名字"""
-    for fixedName, aliases in actressAliasMap.items():
-        if name in aliases:
+    mapping = actressAliasMap if aliases is None else aliases
+    for fixedName, names in mapping.items():
+        if name in names:
             return fixedName
     return name  # 如果找不到别名对应的固定名字，则返回原名
 
 
-def info_summary(movie: Movie, all_info: dict[str, MovieInfo]):
+def _merge_info(movie: Movie, all_info: dict[str, MovieInfo], cfg, aliases):
     """汇总多个来源的在线数据生成最终数据"""
     final_info = MovieInfo(movie)
     ########## 部分字段配置了专门的选取逻辑，先处理这些字段 ##########
     # genre
+    field_sources = {}
     if "javdb" in all_info and all_info["javdb"].genre:
-        final_info.genre = all_info["javdb"].genre
+        final_info.genre = list(all_info["javdb"].genre)
+        field_sources["genre"] = "javdb"
 
     ########## 移除所有抓取器数据中，标题尾部的女优名 ##########
-    if Cfg().summarizer.title.remove_trailing_actor_name:
+    if cfg.summarizer.title.remove_trailing_actor_name:
         for name, data in all_info.items():
             data.title = remove_trail_actor_in_title(data.title, data.actress)
     ########## 然后检查所有字段，如果某个字段还是默认值，则按照优先级选取数据 ##########
@@ -48,7 +53,7 @@ def info_summary(movie: Movie, all_info: dict[str, MovieInfo]):
     # 按照优先级取出各个爬虫获取到的信息
     attrs = MovieInfo.get_merge_fields()
     covers, big_covers = [], []
-    field_sources = {}  # 记录每个字段来自哪个爬虫
+    # 记录每个字段来自哪个爬虫
     for name, data in all_info.items():
         absorbed = []
         # 遍历所有属性，如果某一属性当前值为空而爬取的数据中含有该属性，则采用爬虫的属性
@@ -77,7 +82,7 @@ def info_summary(movie: Movie, all_info: dict[str, MovieInfo]):
         if absorbed:
             logger.debug(f"从'{name}'中获取了字段: " + " ".join(absorbed))
     # 使用网站的番号作为番号
-    if Cfg().crawler.respect_site_avid:
+    if cfg.crawler.respect_site_avid:
         id_weight = {}
         for name, data in all_info.items():
             if data.title:
@@ -101,7 +106,7 @@ def info_summary(movie: Movie, all_info: dict[str, MovieInfo]):
     # javdb封面有水印，优先采用其他站点的封面
     javdb_cover = getattr(all_info.get("javdb"), "cover", None)
     if javdb_cover is not None:
-        match Cfg().crawler.use_javdb_cover:
+        match cfg.crawler.use_javdb_cover:
             case UseJavDBCover.fallback:
                 covers.remove(javdb_cover)
                 covers.append(javdb_cover)
@@ -125,17 +130,64 @@ def info_summary(movie: Movie, all_info: dict[str, MovieInfo]):
         final_info.genre.append("无码流出/破解")
 
     # 女优别名固定
-    if Cfg().crawler.normalize_actress_name and final_info.actress:
-        final_info.actress = [resolve_alias(i) for i in final_info.actress]
+    if cfg.crawler.normalize_actress_name and final_info.actress:
+        final_info.actress = [resolve_alias(i, aliases) for i in final_info.actress]
         if final_info.actress_pics:
-            final_info.actress_pics = {resolve_alias(key): value for key, value in final_info.actress_pics.items()}
+            final_info.actress_pics = {resolve_alias(key, aliases): value for key, value in final_info.actress_pics.items()}
 
     # 检查是否所有必需的字段都已经获得了值
-    missing_keys = [attr for attr in Cfg().crawler.required_keys if not getattr(final_info, attr, None)]
+    missing_keys = [attr for attr in cfg.crawler.required_keys if not getattr(final_info, attr, None)]
     if missing_keys:
         logger.error(f"所有抓取器均未获取到字段: {missing_keys}，抓取失败")
         return missing_keys
-    # 必需字段均已获得了值：将最终的数据附加到movie
     final_info.field_sources = field_sources
-    movie.info = final_info
+    # cover 的优先级可能由 javdb 策略调整。
+    for field in ("cover", "big_cover"):
+        value = getattr(final_info, field)
+        for name, data in all_info.items():
+            if value and getattr(data, field) == value:
+                field_sources[field] = name
+                break
+    return final_info
+
+
+def normalize_genres(all_info: dict[str, MovieInfo]):
+    """对成功来源归一化分类，已有归一化结果优先。"""
+    for name, info in all_info.items():
+        if info.genre_norm or not (info.genre_id or info.genre):
+            continue
+        try:
+            genre_map = GenreMap(f"data/genre_{name}.csv")
+        except FileNotFoundError:
+            logger.debug(f"'{name}' 缺少 genre 映射表，跳过归一化")
+            continue
+        info.genre_norm = genre_map.map(info.genre_id or info.genre)
+
+
+class MetadataMerger:
+    def __init__(self, cfg, aliases=None):
+        self.cfg = cfg
+        if aliases is None and cfg.crawler.normalize_actress_name:
+            with open(resource_path("data/actress_alias.json"), encoding="utf-8") as stream:
+                aliases = json.load(stream)
+        self.aliases = aliases or {}
+
+    def merge(self, movie: Movie, result: CrawlResult) -> MovieInfo:
+        result.require_data()
+        data = {name: info.model_copy(deep=True) for name, info in result.data.items()}
+        normalize_genres(data)
+        info = _merge_info(movie, data, self.cfg, self.aliases)
+        if isinstance(info, list):
+            raise ValueError(f"汇总数据失败：必需字段缺失 ({info})")
+        return info
+
+
+def info_summary(movie: Movie, all_info: dict[str, MovieInfo]):
+    """兼容旧接口：缺失字段时返回列表，成功时更新 movie.info。"""
+    data = {name: info.model_copy(deep=True) for name, info in all_info.items()}
+    normalize_genres(data)
+    info = _merge_info(movie, data, Cfg(), actressAliasMap)
+    if isinstance(info, list):
+        return info
+    movie.info = info
     return None

@@ -22,15 +22,14 @@ from javsp.avid import get_cid, get_id, guess_av_type, normalize_id
 from javsp.config import Cfg
 from javsp.datatype import Movie
 from javsp.lib import re_escape
+from javsp.models import ScanResult
 
 logger = logging.getLogger(__name__)
 failed_items = []
 
 
-def scan_movies(root: str) -> list[Movie]:
+def _scan_movies(root: str, cfg, result: ScanResult) -> list[Movie]:
     """获取文件夹内的所有影片的列表（自动探测同一文件夹内的分片）"""
-    global failed_items
-    failed_items.clear()
     # 由于实现的限制:
     # 1. 以数字编号最多支持10个分片，字母编号最多支持26个分片
     # 2. 允许分片间的编号有公共的前导符（如编号01, 02, 03），因为求prefix时前导符也会算进去
@@ -38,13 +37,14 @@ def scan_movies(root: str) -> list[Movie]:
     # 扫描所有影片文件并获取它们的番号
     dic = {}  # avid: [abspath1, abspath2...]
     small_videos = {}
-    ignore_folder_name_pattern = re.compile("|".join(Cfg().scanner.ignored_folder_name_pattern))
-    skip_nfo = Cfg().scanner.skip_nfo_dir
+    ignore_folder_name_pattern = re.compile("|".join(cfg.scanner.ignored_folder_name_pattern))
+    skip_nfo = cfg.scanner.skip_nfo_dir
 
     for dirpath, dirnames, filenames in os.walk(root):
         filtered_dirs = []
         for name in dirnames:
             if ignore_folder_name_pattern.match(name):
+                result.skipped.append(os.path.join(dirpath, name))
                 continue
 
             if skip_nfo:
@@ -56,6 +56,7 @@ def scan_movies(root: str) -> list[Movie]:
                     has_nfo = False
 
                 if has_nfo:
+                    result.skipped.append(target_path)
                     logger.info(f"跳过已有NFO的文件夹: {name}")
                     continue
 
@@ -65,11 +66,11 @@ def scan_movies(root: str) -> list[Movie]:
 
         for file in filenames:
             ext = os.path.splitext(file)[1].lower()
-            if ext in Cfg().scanner.filename_extensions:
+            if ext in cfg.scanner.filename_extensions:
                 fullpath = os.path.join(dirpath, file)
                 # 忽略小于指定大小的文件
                 filesize = os.path.getsize(fullpath)
-                if filesize < Cfg().scanner.minimum_size:
+                if filesize < cfg.scanner.minimum_size:
                     small_videos.setdefault(file, []).append(fullpath)
                     continue
                 dvdid = get_id(fullpath)
@@ -84,7 +85,7 @@ def scan_movies(root: str) -> list[Movie]:
                 else:
                     fail = Movie("无法识别番号")
                     fail.files = [fullpath]
-                    failed_items.append(fail)
+                    result.unrecognized.append(fail)
                     logger.error(f"无法提取影片番号: '{fullpath}'")
     # 多分片影片容易有文件大小低于阈值的子片，进行特殊处理
     has_avid = {}
@@ -99,6 +100,7 @@ def scan_movies(root: str) -> list[Movie]:
     # 对于前面忽略的视频生成一个简单的提示
     small_videos = {k: sorted(v) for k, v in sorted(small_videos.items())}
     skipped_files = list(itertools.chain(*small_videos.values()))
+    result.skipped.extend(skipped_files)
     skipped_cnt = len(skipped_files)
     if skipped_cnt > 0:
         if len(has_avid) > 0:
@@ -126,6 +128,7 @@ def scan_movies(root: str) -> list[Movie]:
             pattern = re.compile(pattern_expr, flags=re.I)
         except re.error:
             logger.debug(f"正则识别影片分片信息时出错: '{pattern_expr}'")
+            non_slice_dup[avid] = files
             del dic[avid]
             continue
         remaining = [pattern.sub(r"\1", i).lower() for i in basenames]
@@ -161,6 +164,7 @@ def scan_movies(root: str) -> list[Movie]:
             msg += "  " + os.path.relpath(f, root) + "\n"
     if msg:
         logger.error("下列番号对应多部影片文件且不符合分片规则，已略过整理，请手动处理后重新运行脚本: \n" + msg)
+    result.duplicates.update(non_slice_dup)
     # 转换数据的组织格式
     movies: list[Movie] = []
     for avid, files in dic.items():
@@ -176,6 +180,25 @@ def scan_movies(root: str) -> list[Movie]:
         logger.debug(f"影片数据源类型: {avid}: {src}")
         movies.append(mov)
     return movies
+
+
+class Scanner:
+    """扫描结果由每次调用独立持有。"""
+
+    def __init__(self, cfg):
+        self.cfg = cfg
+
+    def scan(self, root: str) -> ScanResult:
+        result = ScanResult()
+        result.movies = _scan_movies(os.path.abspath(root), self.cfg, result)
+        return result
+
+
+def scan_movies(root: str) -> list[Movie]:
+    """兼容列表接口；只有兼容接口更新历史失败列表。"""
+    result = Scanner(Cfg()).scan(root)
+    failed_items[:] = result.unrecognized
+    return result.movies
 
 
 def get_failed_when_scan():
@@ -226,14 +249,15 @@ def is_remote_drive(path: str):
     return result == DRIVE_REMOTE
 
 
-def get_remaining_path_len(path):
+def get_remaining_path_len(path, cfg=None):
     """计算当前系统支持的最大路径长度与给定路径长度的差值"""
     # TODO: 支持不同的操作系统
+    cfg = cfg if cfg is not None else Cfg()
     fullpath = os.path.abspath(path)
     # Windows: If the length exceeds ~256 characters, you will be able to see the path/files
     # via Windows/File Explorer, but may not be able to delete/move/rename these paths/files
-    length = len(fullpath.encode("utf-8")) if Cfg().summarizer.path.length_by_byte else len(fullpath)
-    remaining = Cfg().summarizer.path.length_maximum - length
+    length = len(fullpath.encode("utf-8")) if cfg.summarizer.path.length_by_byte else len(fullpath)
+    remaining = cfg.summarizer.path.length_maximum - length
     return remaining
 
 
