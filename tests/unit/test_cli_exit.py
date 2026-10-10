@@ -2,6 +2,7 @@
 
 import subprocess
 import sys
+from contextlib import nullcontext
 from types import SimpleNamespace
 
 import pytest
@@ -18,12 +19,14 @@ def test_entry_returns_failure_status(tmp_path, monkeypatch, failed, code):
     cfg = SimpleNamespace(
         other=SimpleNamespace(debug=False),
         scanner=SimpleNamespace(input_directory=str(tmp_path)),
+        translator=object(),
     )
     monkeypatch.setattr(cli, "Cfg", lambda: cfg)
     for name in ("load_actress_aliases", "import_crawlers", "setup_filemove_log", "print_summary"):
         monkeypatch.setattr(cli, name, lambda *a, **kw: None)
     monkeypatch.setattr(cli, "get_scan_dir", lambda *a: str(tmp_path))
-    monkeypatch.setattr(cli, "Pipeline", lambda cfg: SimpleNamespace(scan=lambda root: ScanResult([object()] * 3)))
+    monkeypatch.setattr(cli, "LocalTranslator", lambda cfg: nullcontext(object()))
+    monkeypatch.setattr(cli, "Pipeline", lambda cfg, **kw: SimpleNamespace(scan=lambda root: ScanResult([object()] * 3)))
     monkeypatch.setattr(cli, "RunNormalMode", lambda *a: ([], {"failed": failed}))
     monkeypatch.chdir(tmp_path)
     with pytest.raises(SystemExit) as exc:
@@ -35,13 +38,32 @@ def test_entry_with_missing_directory_exits_without_prompt(tmp_path, monkeypatch
     cfg = SimpleNamespace(
         other=SimpleNamespace(debug=False),
         scanner=SimpleNamespace(input_directory=tmp_path / "missing"),
+        translator=object(),
     )
     monkeypatch.setattr(cli, "Cfg", lambda: cfg)
+    monkeypatch.setattr(cli, "LocalTranslator", lambda cfg: nullcontext(object()))
     monkeypatch.setattr(cli, "load_actress_aliases", lambda: None)
     monkeypatch.setattr("builtins.input", lambda *args: pytest.fail("容器批处理不应提示选目录"))
     with pytest.raises(SystemExit) as exc:
         cli.entry()
     assert exc.value.code == 1
+
+
+def test_model_startup_failure_precedes_media_scan(monkeypatch):
+    cfg = SimpleNamespace(translator=object())
+    monkeypatch.setattr(cli, "Cfg", lambda: cfg)
+
+    class FailedTranslator:
+        def __enter__(self):
+            raise RuntimeError("model unavailable")
+
+        def __exit__(self, *_):
+            pass
+
+    monkeypatch.setattr(cli, "LocalTranslator", lambda _: FailedTranslator())
+    monkeypatch.setattr(cli, "get_scan_dir", lambda *_: pytest.fail("不应扫描媒体目录"))
+    with pytest.raises(RuntimeError, match="model unavailable"):
+        cli.entry()
 
 
 def test_invalid_config_exits_without_prompt(monkeypatch):
@@ -86,6 +108,7 @@ def test_batch_continues_and_counts_failure(monkeypatch):
         return JobResult(movie, output=OutputResult(movie))
 
     monkeypatch.setattr(cli.JobRunner, "run", run)
+    monkeypatch.setattr("javsp.translate.LocalTranslator.start", lambda self: self)
     monkeypatch.setattr("javsp.crawl.dispatcher.CrawlerExecutor.throttle", lambda self: None)
     successful, stats = cli.RunNormalMode(movies, cfg)
     assert visited == movies

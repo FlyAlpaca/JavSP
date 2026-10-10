@@ -3,7 +3,7 @@ import os
 from argparse import ArgumentParser, RawTextHelpFormatter
 from enum import StrEnum
 from pathlib import Path
-from typing import Literal, TypeAlias
+from typing import Literal
 
 import yaml
 from confz import BaseConfig, CLArgSource, EnvSource, FileSource
@@ -222,71 +222,45 @@ class Summarizer(BaseConfig):
     extra_fanarts: ExtraFanartSummarize
 
 
-class OpenAICompatibleEngine(BaseConfig):
-    type: Literal["openai_compatible"]
-    base_url: Url
-    api_key: str
-    model: str
-    system_prompt: str = (
-        "Translate the following Japanese text into Chinese. "
-        "Keep non-Japanese text, names, and any content that does not look like Japanese unchanged. "
-        "Reply with the translated text only, do not add any text that is not in the original content."
-    )
-    temperature: float = 0.3
-    max_tokens: int = 2048
+class TranslateRuntime(BaseConfig):
+    threads: PositiveInt = 6
+    threads_batch: PositiveInt = 6
+    ctx_size: PositiveInt = 8192
+    batch_size: PositiveInt = 512
+    ubatch_size: PositiveInt = 128
+    parallel: PositiveInt = 1
+    n_gpu_layers: NonNegativeInt = 0
+    startup_timeout: PositiveInt = 300
 
 
-class AnthropicEngine(BaseConfig):
-    type: Literal["anthropic"]
-    base_url: Url = Url("https://api.anthropic.com/v1")
-    api_key: str
-    model: str = "claude-3-5-sonnet-20241022"
-    system_prompt: str = (
-        "Translate the following Japanese text into Chinese. "
-        "Keep non-Japanese text, names, and any content that does not look like Japanese unchanged. "
-        "Reply with the translated text only, do not add any text that is not in the original content."
-    )
-    max_tokens: int = 2048
-    temperature: float = 0.3
-
-
-class GoogleTranslateEngine(BaseConfig):
-    """Google 翻译（免费，无需 API Key）"""
-
-    type: Literal["google"]
-    source_language: str = "auto"
-    target_language: str = "zh-CN"
-
-
-class BingTranslateEngine(BaseConfig):
-    """Bing 翻译（免费，无需 API Key）"""
-
-    type: Literal["bing"]
-    source_language: str = "auto"
-    target_language: str = "zh-Hans"
-
-
-class AlibabaTranslateEngine(BaseConfig):
-    """阿里翻译（免费，无需 API Key）"""
-
-    type: Literal["alibaba"]
-    source_language: str = "auto"
-    target_language: str = "zh"
-
-
-TranslateEngine: TypeAlias = (
-    OpenAICompatibleEngine | AnthropicEngine | GoogleTranslateEngine | BingTranslateEngine | AlibabaTranslateEngine | None
-)
-
-
-class TranslateField(BaseConfig):
-    title: bool = True
-    plot: bool = True
+class TranslateGeneration(BaseConfig):
+    temperature: float = Field(default=0.7, ge=0, le=2)
+    top_p: float = Field(default=0.6, gt=0, le=1)
+    top_k: PositiveInt = 20
+    repeat_penalty: float = Field(default=1.05, ge=1)
+    max_tokens: PositiveInt = 4096
+    timeout: PositiveInt = 1800
 
 
 class Translator(BaseConfig):
-    engine: TranslateEngine = Field(default=None, discriminator="type")
-    fields: TranslateField = TranslateField()
+    model: Literal["hy_mt2_7b_q4_k_m", "hy_mt2_1_8b_q4_k_m"] = "hy_mt2_7b_q4_k_m"
+    model_dir: Path = Path("/app/models")
+    auto_download: bool = True
+    runtime: TranslateRuntime = Field(default_factory=TranslateRuntime)
+    generation: TranslateGeneration = Field(default_factory=TranslateGeneration)
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_removed_options(cls, data):
+        if isinstance(data, dict):
+            removed = {"engine", "fields"} & data.keys()
+            if removed:
+                raise ValueError(
+                    "旧翻译配置已移除: "
+                    + ", ".join(sorted(removed))
+                    + "。请删除这些键，改用 translator.model、model_dir、runtime 和 generation"
+                )
+        return data
 
 
 class Other(BaseConfig):

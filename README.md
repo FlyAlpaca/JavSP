@@ -13,7 +13,7 @@
 
 - 从文件名或目录识别番号，识别连续分片。
 - 并发抓取多个站点，按配置优先级合并字段，追踪字段来源。
-- 翻译标题与简介，统一演员别名和分类标签。
+- 使用本地 Hy-MT2 模型翻译含日文的标题与简介，统一演员别名和分类标签。
 - 下载普通或高清封面，裁剪海报、添加字幕及无码标记，生成 `folder.jpg`。
 - 并发下载剧照，匹配 `.srt`、`.ass` 字幕，支持移动或硬链接整理。
 - 先准备和校验产物再提交；提交失败时恢复源文件和被替换的元数据。
@@ -30,6 +30,7 @@ docker run --rm \
   --name javsp \
   -v /path/to/media:/media \
   -v /path/to/config:/app/config \
+  -v /path/to/models:/app/models \
   ghcr.io/flyalpaca/javsp:2.0.0
 ```
 
@@ -39,8 +40,9 @@ docker run --rm \
 | --- | --- |
 | `/media` | 待整理影片与输出目录；需要写入权限 |
 | `/app/config` | 用户配置目录；需要写入权限 |
+| `/app/models` | GGUF 模型缓存；首次下载需要约 5 GB 可用空间，重建容器后仍可复用 |
 
-首次启动时，如果 `/app/config/config.yml` 不存在，入口脚本会从镜像内的 `/app/config_default.yml` 复制生成它。之后编辑挂载目录中的 `config.yml`，重新运行容器生效。首次生成的文件包含完整默认配置，也可以替换成只包含覆盖项的配置。
+首次启动时，如果 `/app/config/config.yml` 不存在，入口脚本会从镜像内的 `/app/config_default.yml` 复制生成它。之后编辑挂载目录中的 `config.yml`，重新运行容器生效。首次生成的文件包含完整默认配置，也可以替换成只包含覆盖项的配置。启动时会先校验模型缓存，必要时从腾讯官方仓库下载；模型准备和本地服务就绪后才扫描影片。已有有效缓存时可离线启动。
 
 程序按无人值守方式运行；请确保配置中扫描目录指向容器内路径：
 
@@ -77,10 +79,14 @@ summarizer:
     output_folder_pattern: '#整理完成/{actress}/[{num}] {title}'
     hard_link: false
 translator:
-  engine: null
+  model: hy_mt2_7b_q4_k_m
+  model_dir: /app/models
+  auto_download: true
 ```
 
 ### 配置位置和优先级
+
+翻译始终启用，仅处理含假名的日文标题和简介；纯汉字文本无法可靠判别语言时保持原样。可将 `translator.model` 改为 `hy_mt2_1_8b_q4_k_m` 以使用更小的模型。模型运行和生成参数见[默认配置](./config_default.yml)，默认 CPU 设置面向 i3-1315U／24 GB 内存，实际性能因机器而异。翻译请求仅发送到容器内的 llama.cpp 服务；首次模型下载仍需访问 Hugging Face。若关闭 `auto_download`，请提前将所选官方 GGUF 放入 `model_dir`。旧配置中的 `translator.engine`、`translator.fields` 必须删除，不能用 `engine: null` 关闭翻译。
 
 用户配置位于 `/app/config/config.yml`。容器入口首次启动时会从默认模板创建该文件；也可通过 `-c` 指定其他容器内路径。
 
@@ -94,9 +100,9 @@ translator:
 环境变量使用 `JAVSP_` 前缀和双下划线区分层级；命令行字段覆盖使用 `--o` 前缀及点号路径，参数名与值之间用空格（不支持等号写法）：
 
 ```bash
-docker run --rm -v /path/to/media:/media -v /path/to/config:/app/config \
+docker run --rm -v /path/to/media:/media -v /path/to/config:/app/config -v /path/to/models:/app/models \
   -e JAVSP_SCANNER__INPUT_DIRECTORY=/media ghcr.io/flyalpaca/javsp:2.0.0
-docker run --rm -v /path/to/media:/media -v /path/to/config:/app/config \
+docker run --rm -v /path/to/media:/media -v /path/to/config:/app/config -v /path/to/models:/app/models \
   ghcr.io/flyalpaca/javsp:2.0.0 --oscanner.input_directory /media --osummarizer.move_files false
 ```
 
@@ -189,7 +195,7 @@ flowchart TB
 
 ## 从 1.x 升级
 
-- 继续使用现有 `config.yml`，配置字段和命名模板保持兼容，无需迁移脚本。
+- 原有命名和抓取配置可继续使用；旧翻译配置中的 `engine`、`fields` 需要按上文迁移为本地模型配置。
 - 输出目录和主要产物命名保持一致；失败时恢复范围扩大到本次生成或替换的元数据。
 - 不兼容的输出路径重叠会提前报错；检查自定义模板是否把不同产物写入同一文件。
 - Docker 可固定使用 `2.0.0`，保留原来的 `/media` 和 `/app/config` 挂载。

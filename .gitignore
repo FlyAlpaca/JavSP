@@ -136,6 +136,7 @@ ver_hook.py
 javsp/VERSION
 # cached data
 *.cache.json
+*.gguf
 
 .idea
 .vscode
