@@ -1,0 +1,15 @@
+services:
+  javsp:
+    image: ghcr.io/flyalpaca/javsp:2.0.0
+    volumes:
+      - type: bind
+        source: ${JAVSP_MEDIA_DIR:?Set JAVSP_MEDIA_DIR to the host media directory}
+        target: /media
+      - type: bind
+        source: ${JAVSP_CONFIG_DIR:?Set JAVSP_CONFIG_DIR to the host config directory}
+        target: /app/config
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
