@@ -1,6 +1,9 @@
 """本地模型准备、请求和元数据翻译的离线测试。"""
 
 import hashlib
+import re
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -33,7 +36,7 @@ def test_default_and_removed_config():
 
 @pytest.fixture
 def small_model(monkeypatch):
-    content = b"GGUF-test-model"
+    content = b"GGUF-test-model" * 100
     spec = ModelSpec("tencent/test", "revision", "test.gguf", len(content), hashlib.sha256(content).hexdigest())
     monkeypatch.setitem(MODELS, "hy_mt2_7b_q4_k_m", spec)
     return spec, content
@@ -48,26 +51,71 @@ def test_cached_model_needs_no_network(tmp_path, small_model):
     session.get.assert_not_called()
 
 
-def test_download_replaces_invalid_cache_atomically(tmp_path, small_model, caplog):
+@pytest.fixture
+def model_server(small_model, monkeypatch):
+    spec, content = small_model
+    state = SimpleNamespace(
+        requests=[], ignore_range=False, probe_ignored=False, bad_range=False, fail_once=False, corrupted=False
+    )
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            requested = self.headers.get("Range")
+            state.requests.append(requested)
+            data = b"X" * len(content) if state.corrupted else content
+            match = re.fullmatch(r"bytes=(\d+)-(\d+)", requested or "")
+            if match and not state.ignore_range and not (state.probe_ignored and requested == "bytes=0-0"):
+                start, end = map(int, match.groups())
+                if state.bad_range and requested != "bytes=0-0":
+                    self.send_response(206)
+                    self.send_header("Content-Range", f"bytes 0-{end}/{len(data)}")
+                    self.end_headers()
+                    return
+                chunk = data[start : end + 1]
+                self.send_response(206)
+                self.send_header("Content-Range", f"bytes {start}-{end}/{len(data)}")
+            else:
+                chunk = data
+                self.send_response(200)
+            self.send_header("Content-Length", str(len(chunk)))
+            self.end_headers()
+            if state.fail_once and requested != "bytes=0-0":
+                state.fail_once = False
+                self.wfile.write(chunk[: len(chunk) // 2])
+                self.wfile.flush()
+                self.close_connection = True
+            else:
+                self.wfile.write(chunk)
+
+        def log_message(self, *_):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    monkeypatch.setattr(ModelSpec, "url", property(lambda self: f"http://127.0.0.1:{server.server_port}/model"))
+    yield state
+    server.shutdown()
+    thread.join()
+    server.server_close()
+
+
+def test_download_replaces_invalid_cache_atomically(tmp_path, small_model, model_server, caplog):
     caplog.set_level("INFO", logger="javsp.translate")
     spec, content = small_model
     path = tmp_path / spec.filename
     path.write_bytes(b"damaged")
-    response = MagicMock()
-    response.iter_content.return_value = [content[:4], content[4:]]
-    session = MagicMock()
-    session.get.return_value.__enter__.return_value = response
-    assert ensure_model(Translator(model_dir=tmp_path), session) == path
+    assert ensure_model(Translator(model_dir=tmp_path)) == path
     assert path.read_bytes() == content
     assert list(tmp_path.glob("*.part")) == []
-    assert session.get.call_args.args[0] == spec.url
+    assert len([item for item in model_server.requests if item != "bytes=0-0"]) == 4
     assert "下载翻译模型: 0%" in caplog.text
     assert "下载翻译模型: 100%" in caplog.text
 
 
 def test_model_download_uses_configured_proxy(tmp_path, small_model, monkeypatch):
     _, content = small_model
-    response = MagicMock()
+    response = MagicMock(status_code=200, headers={})
     response.iter_content.return_value = [content]
     session = MagicMock()
     session.get.return_value.__enter__.return_value = response
@@ -76,10 +124,28 @@ def test_model_download_uses_configured_proxy(tmp_path, small_model, monkeypatch
 
     ensure_model(Translator(model_dir=tmp_path), session)
 
-    assert session.get.call_args.kwargs["proxies"] == {
+    assert session.get.call_args_list[0].kwargs["proxies"] == {
         "http": "http://proxy:7890",
         "https": "http://proxy:7890",
     }
+
+
+def test_segment_connections_receive_proxy(tmp_path, small_model, model_server, monkeypatch):
+    import requests.sessions
+
+    network = SimpleNamespace(proxy_server="http://proxy:7890")
+    monkeypatch.setattr("javsp.translate.Cfg", lambda: SimpleNamespace(network=network))
+    original_get = requests.sessions.Session.get
+    seen = []
+
+    def get_without_proxy(client, url, **kwargs):
+        seen.append(kwargs.pop("proxies", None))
+        return original_get(client, url, **kwargs)
+
+    monkeypatch.setattr(requests.sessions.Session, "get", get_without_proxy)
+    ensure_model(Translator(model_dir=tmp_path))
+    assert len(seen) == 5  # 范围探测和四个分片
+    assert all(item == {"http": "http://proxy:7890", "https": "http://proxy:7890"} for item in seen)
 
 
 def test_failed_download_preserves_existing_file(tmp_path, small_model):
@@ -92,6 +158,81 @@ def test_failed_download_preserves_existing_file(tmp_path, small_model):
         ensure_model(Translator(model_dir=tmp_path), session)
     assert path.read_bytes() == b"old"
     assert list(tmp_path.glob("*.part")) == []
+
+
+def test_resume_partial_segment(tmp_path, small_model, model_server, monkeypatch):
+    spec, content = small_model
+    monkeypatch.setattr("javsp.translate._DOWNLOAD_CHUNK", 32)
+    model_server.fail_once = True
+    with pytest.raises(TranslateError, match="模型下载失败"):
+        ensure_model(Translator(model_dir=tmp_path))
+    parts = list(tmp_path.glob("*.part*"))
+    assert parts and any(part.stat().st_size for part in parts)
+    previous = len(model_server.requests)
+    assert ensure_model(Translator(model_dir=tmp_path)).read_bytes() == content
+    segment_start = {i * spec.size // 4 for i in range(4)}
+    assert any(
+        request and int(request.removeprefix("bytes=").split("-")[0]) not in segment_start
+        for request in model_server.requests[previous:]
+        if request != "bytes=0-0"
+    )
+    assert not list(tmp_path.glob("*.part*"))
+
+
+@pytest.mark.parametrize("mode", ["ignore_range", "bad_range"])
+def test_range_fallback(tmp_path, small_model, model_server, mode):
+    _, content = small_model
+    setattr(model_server, mode, True)
+    assert ensure_model(Translator(model_dir=tmp_path)).read_bytes() == content
+    assert None in model_server.requests
+
+
+def test_single_connection_resume(tmp_path, small_model, model_server, monkeypatch):
+    _, content = small_model
+    monkeypatch.setattr("javsp.translate._DOWNLOAD_CHUNK", 32)
+    model_server.probe_ignored = True
+    model_server.fail_once = True
+    with pytest.raises(TranslateError, match="模型下载失败"):
+        ensure_model(Translator(model_dir=tmp_path))
+    previous = len(model_server.requests)
+    assert ensure_model(Translator(model_dir=tmp_path)).read_bytes() == content
+    assert any(request and request != "bytes=0-0" for request in model_server.requests[previous:])
+
+
+def test_checksum_failure_preserves_existing_cache(tmp_path, small_model, model_server):
+    spec, _ = small_model
+    old = tmp_path / spec.filename
+    old.write_bytes(b"old")
+    model_server.corrupted = True
+    with pytest.raises(TranslateError, match="校验失败"):
+        ensure_model(Translator(model_dir=tmp_path))
+    assert old.read_bytes() == b"old"
+    assert not list(tmp_path.glob("*.part*"))
+
+
+def test_oversized_segment_is_discarded(tmp_path, small_model, model_server):
+    from javsp.translate import _parts
+
+    spec, content = small_model
+    start, end, part = _parts(spec, tmp_path)[0]
+    part.write_bytes(b"X" * (end - start + 2))
+    assert ensure_model(Translator(model_dir=tmp_path)).read_bytes() == content
+    assert f"bytes={start}-{end}" in model_server.requests
+
+
+def test_terminal_progress_uses_single_tqdm_bar(monkeypatch):
+    from javsp.translate import _DownloadProgress
+
+    bar = MagicMock()
+    constructor = MagicMock(return_value=bar)
+    monkeypatch.setattr("javsp.translate.tqdm", constructor)
+    monkeypatch.setattr("javsp.translate.sys.stderr.isatty", lambda: True)
+    with _DownloadProgress(100, 25) as progress:
+        progress.update(20)
+    assert constructor.call_args.kwargs["initial"] == 25
+    assert constructor.call_args.kwargs["disable"] is False
+    bar.update.assert_called_once_with(20)
+    bar.close.assert_called_once()
 
 
 def test_missing_model_offline_fails(tmp_path, small_model):

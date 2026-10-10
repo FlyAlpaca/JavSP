@@ -7,7 +7,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,6 +22,8 @@ from javsp.datatype import MovieInfo
 logger = logging.getLogger(__name__)
 _JAPANESE = re.compile(r"[\u3041-\u3096\u30a1-\u30fa\u30fd-\u30fe\uff66-\uff9d]")
 _MAX_CHARS = 800
+_DOWNLOAD_CHUNK = 1024 * 1024
+_CONTENT_RANGE = re.compile(r"bytes (\d+)-(\d+)/(\d+)")
 
 
 class TranslateError(Exception):
@@ -67,6 +71,139 @@ def _valid_model(path: Path, spec: ModelSpec) -> bool:
     return digest.hexdigest() == spec.sha256
 
 
+class _RangeUnsupported(Exception):
+    """服务器或代理未可靠执行范围请求。"""
+
+
+def _range_matches(response, start: int, end: int, size: int) -> bool:
+    match = _CONTENT_RANGE.fullmatch(response.headers.get("Content-Range", ""))
+    return response.status_code == 206 and match is not None and tuple(map(int, match.groups())) == (start, end, size)
+
+
+class _DownloadProgress:
+    def __init__(self, size: int, initial: int):
+        self.size = size
+        self.current = initial
+        self.lock = threading.Lock()
+        self.terminal = sys.stderr.isatty()
+        self.last_percent = initial * 100 // size
+        self.last_report_at = time.monotonic()
+        self.bar = tqdm(
+            total=size,
+            initial=initial,
+            desc="下载翻译模型",
+            unit="B",
+            unit_scale=True,
+            unit_divisor=1024,
+            disable=not self.terminal,
+        )
+        if not self.terminal:
+            self._log()
+
+    def _log(self):
+        logger.info("下载翻译模型: %d%% (%d/%d 字节)", min(self.current * 100 // self.size, 100), self.current, self.size)
+
+    def update(self, count: int):
+        with self.lock:
+            self.current += count
+            self.bar.update(count)
+            if not self.terminal:
+                now = time.monotonic()
+                percent = min(self.current * 100 // self.size, 100)
+                if percent >= self.last_percent + 5 or now - self.last_report_at >= 10 or self.current == self.size:
+                    self._log()
+                    self.last_percent = percent
+                    self.last_report_at = now
+
+    def close(self):
+        self.bar.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        self.close()
+
+
+def _parts(spec: ModelSpec, model_dir: Path) -> list[tuple[int, int, Path]]:
+    prefix = model_dir / f".{spec.filename}.{spec.sha256}.part"
+    return [(i * spec.size // 4, (i + 1) * spec.size // 4 - 1, Path(f"{prefix}{i}")) for i in range(4)]
+
+
+def _part_length(path: Path, maximum: int) -> int:
+    if not path.exists():
+        return 0
+    length = path.stat().st_size
+    if length > maximum:
+        path.unlink()
+        return 0
+    return length
+
+
+def _download_part(spec, part, options, progress):
+    start, end, path = part
+    offset = _part_length(path, end - start + 1)
+    if start + offset > end:
+        return
+    # requests.Session 不保证跨线程安全；每个分片使用自己的连接池。
+    with requests.Session() as client:
+        with client.get(
+            spec.url, headers={"Range": f"bytes={start + offset}-{end}"}, stream=True, timeout=(30, 120), **options
+        ) as response:
+            if not _range_matches(response, start + offset, end, spec.size):
+                raise _RangeUnsupported(f"分片范围响应无效: {response.status_code} {response.headers.get('Content-Range')}")
+            with path.open("ab") as file:
+                remaining = end - start + 1 - offset
+                for chunk in response.iter_content(chunk_size=_DOWNLOAD_CHUNK):
+                    if chunk:
+                        if len(chunk) > remaining:
+                            raise _RangeUnsupported("分片响应超出请求范围")
+                        file.write(chunk)
+                        remaining -= len(chunk)
+                        progress.update(len(chunk))
+                if remaining:
+                    raise requests.ConnectionError("分片响应提前结束")
+
+
+def _download_single(spec, part_path, client, options):
+    offset = _part_length(part_path, spec.size)
+    with _DownloadProgress(spec.size, offset) as progress:
+        headers = {"Range": f"bytes={offset}-{spec.size - 1}"} if offset else {}
+        with client.get(spec.url, headers=headers, stream=True, timeout=(30, 120), **options) as response:
+            if offset and not _range_matches(response, offset, spec.size - 1, spec.size):
+                # 服务器忽略或错误实现 Range 时，用完整响应重头下载。
+                if response.status_code != 200:
+                    response.close()
+                    return _download_single_from_zero(spec, part_path, client, options)
+                progress.close()
+                with _DownloadProgress(spec.size, 0) as fresh:
+                    _save_response(response, part_path, spec.size, fresh, "wb")
+                return
+            response.raise_for_status()
+            _save_response(response, part_path, spec.size - offset, progress, "ab" if offset else "wb")
+
+
+def _download_single_from_zero(spec, path, client, options):
+    with client.get(spec.url, stream=True, timeout=(30, 120), **options) as response:
+        response.raise_for_status()
+        with _DownloadProgress(spec.size, 0) as progress:
+            _save_response(response, path, spec.size, progress, "wb")
+
+
+def _save_response(response, path, expected, progress, mode):
+    remaining = expected
+    with path.open(mode) as file:
+        for chunk in response.iter_content(chunk_size=_DOWNLOAD_CHUNK):
+            if chunk:
+                if len(chunk) > remaining:
+                    raise TranslateError("模型响应超过预期大小")
+                file.write(chunk)
+                remaining -= len(chunk)
+                progress.update(len(chunk))
+    if remaining:
+        raise requests.ConnectionError("模型响应提前结束")
+
+
 def ensure_model(cfg: Translator, session=None) -> Path:
     """在启动阶段验证缓存；缺失或损坏时下载并原子替换。"""
     spec = MODELS[cfg.model]
@@ -87,42 +224,52 @@ def ensure_model(cfg: Translator, session=None) -> Path:
     proxy = Cfg().network.proxy_server
     request_options = {"proxies": {"http": str(proxy), "https": str(proxy)}} if proxy is not None else {}
     temporary = None
+    parts = _parts(spec, model_dir)
+    single_part = model_dir / f".{spec.filename}.{spec.sha256}.single.part"
     try:
-        with tempfile.NamedTemporaryFile(prefix=f".{spec.filename}.", suffix=".part", dir=model_dir, delete=False) as file:
+        with client.get(spec.url, headers={"Range": "bytes=0-0"}, stream=True, timeout=(30, 120), **request_options) as probe:
+            ranged = _range_matches(probe, 0, 0, spec.size)
+            if probe.status_code not in (200, 206, 416):
+                probe.raise_for_status()
+        if ranged:
+            initial = sum(_part_length(part, end - start + 1) for start, end, part in parts)
+            with _DownloadProgress(spec.size, initial) as progress:
+                with ThreadPoolExecutor(max_workers=4) as pool:
+                    futures = [pool.submit(_download_part, spec, part, request_options, progress) for part in parts]
+                    errors = []
+                    for future in as_completed(futures):
+                        try:
+                            future.result()
+                        except Exception as error:
+                            errors.append(error)
+            if errors:
+                range_error = next((error for error in errors if isinstance(error, _RangeUnsupported)), None)
+                if range_error is None:
+                    raise errors[0]
+                logger.warning("分片下载不可用，回退单连接: %s", range_error)
+                ranged = False
+        if not ranged:
+            logger.info("下载源不支持可靠分片，改用单连接")
+            _download_single(spec, single_part, client, request_options)
+
+        with tempfile.NamedTemporaryFile(prefix=f".{spec.filename}.", suffix=".assembling", dir=model_dir, delete=False) as file:
             temporary = Path(file.name)
-            with client.get(spec.url, stream=True, timeout=(30, 120), **request_options) as response:
-                response.raise_for_status()
-                terminal = sys.stderr.isatty()
-                downloaded = 0
-                last_reported = 0
-                last_report_at = time.monotonic()
-                if not terminal:
-                    logger.info("下载翻译模型: 0%% (%s 字节)", spec.size)
-                with tqdm(
-                    total=spec.size,
-                    desc="下载翻译模型",
-                    unit="B",
-                    unit_scale=True,
-                    unit_divisor=1024,
-                    disable=not terminal,
-                ) as progress:
-                    for chunk in response.iter_content(chunk_size=4 * 1024 * 1024):
-                        if chunk:
-                            file.write(chunk)
-                            downloaded += len(chunk)
-                            progress.update(len(chunk))
-                            if not terminal:
-                                now = time.monotonic()
-                                percent = min(downloaded * 100 // spec.size, 100)
-                                if percent >= last_reported + 5 or now - last_report_at >= 10:
-                                    logger.info("下载翻译模型: %d%% (%d/%d 字节)", percent, downloaded, spec.size)
-                                    last_reported = percent
-                                    last_report_at = now
-                if not terminal and downloaded * 100 // spec.size > last_reported:
-                    logger.info("下载翻译模型: %d%% (%d/%d 字节)", min(downloaded * 100 // spec.size, 100), downloaded, spec.size)
+            if ranged:
+                for _, _, part in parts:
+                    with part.open("rb") as source:
+                        shutil.copyfileobj(source, file, _DOWNLOAD_CHUNK)
+            else:
+                with single_part.open("rb") as source:
+                    shutil.copyfileobj(source, file, _DOWNLOAD_CHUNK)
         if not _valid_model(temporary, spec):
+            for _, _, part in parts:
+                part.unlink(missing_ok=True)
+            single_part.unlink(missing_ok=True)
             raise TranslateError(f"模型下载校验失败: {spec.filename}")
         temporary.replace(path)
+        for _, _, part in parts:
+            part.unlink(missing_ok=True)
+        single_part.unlink(missing_ok=True)
         logger.info("本地翻译模型已准备: %s", path)
         return path
     except (OSError, requests.RequestException) as error:
