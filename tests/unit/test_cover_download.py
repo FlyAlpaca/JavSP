@@ -22,7 +22,7 @@ def save_image(path, color):
 
 
 @pytest.mark.parametrize("highres", [True, False])
-def test_fast_cover_returns_before_slow_request_and_loser_cannot_overwrite(tmp_path, monkeypatch, cover_config, highres):
+def test_fast_cover_waits_for_slow_request_and_loser_cannot_overwrite(tmp_path, monkeypatch, cover_config, highres):
     slow_started = threading.Event()
     release_slow = threading.Event()
     workers = []
@@ -42,21 +42,37 @@ def test_fast_cover_returns_before_slow_request_and_loser_cannot_overwrite(tmp_p
 
     monkeypatch.setattr(processor, "download", download)
     target = tmp_path / "fanart.jpg"
+    results = []
+    candidates = ["slow.jpg", "fast.png"]
+    caller = threading.Thread(
+        target=lambda: results.append(
+            processor.download_cover(
+                ["ordinary.jpg"] if highres else candidates,
+                str(target),
+                candidates if highres else None,
+            )
+        )
+    )
+    caller.start()
     try:
-        candidates = ["slow.jpg", "fast.png"]
-        if highres:
-            result = processor.download_cover(["ordinary.jpg"], str(target), candidates)
-        else:
-            result = processor.download_cover(candidates, str(target))
-        assert result == ("fast.png", str(tmp_path / "fanart.png"))
-        assert not release_slow.is_set()
-        assert "ordinary.jpg" not in calls
-        assert len(set(paths)) == 2
+        assert slow_started.wait(5)
+        # 等待胜出图片发布，调用仍须回收在途请求。
+        import time
+
+        deadline = time.monotonic() + 5
+        while not (tmp_path / "fanart.png").exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert (tmp_path / "fanart.png").exists()
+        assert caller.is_alive()
     finally:
         release_slow.set()
-        for worker in workers:
-            worker.join(5)
-            assert not worker.is_alive()
+        caller.join(5)
+    assert not caller.is_alive()
+    result = results[0]
+    assert result == ("fast.png", str(tmp_path / "fanart.png"))
+    assert "ordinary.jpg" not in calls
+    assert len(set(paths)) == 2
+    assert all(not worker.is_alive() for worker in workers)
     with Image.open(result[1]) as image:
         assert image.getpixel((0, 0)) == (0, 0, 255)
     assert not target.exists()
@@ -85,7 +101,8 @@ def test_highres_failures_complete_before_ordinary_fallback(tmp_path, monkeypatc
     monkeypatch.setattr(processor, "download", download)
     target = str(tmp_path / "fanart.jpg")
     assert processor.download_cover(["ordinary.jpg"], target, ["hd404.jpg", "hd-invalid.jpg"]) == (
-        "ordinary.jpg", target,
+        "ordinary.jpg",
+        target,
     )
     assert calls.count("hd404.jpg") == 1
     assert not list(tmp_path.glob(".javsp-cover-*"))
@@ -152,9 +169,11 @@ def test_parallel_downloads_are_limited_to_three(tmp_path, monkeypatch, cover_co
 
     monkeypatch.setattr(processor, "download", download)
     target = str(tmp_path / "fanart.jpg")
-    caller = threading.Thread(target=lambda: results.append(
-        processor.download_cover([f"cover-{i}.jpg" for i in range(8)], target),
-    ))
+    caller = threading.Thread(
+        target=lambda: results.append(
+            processor.download_cover([f"cover-{i}.jpg" for i in range(8)], target),
+        )
+    )
     caller.start()
     try:
         assert three_started.wait(5)

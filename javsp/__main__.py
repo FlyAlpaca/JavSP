@@ -395,7 +395,7 @@ def entry():
             time.sleep(5)
     else:
         input("整理完成，按回车键退出...")
-    sys.exit(0)
+    sys.exit(1 if stats["failed"] else 0)
 
 
 if __name__ == "__main__":

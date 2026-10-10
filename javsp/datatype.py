@@ -254,6 +254,28 @@ class Movie:
             list[(src, dst)]: 所有已移动文件的(原路径, 新路径)列表
         """
 
+        moved_files = []
+        try:
+            return self._rename_files(use_hardlink, moved_files)
+        except BaseException as error:
+            rollback_errors = []
+            for src, dst in reversed(moved_files):
+                try:
+                    if use_hardlink:
+                        os.unlink(dst)
+                    else:
+                        if os.path.lexists(src):
+                            raise FileExistsError(f"回滚源路径已存在: {src}")
+                        shutil.move(dst, src)
+                except OSError as rollback_error:
+                    rollback_errors.append(f"{dst} -> {src}: {rollback_error}")
+            if rollback_errors:
+                raise RuntimeError("文件移动失败且回滚不完整: " + "; ".join(rollback_errors)) from error
+            raise
+
+    def _rename_files(self, use_hardlink, moved_files):
+        """执行文件操作；由 rename_files 统一负责回滚。"""
+
         def move_file(src: str, dst: str):
             """移动（重命名）文件并记录信息到日志
 
@@ -262,37 +284,49 @@ class Movie:
             """
             abs_dst = os.path.abspath(dst)
             # shutil.move might overwrite dst file
-            if os.path.exists(abs_dst):
+            if os.path.lexists(abs_dst):
                 raise FileExistsError(f"File exists: {abs_dst}")
-            if use_hardlink:
-                # 硬链接模式：源文件保留不动，仅在目标位置创建一个新的硬链接
-                try:
-                    os.link(src, abs_dst)
-                except OSError:
-                    logger.warning(f"创建硬链接失败，回退为复制文件: '{src}' -> '{abs_dst}'")
-                    shutil.copy2(src, abs_dst)
-            else:
-                shutil.move(src, abs_dst)
+            try:
+                if use_hardlink:
+                    try:
+                        os.link(src, abs_dst)
+                    except OSError:
+                        logger.warning(f"创建硬链接失败，回退为复制文件: '{src}' -> '{abs_dst}'")
+                        shutil.copy2(src, abs_dst)
+                else:
+                    shutil.move(src, abs_dst)
+            except BaseException:
+                # 跨设备复制失败可能留下部分目标；源文件已移走则纳入回滚。
+                if os.path.lexists(abs_dst):
+                    if os.path.exists(src):
+                        os.unlink(abs_dst)
+                    else:
+                        moved_files.append((src, abs_dst))
+                raise
+            moved_files.append((src, abs_dst))
             src_rel = os.path.relpath(src)
             dst_name = os.path.basename(dst)
             logger.info(f"重命名文件: '{src_rel}' -> '...{os.sep}{dst_name}'")
             # 目前StreamHandler并未设置filter，为了避免显示中出现重复的日志，这里暂时只能用debug级别
             filemove_logger.debug(f'移动（重命名）文件: \n  原路径: "{src}"\n  新路径: "{abs_dst}"')
 
-        moved_files = []
+        # 在移动第一片之前检查整组视频目标，避免后续分片冲突。
+        for i, src in enumerate(self.files, start=1):
+            suffix = f"-CD{i}" if len(self.files) > 1 else ""
+            dst = os.path.join(self.save_dir, self.basename + suffix + os.path.splitext(src)[1])
+            if os.path.lexists(dst):
+                raise FileExistsError(f"File exists: {dst}")
         src_dir = os.path.dirname(self.files[0])
         if len(self.files) == 1:
             fullpath = self.files[0]
             ext = os.path.splitext(fullpath)[1]
             newpath = os.path.join(self.save_dir, self.basename + ext)
             move_file(fullpath, newpath)
-            moved_files.append((fullpath, newpath))
         else:
             for i, fullpath in enumerate(self.files, start=1):
                 ext = os.path.splitext(fullpath)[1]
                 newpath = os.path.join(self.save_dir, self.basename + f"-CD{i}" + ext)
                 move_file(fullpath, newpath)
-                moved_files.append((fullpath, newpath))
 
         # 移动匹配的字幕文件（基于番号模糊匹配：IPZ-380 == ipz380 == ipz00380）
         if Cfg().summarizer.match_subtitles:
@@ -332,7 +366,6 @@ class Movie:
                             try:
                                 move_file(f_path, new_sub_path)
                                 logger.info(f"已移动字幕文件: '{f_path}'")
-                                moved_files.append((f_path, new_sub_path))
                             except FileExistsError:
                                 logger.warning(f"字幕文件已存在，跳过: '{new_sub_path}'")
 
