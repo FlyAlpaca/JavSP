@@ -1,9 +1,8 @@
-"""JavSP 入口：配置初始化、主流程编排、用户交互"""
+"""JavSP 容器入口：配置初始化和批处理编排。"""
 
 import logging
 import os
 import sys
-import time
 
 from pydantic import ValidationError
 
@@ -12,8 +11,6 @@ if sys.stdout and hasattr(sys.stdout, "reconfigure"):
 if sys.stderr and hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8")
 
-import colorama
-from colorama import Fore, Style
 from tqdm import tqdm
 
 from javsp.print import TqdmOut, install
@@ -39,52 +36,14 @@ for handler in root_logger.handlers:
 
 logger = logging.getLogger("main")
 
-from javsp.__version__ import __version__
 from javsp.config import Cfg
 from javsp.crawl.dispatcher import import_crawlers
 from javsp.crawl.r18dev import prepare_database
-from javsp.datatype import Movie, setup_filemove_log
-from javsp.func import check_update, get_scan_dir
-from javsp.lib import prompt
+from javsp.datatype import setup_filemove_log
+from javsp.func import get_scan_dir
 from javsp.metadata.summarizer import load_actress_aliases
 from javsp.workflow.models import Stage
 from javsp.workflow.pipeline import JobRunner, Pipeline
-
-
-def reviewMovieID(all_movies, root):
-    """人工检查每一部影片的番号"""
-    count = len(all_movies)
-    logger.info("进入手动模式检查番号: ")
-    for i, movie in enumerate(all_movies, start=1):
-        id = movie.dvdid or movie.cid or "未知番号"
-        print(f"[{i}/{count}]\t{Fore.LIGHTMAGENTA_EX}{id}{Style.RESET_ALL}, 对应文件:")
-        relpaths = [os.path.relpath(i, root) for i in movie.files]
-        print("\n".join(["  " + i for i in relpaths]))
-        s = prompt(
-            "回车确认当前番号，或直接输入更正后的番号（如'ABC-123'或'cid:sqte00300'）",
-            "更正后的番号",
-        )
-        if not s:
-            logger.info(f"已确认影片番号: {','.join(relpaths)}: {id}")
-        else:
-            s = s.strip()
-            s_lc = s.lower()
-            if s_lc.startswith(("cid:", "cid=")):
-                new_movie = Movie(cid=s_lc[4:])
-                new_movie.data_src = "cid"
-                new_movie.files = movie.files
-            elif s_lc.startswith("fc2"):
-                new_movie = Movie(s)
-                new_movie.data_src = "fc2"
-                new_movie.files = movie.files
-            else:
-                new_movie = Movie(s)
-                new_movie.data_src = "normal"
-                new_movie.files = movie.files
-            all_movies[i - 1] = new_movie
-            new_id = new_movie.dvdid or new_movie.cid or "未知番号"
-            logger.info(f"已更正影片番号: {','.join(relpaths)}: {id} -> {new_id}")
-        print()
 
 
 def _process_single_movie(movie, total_step, stats, cfg):
@@ -178,40 +137,6 @@ def print_summary(stats):
     print()
 
 
-def wait_exit(timeout=5):
-    """等待指定秒数后退出，期间按任意键可立即退出"""
-    print(f"将在 {timeout} 秒后自动退出，按任意键立即退出...")
-    # 非阻塞等待按键，超时后自动退出
-    try:
-        if sys.platform == "win32":
-            import msvcrt
-
-            # 清空键盘缓冲区中残留的按键，避免程序运行期间的按键导致立即退出
-            while msvcrt.kbhit():
-                msvcrt.getch()
-            start = time.monotonic()
-            while time.monotonic() - start < timeout:
-                if msvcrt.kbhit():
-                    msvcrt.getch()
-                    return
-                time.sleep(0.1)
-        else:
-            # Unix: 使用 select 监听 stdin
-            import select
-
-            start = time.monotonic()
-            while time.monotonic() - start < timeout:
-                remaining = timeout - (time.monotonic() - start)
-                if remaining <= 0:
-                    break
-                r, _, _ = select.select([sys.stdin], [], [], min(remaining, 0.5))
-                if r:
-                    sys.stdin.read(1)
-                    return
-    except Exception:
-        time.sleep(timeout)
-
-
 def entry():
     try:
         cfg = Cfg()
@@ -220,8 +145,6 @@ def entry():
             loc = " → ".join(str(part) for part in err["loc"])
             msg = err["msg"]
             print(f"配置错误 [{loc}]: {msg}")
-        if sys.stdin and sys.stdin.isatty():
-            input("按回车键退出...")
         sys.exit(1)
 
     load_actress_aliases()
@@ -230,16 +153,10 @@ def entry():
     if cfg.other.debug:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    colorama.init(autoreset=True)
-
-    # 检查更新
-    version_info = f"JavSP {__version__}"
-    logger.debug(version_info.center(60, "="))
-    check_update(cfg.other.check_update, cfg.other.auto_update)
     if getattr(getattr(cfg, "r18dev", None), "enabled", False):
         cfg._r18dev_db_path = prepare_database(cfg._r18dev_db_path, cfg.crawler.online_enabled)
-    root = get_scan_dir(cfg.scanner.input_directory, cfg.other.interactive)
-    error_exit(root, "未选择要扫描的文件夹")
+    root = get_scan_dir(cfg.scanner.input_directory)
+    error_exit(root, "扫描目录不存在或不是目录，请检查容器挂载和 scanner.input_directory")
     # 导入抓取器，必须在chdir之前
     import_crawlers(cfg)
     os.chdir(root)
@@ -253,26 +170,17 @@ def entry():
     movie_count = len(recognized)
     error_exit(movie_count, "未找到影片文件")
     logger.info(f"扫描影片文件：共找到 {movie_count} 部影片")
-    if cfg.scanner.manual:
-        reviewMovieID(recognized, root)
     _, stats = RunNormalMode(recognized, cfg)
 
     print_summary(stats)
-    if cfg.other.auto_exit:
-        if cfg.other.interactive:
-            wait_exit(5)
-    else:
-        input("整理完成，按回车键退出...")
     sys.exit(1 if stats["failed"] or stats.get("aborted") else 0)
 
 
 if __name__ == "__main__":
     try:
         entry()
-    except Exception as e:
+    except Exception:
         import traceback
 
         traceback.print_exc()
-        if sys.stdin and sys.stdin.isatty():
-            input(f"程序发生错误: {e}\n按回车键退出...")
         sys.exit(1)

@@ -14,26 +14,21 @@ requires-python = ">=3.11,<3.16"
 dynamic = ["version"]
 dependencies = [
     "curl_cffi>=0.15",
-    "colorama>=0.4.6",
     "pillow>=12.0",
     "requests>=2.32",
     "tqdm>=4.67",
-    # https://stackoverflow.com/questions/446209/possible-values-from-sys-platform
-    "pywin32>=311; sys_platform == 'win32'",
     "cryptography>=48.0",
     "pycryptodome>=3.20.0",
     "lxml[html-clean]>=6.0",
     "confz>=2.0.1",
     "pydantic-extra-types>=2.9.0",
     "pendulum>=3.2.0",
-    "packaging>=26.2",
 ]
 
 [project.optional-dependencies]
 crop = ["slimeface>=2024.9.27"]
 dev = [
     "pytest>=9.0",
-    "cx-freeze>=8.5",
     "types-lxml>=2026.2",
     "types-pillow>=10.2.0",
     "ruff>=0.13",
@@ -57,8 +52,8 @@ raw-options = {local_scheme = "no-local-version"}
 packages = ["javsp"]
 
 # 将项目根目录下的静态资源打包到 wheel 根目录（安装后位于 site-packages/ 根下）
-# 这样 resource_path() 在非 frozen 模式下返回的 Path(__file__).parent.parent / path 即可命中
-# 注意：config.yml 为用户配置文件，不在此处打包，由程序在运行目录（CWD/可执行文件目录）查找
+# resource_path() 从项目根目录读取这些资源
+# config.yml 为用户配置文件，Docker 中通过 /app/config 挂载
 [tool.hatch.build.targets.wheel.force-include]
 "image" = "image"
 "data" = "data"
@@ -81,7 +76,7 @@ packages = ["javsp"]
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
-markers = ["integration: 依赖在线站点或 Windows 打包产物的集成测试"]
+markers = ["integration: 依赖在线站点的集成测试"]
 
 [tool.ruff]
 target-version = "py311"

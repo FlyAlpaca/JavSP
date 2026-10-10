@@ -3,66 +3,22 @@
 # 为了降低耦合度，也避免功能复杂后可能出现的循环导入的问题，这里尽量不导入项目内部的模块
 # 如果需要获得配置信息，也应当由外部模块将配置项的值以参数的形式传入
 import logging
-import os
 import re
-import shutil
-import subprocess
-import sys
-import time
-import zipfile
-from datetime import UTC, datetime
 from pathlib import Path
 
-from colorama import Style
-from packaging import version
-
-from javsp.__version__ import __version__
-
-# 判断系统是否可以使用tk
-USE_GUI = True
-try:
-    from tkinter import Tk, filedialog
-except ImportError:
-    USE_GUI = False
-
-from javsp.lib import prompt, re_escape, resource_path
-from javsp.web.base import download, request_get
+from javsp.lib import re_escape
 
 __all__ = [
-    "select_folder",
     "get_scan_dir",
     "remove_trail_actor_in_title",
-    "shutdown",
-    "CLEAR_LINE",
-    "check_update",
     "split_by_punc",
 ]
 
 
-CLEAR_LINE = "\r\x1b[K"
 logger = logging.getLogger(__name__)
 
 
-def select_folder(default_dir=""):
-    """使用文件对话框提示用户选择一个文件夹"""
-    if not USE_GUI:
-        logger.error("无法打开窗口，请通过命令行的方式输入扫描路径")
-        exit(1)
-    window = Tk()
-    window.withdraw()
-    ico_path = resource_path("image/JavSP.ico")
-    if os.path.isfile(ico_path):
-        try:
-            window.iconbitmap(ico_path)
-        except Exception:
-            # iconbitmap 在部分平台（如 Linux/macOS）不受支持，忽略即可
-            pass
-    path = filedialog.askdirectory(initialdir=default_dir)
-    if path != "":
-        return os.path.normpath(path)
-
-
-def get_scan_dir(cfg_scan_dir: Path | None, interactive: bool = True) -> str | None:
+def get_scan_dir(cfg_scan_dir: Path | None) -> str | None:
     """综合命令参数、配置文件等信息，返回要扫描影片的文件夹"""
     # 目前config模块负责处理来自命令行和来自文件的配置，cfg_scan_dir已经是综合了这两处后得到的结果
     if cfg_scan_dir and cfg_scan_dir.is_dir():
@@ -70,23 +26,8 @@ def get_scan_dir(cfg_scan_dir: Path | None, interactive: bool = True) -> str | N
 
     if cfg_scan_dir:
         logger.warning(f"配置的待整理文件夹不存在或不是目录：'{cfg_scan_dir}'")
-        if sys.platform == "win32":
-            logger.warning(
-                "如果使用了网络映射驱动器（如Z:\\），程序以管理员权限运行时将无法访问映射驱动器。\n"
-                "请尝试以非管理员权限运行，或直接使用UNC路径（\\\\服务器\\共享\\文件夹）代替映射驱动器路径"
-            )
 
-    if not interactive:
-        return None
-
-    # 回退到交互式选择
-    if sys.platform == "win32":
-        print("请选择要整理的文件夹：", end="")
-        root = select_folder(str(cfg_scan_dir) if cfg_scan_dir else "")
-    else:
-        root = prompt("请选择要整理的文件夹路径，必须是绝对路径: ", "要整理的文件夹")
-    print(root)
-    return root
+    return None
 
 
 def remove_trail_actor_in_title(title: str, actors: list) -> str:
@@ -104,49 +45,6 @@ def remove_trail_actor_in_title(title: str, actors: list) -> str:
         return match.group(1)
     else:
         return title
-
-
-def shutdown(timeout=120):
-    """关闭计算机"""
-    if sys.platform != "win32":
-        logger.warning("自动关机功能仅支持Windows平台")
-        return
-    try:
-        for i in reversed(range(timeout)):
-            print(CLEAR_LINE + f"JavSP整理完成，将在 {i} 秒后关机。按'Ctrl+C'取消", end="")
-            time.sleep(1)
-        logger.info("整理完成，自动关机")
-        os.system("shutdown -s")
-    except KeyboardInterrupt:
-        return
-
-
-def utc2local(utc_str):
-    """将UTC时间转换为本地时间"""
-    # python不支持 ISO-8601 中的Z后缀
-    now = time.time()
-    offset = datetime.fromtimestamp(now) - datetime.fromtimestamp(now, tz=UTC).replace(tzinfo=None)
-    utc_str = utc_str.replace("Z", "+00:00")
-    utc_time = datetime.fromisoformat(utc_str)
-    local_time = utc_time + offset
-    return local_time
-
-
-def get_actual_width(mix_str: str) -> int:
-    """给定一个中英混合的字符串，返回实际的显示宽度"""
-    width = len(mix_str)
-    for c in mix_str:
-        if "\u4e00" <= c <= "\u9fa5":
-            width += 1
-    return width
-
-
-def align_center(mix_str: str, total_width: int) -> str:
-    """给定一个中英混合的字符串，根据其实际显示宽度中心对齐"""
-    actual_width = get_actual_width(mix_str)
-    add_space = int((total_width - actual_width) / 2)
-    aligned_str = " " * add_space + mix_str
-    return aligned_str
 
 
 # 枚举Unicode各平面内中日韩区块及拉丁字母区块内的所有标点符号
@@ -175,156 +73,3 @@ def split_by_punc(s):
     else:
         ls = [s]
     return ls
-
-
-def check_update(allow_check=True, auto_update=True):
-    """检查版本更新"""
-
-    def print_header(title, info=[]):
-        title_width = max([get_actual_width(i) for i in title])
-        if info:
-            info_width = max([get_actual_width(i) for i in info])
-        else:
-            info_width = 0
-        terminal_width = shutil.get_terminal_size().columns
-        display_width = min(max(title_width, info_width) + 6, terminal_width)
-        print("=" * display_width)
-        for line in title:
-            print(align_center(line, display_width))
-        if info:
-            print("-" * display_width)
-            for line in info:
-                print(line)
-        print("=" * display_width)
-        print("")
-
-    local_version = __version__
-    if local_version == "0.0.0":
-        logger.debug("无法获取版本信息，跳过更新检查")
-        return
-    # 检查更新
-    if allow_check:
-        api_url = "https://api.github.com/repos/darksoap/JavSP/releases/latest"
-        release_url = "https://github.com/darksoap/JavSP/releases/latest"
-        print("正在检查更新...", end="")
-        try:
-            data = request_get(api_url, timeout=3).json()
-            latest_version = data["tag_name"]
-            release_time = utc2local(data["published_at"])
-            release_date = release_time.isoformat().split("T")[0]
-            if version.parse(local_version) < version.parse(latest_version):
-                update_status = "new_version"
-            else:
-                update_status = "already_latest"
-        except Exception as e:
-            logger.debug("检查版本更新时出错: " + repr(e))
-            update_status = "fail_to_check"
-    else:
-        update_status = "disallow"
-    # 根据检查更新的情况输出软件版本信息和更新信息
-    print(CLEAR_LINE, end="")
-    if update_status == "disallow":
-        title = f"Jav Scraper Package: {local_version}"
-        print_header([title])
-    elif update_status == "already_latest":
-        title = f"Jav Scraper Package: {local_version} (已是最新版)"
-        print_header([title])
-    elif update_status == "fail_to_check":
-        release_url_mirror = "https://hub.fastgit.xyz/darksoap/JavSP/releases/latest"
-        titles = [f"Jav Scraper Package: {local_version}"]
-        info = [
-            "检查更新失败，请前往以下地址查看最新版本:",
-            "  " + release_url,
-            "如果你打不开上面的地址，也可以尝试访问镜像站点:",
-            "  " + release_url_mirror,
-        ]
-        print_header(titles, info)
-    elif update_status == "new_version":
-        titles = [f"Jav Scraper Package: {local_version}"]
-        titles.append(f"↓ 有新版本可下载: {latest_version} ↓")
-        titles.append(release_url)
-        # 提取changelog消息
-        try:
-            enable_msg_head = True
-            lines = data["body"].splitlines()
-            changelog = [f"更新时间: {release_date}"]
-            for line in lines:
-                if line.startswith("## "):
-                    enable_msg_head = False
-                    changelog.append(Style.BRIGHT + line[3:] + Style.RESET_ALL)
-                elif line.startswith("- "):
-                    enable_msg_head = False
-                    changelog.append(line)
-                elif enable_msg_head:
-                    changelog.append(line)
-            print_header(titles, changelog)
-        except Exception:
-            print_header(titles)
-        # 尝试自动更新
-        if auto_update:
-            try:
-                logger.info("尝试自动更新到新版本: " + latest_version + " （按'Ctrl+C'取消）")
-                download_update(data)
-            except KeyboardInterrupt:
-                logger.info("用户取消更新")
-            except Exception as e:
-                logger.warning("自动更新失败，请重启程序再试或者手动下载更新")
-                logger.debug(e, exc_info=True)
-            finally:
-                print()  # 输出空行，作为新旧程序的分隔
-
-
-def download_update(rel_info):
-    """下载版本更新
-
-    Args:
-        rel_info (json): 调用Github API得到的最新版的release信息
-    """
-    if rel_info.get("assets") and getattr(sys, "frozen", False):
-        down_url = rel_info["assets"][0]["browser_download_url"]
-        asset_name = rel_info["assets"][0]["name"]
-        desc = "下载更新" if shutil.get_terminal_size().columns < 120 else "下载更新: " + asset_name
-        download(down_url, asset_name, desc=desc)
-        if os.path.exists(asset_name):
-            basepath, ext = os.path.splitext(sys.executable)
-            backup_name = basepath + "_backup" + ext
-            if os.path.exists(backup_name):
-                os.remove(backup_name)
-            # Windows 下运行中的 exe 无法被重命名/删除，需借助独立更新脚本
-            if sys.platform == "win32":
-                updater_script = basepath + "_update.bat"
-                with open(updater_script, "w", encoding="utf-8") as f:
-                    f.write(
-                        "@echo off\n"
-                        "timeout /t 2 /nobreak >nul\n"
-                        f'move /Y "{sys.executable}" "{backup_name}"\n'
-                        f"powershell -Command Expand-Archive -Path '{asset_name}' -DestinationPath '.' -Force\n"
-                        f'start "" "{sys.executable}"\n'
-                        f'del "{updater_script}"\n'
-                    )
-                subprocess.Popen(
-                    ["cmd", "/c", updater_script],
-                    creationflags=subprocess.CREATE_NEW_CONSOLE,
-                )
-                sys.exit(0)
-            else:
-                try:
-                    os.rename(sys.executable, backup_name)
-                except OSError:
-                    shutil.copy2(sys.executable, backup_name)
-                with zipfile.ZipFile(asset_name, "r") as zip_ref:
-                    for member in zip_ref.infolist():
-                        member_path = os.path.join(".", member.filename)
-                        if not os.path.abspath(member_path).startswith(os.path.abspath(".")):
-                            logger.warning(f"跳过不安全的解压路径: {member.filename}")
-                            continue
-                        zip_ref.extract(member)
-                logger.info("更新完成，启动新版本程序...")
-                args = [sys.executable] + sys.argv[1:]
-                subprocess.Popen(args, start_new_session=True)
-                sys.exit(0)
-
-
-if __name__ == "__main__":
-    setattr(sys, "javsp_version", "v0")
-    check_update()

@@ -1,10 +1,8 @@
-![JavSP](./image/JavSP.svg)
-
 # JavSP 2.0
 
 汇总多站点影片元数据，按命名规则整理本地影片，为 Emby、Jellyfin、Kodi 生成 NFO、封面和海报。
 
-本项目是 [Yuukiy/JavSP](https://github.com/Yuukiy/JavSP) 的社区延续版本，在 [darksoap/JavSP](https://github.com/darksoap/JavSP) 基础上增加 Docker 支持。2.0 将处理流程拆为六个组件，并把影片、字幕与元数据的提交和失败恢复统一管理。
+本项目是 [Yuukiy/JavSP](https://github.com/Yuukiy/JavSP) 的社区延续版本，在 [darksoap/JavSP](https://github.com/darksoap/JavSP) 基础上特化为 Docker 运行。2.0 将处理流程拆为六个组件，并把影片、字幕与元数据的提交和失败恢复统一管理。
 
 [![Tests](https://github.com/FlyAlpaca/JavSP/actions/workflows/tests.yml/badge.svg)](https://github.com/FlyAlpaca/JavSP/actions/workflows/tests.yml)
 [![Docker Build](https://github.com/FlyAlpaca/JavSP/actions/workflows/docker-build.yml/badge.svg)](https://github.com/FlyAlpaca/JavSP/actions/workflows/docker-build.yml)
@@ -13,7 +11,7 @@
 
 ## 功能
 
-- 从文件名或目录识别番号，识别连续分片，支持人工确认和更正。
+- 从文件名或目录识别番号，识别连续分片。
 - 并发抓取多个站点，按配置优先级合并字段，追踪字段来源。
 - 翻译标题与简介，统一演员别名和分类标签。
 - 下载普通或高清封面，裁剪海报、添加字幕及无码标记，生成 `folder.jpg`。
@@ -21,7 +19,7 @@
 - 先准备和校验产物再提交；提交失败时恢复源文件和被替换的元数据。
 - 输出成功、失败和未处理影片清单，提供适用于自动化的退出码。
 
-项目提供中文 CLI，不包含 WebUI。详细变化见 [更新日志](./CHANGELOG.md)。
+项目通过 Docker 容器运行，提供中文 CLI。详细变化见 [更新日志](./CHANGELOG.md)。
 
 ## Docker 快速开始
 
@@ -44,18 +42,15 @@ docker run --rm \
 
 首次启动时，如果 `/app/config/config.yml` 不存在，入口脚本会从镜像内的 `/app/config_default.yml` 复制生成它。之后编辑挂载目录中的 `config.yml`，重新运行容器生效。首次生成的文件包含完整默认配置，也可以替换成只包含覆盖项的配置。
 
-无人值守运行建议设置：
+程序按无人值守方式运行；请确保配置中扫描目录指向容器内路径：
 
 ```yaml
 scanner:
   input_directory: /media
-other:
-  interactive: false
-  auto_exit: true
 ```
 
 CLI 整理一批影片后退出；持续监听目录不属于当前功能。
-非交互模式下，扫描目录缺失、不是目录或配置无效时会直接报错退出，成功结束后不会额外等待 5 秒。
+扫描目录缺失、不是目录或配置无效时会直接报错退出。程序不会等待键盘输入。
 
 | 镜像标签 | 含义 |
 | --- | --- |
@@ -64,26 +59,7 @@ CLI 整理一批影片后退出；持续监听目录不属于当前功能。
 | `dev` | 手动触发发布工作流的构建 |
 | `1.10.2.1` 等 | 历史四段版本标签 |
 
-## 从源码运行
-
-需要 Python 3.11–3.15（项目约束为 `>=3.11,<3.16`）；CI 验证 Python 3.11 和 3.14。Docker 使用 Python 3.14。
-
-```bash
-git clone https://github.com/FlyAlpaca/JavSP.git
-cd JavSP
-git checkout v2.0.0
-uv sync --locked
-uv run --locked javsp --oscanner.input_directory '/path/to/media'
-```
-
-`v2.0.0` 在该版本发布后可用。也可在已取得的源码目录安装并运行：
-
-```bash
-python -m pip install .
-javsp -c /path/to/config.yml
-```
-
-启用 Slimeface 裁剪后端时安装 `crop` 可选依赖，并在配置中选择该引擎。配置字段及注释见 [默认配置](./config_default.yml)。
+启用 Slimeface 裁剪后端时需在镜像构建阶段安装 `crop` 可选依赖，并在配置中选择该引擎。配置字段及注释见 [默认配置](./config_default.yml)。
 
 ## 配置
 
@@ -106,7 +82,7 @@ translator:
 
 ### 配置位置和优先级
 
-用户配置查找顺序：当前工作目录、可执行文件目录（仅冻结程序）、源码或安装资源根目录。每个位置优先查找 `config/config.yml`，再查找 `config.yml`。Docker 中对应 `/app/config/config.yml`。
+用户配置位于 `/app/config/config.yml`。容器入口首次启动时会从默认模板创建该文件；也可通过 `-c` 指定其他容器内路径。
 
 指定 `-c /path/to/config.yml` 后，使用该用户配置文件，不再自动查找其他用户配置。覆盖优先级从低到高为：
 
@@ -118,8 +94,10 @@ translator:
 环境变量使用 `JAVSP_` 前缀和双下划线区分层级；命令行字段覆盖使用 `--o` 前缀及点号路径，参数名与值之间用空格（不支持等号写法）：
 
 ```bash
-JAVSP_SCANNER__INPUT_DIRECTORY=/path/to/media uv run --locked javsp
-uv run --locked javsp --oscanner.input_directory '/path/to/media' --osummarizer.move_files false
+docker run --rm -v /path/to/media:/media -v /path/to/config:/app/config \
+  -e JAVSP_SCANNER__INPUT_DIRECTORY=/media ghcr.io/flyalpaca/javsp:2.0.0
+docker run --rm -v /path/to/media:/media -v /path/to/config:/app/config \
+  ghcr.io/flyalpaca/javsp:2.0.0 --oscanner.input_directory /media --osummarizer.move_files false
 ```
 
 ### 整理模式

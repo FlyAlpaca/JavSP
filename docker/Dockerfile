@@ -35,7 +35,7 @@ ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONUNBUFFERED=1 \
     TZ=Asia/Shanghai
 
-# 声明卷：Docker UI (Synology/Portainer/Unraid) 会自动提示用户映射此目录
+# 声明媒体和配置持久化目录
 VOLUME ["/media", "/app/config"]
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

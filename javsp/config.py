@@ -1,6 +1,5 @@
 import logging
 import os
-import sys
 from argparse import ArgumentParser, RawTextHelpFormatter
 from enum import StrEnum
 from pathlib import Path
@@ -27,7 +26,6 @@ class Scanner(BaseConfig):
     ignored_folder_name_pattern: list[str]
     minimum_size: ByteSize
     skip_nfo_dir: bool
-    manual: bool
 
 
 class CrawlerID(StrEnum):
@@ -292,27 +290,20 @@ class Translator(BaseConfig):
 
 
 class Other(BaseConfig):
-    interactive: bool
-    check_update: bool
-    auto_update: bool
     debug: bool = False
-    auto_exit: bool = True
 
 
 def _find_user_config() -> str | None:
     """查找用户配置文件 config.yml
 
     查找顺序（命中即返回）：
-    1. 当前工作目录（CWD）：便于 pip 安装后用户在任意运行目录放置 config.yml
-    2. 可执行文件所在目录（仅 frozen 模式，即 cx_Freeze 打包后）
-    3. 源码根目录（开发模式 -e 安装时从仓库根目录读取）
+    1. 容器工作目录 /app
+    2. 源码根目录（本地开发时使用）
 
     每个目录优先查找 config/config.yml，再查找 config.yml。
-    这样可以让用户配置文件"放在外面"，而不是被锁在 site-packages 内部。
+    Docker 中的用户配置位于 /app/config/config.yml。
     """
     candidates = [os.getcwd()]
-    if getattr(sys, "frozen", False):
-        candidates.append(os.path.dirname(sys.executable))
     # 开发模式回退：源码根目录（javsp 包的上一级）
     candidates.append(str(Path(__file__).resolve().parent.parent))
     for dir_path in candidates:
