@@ -18,18 +18,18 @@ docker run --rm --name javsp \
   -v /path/to/media:/media \
   -v /path/to/config:/app/config \
   -v /path/to/models:/app/models \
-  ghcr.io/flyalpaca/javsp:2.0.0
+  ghcr.io/flyalpaca/javsp:2.0.1
 ```
 
-也可使用 `haobiubiu/javsp:2.0.0`。将三个 `/path/to/...` 替换为实际的宿主机路径；配置里的扫描路径应使用**容器内**路径 `/media`。首次运行会在挂载的配置目录生成 `config.yml`，默认扫描 `/media`。容器不会等待配置编辑，首次运行就会开始处理；需要预先自定义规则时，可先从 [默认配置](./config_default.yml) 复制并编辑宿主机的 `config.yml`，再运行容器。
+也可使用 `haobiubiu/javsp:2.0.1`。将三个 `/path/to/...` 替换为实际的宿主机路径；配置里的扫描路径应使用**容器内**路径 `/media`。首次运行会在挂载的配置目录生成 `config.yml`，默认扫描 `/media`。容器不会等待配置编辑，首次运行就会开始处理；需要预先自定义规则时，可先从 [默认配置](./config_default.yml) 复制并编辑宿主机的 `config.yml`，再运行容器。
 
-启动时依次校验配置和扫描目录、准备数据源、验证本地翻译模型并启动翻译服务，随后扫描影片。默认模型为约 4.6 GB 的 Hy-MT2 7B GGUF；首次运行需要下载模型，并为 `/app/models` 留出约 5 GB 空间。已缓存且校验通过的模型可以复用。模型下载或服务启动失败会阻止批处理；稳定版更新检查失败只会记录提醒。
+启动时依次校验配置和扫描目录、准备数据源、验证本地翻译模型并启动翻译服务，随后扫描影片。默认模型为约 4.6 GB 的 Hy-MT2 7B GGUF；首次运行需要下载模型，并为 `/app/models` 留出约 5 GB 空间。数据库和模型下载会显示进度条；数据库服务器未提供文件大小时显示已下载量。已缓存且校验通过的模型可以复用。模型下载或服务启动失败会阻止批处理；稳定版更新检查失败只会记录提醒。
 
 默认仅处理符合番号识别规则且达到 `232MiB` 的视频，跳过已有 NFO 的目录，并忽略 `#整理完成` 等目录。若未找到可处理影片，程序会以非零状态退出。可在 [默认配置](./config_default.yml) 调整扫描规则。
 
 | 镜像标签 | 用途 |
 | --- | --- |
-| `2.0.0` | 固定版本，由 Git 标签 `v2.0.0` 构建 |
+| `2.0.1` | 固定版本，由 Git 标签 `v2.0.1` 构建 |
 | `latest` | 最近发布的稳定版本 |
 | `dev` | 手动触发工作流构建的开发版本 |
 
@@ -73,11 +73,11 @@ translator:
 docker run --rm \
   -v /path/to/media:/media -v /path/to/config:/app/config -v /path/to/models:/app/models \
   -e JAVSP_SCANNER__INPUT_DIRECTORY=/media \
-  ghcr.io/flyalpaca/javsp:2.0.0
+  ghcr.io/flyalpaca/javsp:2.0.1
 
 docker run --rm \
   -v /path/to/media:/media -v /path/to/config:/app/config -v /path/to/models:/app/models \
-  ghcr.io/flyalpaca/javsp:2.0.0 \
+  ghcr.io/flyalpaca/javsp:2.0.1 \
   --oscanner.input_directory /media --osummarizer.move_files false
 ```
 
@@ -153,7 +153,7 @@ crawler:
 1. 保留原有 `/media` 和 `/app/config` 挂载，并新增持久化的 `/app/models` 挂载。首次启动前预留模型下载所需空间。
 2. 检查旧 `config.yml`：删除 `translator.engine` 和 `translator.fields`，改用 `translator.model`、`model_dir`、`runtime` 和 `generation`。`engine: null` 也不能关闭翻译。
 3. 检查自定义输出路径。若不同产物指向同一路径，2.0 会在提交前报错。先用少量影片验证命名结果，再处理整个目录。
-4. 将镜像固定为 `2.0.0`。`latest` 随后续稳定版发布变化；历史四段版本标签仍用于 1.x 镜像。
+4. 将镜像固定为 `2.0.1`。`latest` 随后续稳定版发布变化；历史四段版本标签仍用于 1.x 镜像。
 
 本地 Python 环境仅用于开发和测试。升级本地安装后，可执行 `uv sync --locked --reinstall-package javsp` 刷新安装元数据。
 

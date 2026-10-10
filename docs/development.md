@@ -109,7 +109,7 @@ wheel 保留运行时资源，避免移动 `data/`、`image/` 或默认配置导
 
 ## 版本与发布
 
-版本由 Git tag 和 Hatch VCS 驱动。2.0 使用中文注释标签 `v2.0.0`；wheel/sdist 和安装元数据版本为 `2.0.0`。
+版本由 Git tag 和 Hatch VCS 驱动。当前稳定版使用中文注释标签 `v2.0.1`；wheel/sdist 和安装元数据版本为 `2.0.1`。
 发布前通过 Ruff、全部离线单元测试和构建，确认工作区只包含任务修改，再提交并在最终提交创建标签。
 更新 tag 后使用 `uv sync --locked --extra dev --reinstall-package javsp` 刷新本地安装元数据；
 `uv run --locked python tools/version.py`、运行时版本和 wheel METADATA 应一致。
