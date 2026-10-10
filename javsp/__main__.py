@@ -237,7 +237,7 @@ def entry():
     check_update(cfg.other.check_update, cfg.other.auto_update)
     if getattr(getattr(cfg, "r18dev", None), "enabled", False):
         cfg._r18dev_db_path = prepare_database(cfg._r18dev_db_path, cfg.crawler.online_enabled)
-    root = get_scan_dir(cfg.scanner.input_directory)
+    root = get_scan_dir(cfg.scanner.input_directory, cfg.other.interactive)
     error_exit(root, "未选择要扫描的文件夹")
     # 导入抓取器，必须在chdir之前
     import_crawlers(cfg)
@@ -260,8 +260,6 @@ def entry():
     if cfg.other.auto_exit:
         if cfg.other.interactive:
             wait_exit(5)
-        else:
-            time.sleep(5)
     else:
         input("整理完成，按回车键退出...")
     sys.exit(1 if stats["failed"] or stats.get("aborted") else 0)
