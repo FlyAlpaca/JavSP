@@ -7,11 +7,12 @@ from javsp.config import Cfg
 from javsp.datatype import MovieInfo
 
 
-def write_nfo(info: MovieInfo, nfo_file):
+def write_nfo(info: MovieInfo, nfo_file, cfg=None):
     """将存储了影片信息的'info'写入到nfo文件中"""
     # NFO spec: https://kodi.wiki/view/NFO_files/Movies
+    cfg = cfg if cfg is not None else Cfg()
     nfo = E.movie()
-    dic = info.get_info_dic()
+    dic = info.get_info_dic(cfg)
 
     if info.nfo_title:
         nfo.append(E.title(info.nfo_title))
@@ -62,14 +63,14 @@ def write_nfo(info: MovieInfo, nfo_file):
         return result
 
     # genre 仅来自用户自定义分类配置，网站原始类别统一进入 tag
-    genre = _clean_tags(g.format(**dic) for g in Cfg().summarizer.nfo.custom_genres_fields)
+    genre = _clean_tags(g.format(**dic) for g in cfg.summarizer.nfo.custom_genres_fields)
     # 写入genre分类。在Jellyfin上，只有genre可以直接跳转，tag不可以
     for i in genre:
         nfo.append(E.genre(i))
 
     # tag 包含网站原始类别（优先使用归一化后的类别）和自定义 tag
     site_tags = info.genre_norm if info.genre_norm else info.genre if info.genre else []
-    custom_tags = (t.format(**dic) for t in Cfg().summarizer.nfo.custom_tags_fields)
+    custom_tags = (t.format(**dic) for t in cfg.summarizer.nfo.custom_tags_fields)
     tags = _clean_tags([*site_tags, *custom_tags])
     # 写入tag
     for i in tags:

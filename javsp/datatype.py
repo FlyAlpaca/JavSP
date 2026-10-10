@@ -4,13 +4,10 @@ import csv
 import json
 import logging
 import os
-import re
-import shutil
 from functools import cached_property
 
 from pydantic import BaseModel, ConfigDict, PrivateAttr, model_validator
 
-from javsp.avid import get_id, normalize_id
 from javsp.config import Cfg
 from javsp.lib import detect_special_attr, resource_path
 
@@ -89,6 +86,7 @@ class MovieInfo(BaseModel):
 
     # 私有属性（不参与序列化和 model_fields）
     _success: bool = PrivateAttr(default=False)
+    _cover_sources: dict[str, str] = PrivateAttr(default_factory=dict)
 
     @model_validator(mode="before")
     @classmethod
@@ -166,21 +164,22 @@ class MovieInfo(BaseModel):
             if k in self.model_fields:
                 setattr(self, k, v)
 
-    def get_info_dic(self) -> dict[str, str]:
+    def get_info_dic(self, cfg=None) -> dict[str, str]:
         """生成用来填充模板的字典"""
+        cfg = cfg if cfg is not None else Cfg()
         info = self
         d = {}
         d["num"] = info.dvdid or info.cid
-        d["title"] = info.title or Cfg().summarizer.default.title
+        d["title"] = info.title or cfg.summarizer.default.title
         d["rawtitle"] = info.ori_title or d["title"]
-        d["actress"] = ",".join(info.actress) if info.actress else Cfg().summarizer.default.actress
+        d["actress"] = ",".join(info.actress) if info.actress else cfg.summarizer.default.actress
         d["score"] = str(info.score) if info.score else "0"
         censor_index = 2 if info.uncensored is None else 0 if info.uncensored else 1
-        d["censor"] = Cfg().summarizer.censor_options_representation[censor_index]
-        d["serial"] = info.serial or Cfg().summarizer.default.series
-        d["director"] = info.director or Cfg().summarizer.default.director
-        d["producer"] = info.producer or Cfg().summarizer.default.producer
-        d["publisher"] = info.publisher or Cfg().summarizer.default.publisher
+        d["censor"] = cfg.summarizer.censor_options_representation[censor_index]
+        d["serial"] = info.serial or cfg.summarizer.default.series
+        d["director"] = info.director or cfg.summarizer.default.director
+        d["producer"] = info.producer or cfg.summarizer.default.producer
+        d["publisher"] = info.publisher or cfg.summarizer.default.publisher
         d["date"] = info.publish_date or "0000-00-00"
         d["year"] = d["date"].split("-")[0]
         # cid中不会出现'-'，可以直接从d['num']拆分出label
@@ -245,138 +244,10 @@ class Movie:
         return __class__.__name__ + expression
 
     def rename_files(self, use_hardlink: bool = False) -> list:
-        """根据命名规则移动（重命名）影片文件
+        """兼容影片/字幕移动接口，复用输出事务的预检、提交及回滚。"""
+        from javsp.output import OutputExecutor
 
-        Args:
-            use_hardlink: 为 True 时创建硬链接而非移动源文件（源文件保留）。
-
-        Returns:
-            list[(src, dst)]: 所有已移动文件的(原路径, 新路径)列表
-        """
-
-        moved_files = []
-        try:
-            return self._rename_files(use_hardlink, moved_files)
-        except BaseException as error:
-            rollback_errors = []
-            for src, dst in reversed(moved_files):
-                try:
-                    if use_hardlink:
-                        os.unlink(dst)
-                    else:
-                        if os.path.lexists(src):
-                            raise FileExistsError(f"回滚源路径已存在: {src}")
-                        shutil.move(dst, src)
-                except OSError as rollback_error:
-                    rollback_errors.append(f"{dst} -> {src}: {rollback_error}")
-            if rollback_errors:
-                raise RuntimeError("文件移动失败且回滚不完整: " + "; ".join(rollback_errors)) from error
-            raise
-
-    def _rename_files(self, use_hardlink, moved_files):
-        """执行文件操作；由 rename_files 统一负责回滚。"""
-
-        def move_file(src: str, dst: str):
-            """移动（重命名）文件并记录信息到日志
-
-            影片文件目标已存在时抛 FileExistsError 以中断流程（避免覆盖整理产物）；
-            字幕文件目标已存在时由调用方捕获并 warning 跳过（字幕是附属文件）。
-            """
-            abs_dst = os.path.abspath(dst)
-            # shutil.move might overwrite dst file
-            if os.path.lexists(abs_dst):
-                raise FileExistsError(f"File exists: {abs_dst}")
-            try:
-                if use_hardlink:
-                    try:
-                        os.link(src, abs_dst)
-                    except OSError:
-                        logger.warning(f"创建硬链接失败，回退为复制文件: '{src}' -> '{abs_dst}'")
-                        shutil.copy2(src, abs_dst)
-                else:
-                    shutil.move(src, abs_dst)
-            except BaseException:
-                # 跨设备复制失败可能留下部分目标；源文件已移走则纳入回滚。
-                if os.path.lexists(abs_dst):
-                    if os.path.exists(src):
-                        os.unlink(abs_dst)
-                    else:
-                        moved_files.append((src, abs_dst))
-                raise
-            moved_files.append((src, abs_dst))
-            src_rel = os.path.relpath(src)
-            dst_name = os.path.basename(dst)
-            logger.info(f"重命名文件: '{src_rel}' -> '...{os.sep}{dst_name}'")
-            # 目前StreamHandler并未设置filter，为了避免显示中出现重复的日志，这里暂时只能用debug级别
-            filemove_logger.debug(f'移动（重命名）文件: \n  原路径: "{src}"\n  新路径: "{abs_dst}"')
-
-        # 在移动第一片之前检查整组视频目标，避免后续分片冲突。
-        for i, src in enumerate(self.files, start=1):
-            suffix = f"-CD{i}" if len(self.files) > 1 else ""
-            dst = os.path.join(self.save_dir, self.basename + suffix + os.path.splitext(src)[1])
-            if os.path.lexists(dst):
-                raise FileExistsError(f"File exists: {dst}")
-        src_dir = os.path.dirname(self.files[0])
-        if len(self.files) == 1:
-            fullpath = self.files[0]
-            ext = os.path.splitext(fullpath)[1]
-            newpath = os.path.join(self.save_dir, self.basename + ext)
-            move_file(fullpath, newpath)
-        else:
-            for i, fullpath in enumerate(self.files, start=1):
-                ext = os.path.splitext(fullpath)[1]
-                newpath = os.path.join(self.save_dir, self.basename + f"-CD{i}" + ext)
-                move_file(fullpath, newpath)
-
-        # 移动匹配的字幕文件（基于番号模糊匹配：IPZ-380 == ipz380 == ipz00380）
-        if Cfg().summarizer.match_subtitles:
-            movie_norm_id = normalize_id(self.dvdid)
-            if movie_norm_id:
-                sub_dir = os.path.dirname(self.files[0])
-                if os.path.isdir(sub_dir):
-                    # 先过滤出目录中的字幕文件，没有则直接跳过后续匹配逻辑
-                    sub_files = [
-                        f
-                        for f in sorted(os.listdir(sub_dir))
-                        if os.path.isfile(os.path.join(sub_dir, f)) and os.path.splitext(f)[1].lower() in (".srt", ".ass")
-                    ]
-                    if sub_files:
-                        # 收集所有番号匹配的字幕
-                        matched_subs = []
-                        for f in sub_files:
-                            f_path = os.path.join(sub_dir, f)
-                            f_stem, f_ext = os.path.splitext(f)
-                            sub_id = get_id(f_stem)
-                            if sub_id and normalize_id(sub_id) == movie_norm_id:
-                                matched_subs.append((f_path, f_stem, f_ext))
-                        # 多CD视频与字幕数量不匹配时仅 warning，仍按规则一起移动
-                        if len(self.files) > 1 and len(matched_subs) not in (0, len(self.files)):
-                            logger.warning(
-                                f"多CD视频({len(self.files)}个)与匹配字幕({len(matched_subs)}个)数量不一致，仍将一起移动"
-                            )
-                        for f_path, f_stem, f_ext in matched_subs:
-                            if len(self.files) == 1:
-                                target_basename = self.basename
-                            else:
-                                target_basename = self.basename
-                                cd_m = re.search(r"cd(\d+)$", f_stem, re.I)
-                                if cd_m:
-                                    target_basename += f"-CD{cd_m.group(1)}"
-                            new_sub_path = os.path.join(self.save_dir, target_basename + f_ext.lower())
-                            try:
-                                move_file(f_path, new_sub_path)
-                                logger.info(f"已移动字幕文件: '{f_path}'")
-                            except FileExistsError:
-                                logger.warning(f"字幕文件已存在，跳过: '{new_sub_path}'")
-
-        # 清理空目录：放在所有文件移动之后，避免提前删除仍含字幕的源目录
-        try:
-            if os.path.isdir(src_dir) and len(os.listdir(src_dir)) == 0:
-                os.rmdir(src_dir)
-        except OSError:
-            pass
-
-        return moved_files
+        return OutputExecutor(Cfg()).execute_files(self, use_hardlink).moved_files
 
 
 class GenreMap(dict):
