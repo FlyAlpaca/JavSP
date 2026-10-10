@@ -27,8 +27,6 @@ docker run --rm --name javsp \
 
 默认仅处理符合番号识别规则且达到 `232MiB` 的视频，跳过已有 NFO 的目录，并忽略 `#整理完成` 等目录。若未找到可处理影片，程序会以非零状态退出。可在 [默认配置](./config_default.yml) 调整扫描规则。
 
-需要重新扫描已有 NFO 的影片时，在用户配置中设置 `scanner.force_scan: true`。它优先于 `scanner.skip_nfo_dir`，仅取消已有 NFO 的跳过判断；忽略目录、文件类型和最小文件大小等规则仍生效。原有的 `scanner.skip_nfo_dir: false` 也可继续使用。
-
 | 镜像标签 | 用途 |
 | --- | --- |
 | `2.0.2` | 固定版本，由 Git 标签 `v2.0.2` 构建 |

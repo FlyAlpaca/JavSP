@@ -3,8 +3,6 @@
 import sys
 from types import SimpleNamespace
 
-import pytest
-
 from javsp.config import Cfg
 from javsp.crawl import dispatcher
 from javsp.datatype import Movie, MovieInfo
@@ -69,30 +67,3 @@ def test_scanner_uses_supplied_id_patterns(tmp_path):
     cfg = cfg.model_copy(update={"scanner": scanner})
     result = Scanner(cfg).scan(str(tmp_path))
     assert result.movies[0].dvdid == "ABC-123"
-
-
-@pytest.mark.parametrize(
-    ("skip_nfo_dir", "force_scan", "expected_ids"),
-    [
-        (True, False, []),
-        (True, True, ["ABC-123"]),
-        (False, False, ["ABC-123"]),
-        (False, True, ["ABC-123"]),
-    ],
-)
-def test_force_scan_ignores_existing_nfo_only(tmp_path, skip_nfo_dir, force_scan, expected_ids):
-    movie_dir = tmp_path / "movie"
-    movie_dir.mkdir()
-    (movie_dir / "ABC-123.mp4").write_bytes(b"video")
-    (movie_dir / "movie.NFO").write_text("existing metadata")
-    ignored_dir = tmp_path / "#不要扫描"
-    ignored_dir.mkdir()
-    (ignored_dir / "DEF-456.mp4").write_bytes(b"video")
-
-    cfg = Cfg()
-    scanner = cfg.scanner.model_copy(update={"minimum_size": 0, "skip_nfo_dir": skip_nfo_dir, "force_scan": force_scan})
-    result = Scanner(cfg.model_copy(update={"scanner": scanner})).scan(str(tmp_path))
-
-    assert [movie.dvdid for movie in result.movies] == expected_ids
-    assert str(ignored_dir) in result.skipped
-    assert (str(movie_dir) in result.skipped) is (skip_nfo_dir and not force_scan)
