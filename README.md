@@ -28,23 +28,12 @@
 ```bash
 docker run --rm \
   --name javsp \
-  --log-opt max-size=10m --log-opt max-file=3 \
   -v /path/to/media:/media \
   -v /path/to/config:/app/config \
   ghcr.io/flyalpaca/javsp:2.0.0
 ```
 
 也可使用 `haobiubiu/javsp:2.0.0`。
-
-如需把 Docker 日志限制保存在版本管理中，可使用仓库的 `compose.yaml`：
-
-```bash
-export JAVSP_MEDIA_DIR=/path/to/media
-export JAVSP_CONFIG_DIR=/path/to/config
-docker compose up
-```
-
-`compose.yaml` 将容器日志限制为最多 3 个 10 MB 文件。批次结束后如需手动清除已保存的 Docker 日志，执行 `docker compose rm -f javsp` 删除**已停止**的容器；下次 `docker compose up` 会新建容器。该操作不会删除上面两个宿主机目录中的文件。运行中的容器不能通过 JavSP 配置文件清除 Docker 日志，修改日志限制也需要重新创建容器。
 
 | 挂载路径 | 用途 |
 | --- | --- |
