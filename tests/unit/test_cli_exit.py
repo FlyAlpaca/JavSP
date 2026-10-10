@@ -48,7 +48,7 @@ def test_entry_with_missing_directory_exits_without_prompt(tmp_path, monkeypatch
 
 
 def test_model_startup_failure_precedes_media_scan(monkeypatch):
-    cfg = SimpleNamespace(translator=object())
+    cfg = SimpleNamespace(translator=object(), other=SimpleNamespace(debug=False))
     monkeypatch.setattr(cli, "Cfg", lambda: cfg)
 
     class FailedTranslator:

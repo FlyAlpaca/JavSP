@@ -188,6 +188,8 @@ flowchart TB
 
 退出码针对已识别并进入整理队列的影片；扫描跳过项记录在日志中。
 
+控制台日志输出到 stdout，默认显示 INFO 及以上级别；在 `config.yml` 中设置 `other.debug: true` 可查看 DEBUG 详情。启用 `summarizer.filemove_log` 后，文件移动明细写入扫描目录下的 `filemove.log`，不会在控制台重复输出。
+
 | 退出码 | 含义 |
 | --- | --- |
 | `0` | 本批次影片全部整理成功 |

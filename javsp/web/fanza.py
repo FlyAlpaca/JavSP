@@ -9,6 +9,7 @@ import logging
 import re
 
 from javsp.datatype import MovieInfo
+from javsp.logging_config import configure_logging
 from javsp.web.base import Request, resp2html, xpath_first
 from javsp.web.exceptions import CrawlerError, MovieNotFoundError, SiteBlocked
 
@@ -348,7 +349,7 @@ def parse_data(movie: MovieInfo):
 
 
 if __name__ == "__main__":
-    logger.root.handlers[1].level = logging.DEBUG
+    configure_logging(debug=True)
 
     movie = MovieInfo(cid="ipx00177")
     try:

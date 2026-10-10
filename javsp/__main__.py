@@ -14,26 +14,7 @@ if sys.stderr and hasattr(sys.stderr, "reconfigure"):
 
 from tqdm import tqdm
 
-from javsp.print import TqdmOut, install
-
-# 将StreamHandler的stream修改为TqdmOut，以与Tqdm协同工作
-install()
-# 初始化 logging，输出到 stdout（Docker 实时日志窗口默认只显示 stdout）
-logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s %(levelname)s:%(name)s: %(message)s",
-    stream=sys.stdout,
-)
-
-# 关闭第三方库的 DEBUG 日志
-logging.getLogger("PIL").setLevel(logging.WARNING)
-
-# 将毫秒分隔符从逗号改为点号，并将 StreamHandler 的 stream 改为 TqdmOut 以与 tqdm 协同
-root_logger = logging.getLogger()
-for handler in root_logger.handlers:
-    handler.formatter.default_msec_format = "%s.%03d"
-    if type(handler) is logging.StreamHandler:
-        handler.stream = TqdmOut
+from javsp.logging_config import configure_logging
 
 logger = logging.getLogger("main")
 
@@ -138,8 +119,6 @@ def print_summary(stats):
 
 def _run_with_translator(cfg, root, translator):
     """全部启动资源就绪后扫描和处理媒体文件。"""
-    if cfg.other.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
     os.chdir(root)
     setup_filemove_log(cfg, log_dir=root)
 
@@ -154,6 +133,7 @@ def _run_with_translator(cfg, root, translator):
 
 
 def entry():
+    configure_logging()
     try:
         cfg = Cfg()
     except ValidationError as e:
@@ -162,6 +142,8 @@ def entry():
             msg = err["msg"]
             print(f"配置错误 [{loc}]: {msg}")
         sys.exit(1)
+
+    configure_logging(cfg.other.debug)
 
     def stop_on_term(signum, _frame):
         raise SystemExit(128 + signum)
