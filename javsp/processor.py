@@ -3,7 +3,10 @@
 import logging
 import os
 import re
+import tempfile
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 from PIL import Image
@@ -140,54 +143,99 @@ def generate_names(movie: Movie):
         return legalize_info()
 
 
-def download_cover(covers, fanart_path, big_covers=[], movie_id=""):
-    """下载封面图片"""
-    failed_reasons = []  # 收集失败原因
-    # 优先下载高清封面
-    for url in big_covers:
-        pic_path = get_pic_path(fanart_path, url)
-        last_err = None
-        for attempt in range(Cfg().network.retry):
+def download_cover(covers, fanart_path, big_covers=None, movie_id=""):
+    """每组最多并发下载三张封面，高清全部失败后才尝试普通封面。"""
+    failed_reasons = []
+    retry = Cfg().network.retry
+    temp_dir = os.path.dirname(os.path.abspath(fanart_path))
+
+    def download_group(urls, highres):
+        urls = list(dict.fromkeys(urls))
+        if not urls:
+            return None
+        stopped = threading.Event()
+        winner_lock = threading.Lock()
+        label = "高清封面" if highres else "封面"
+
+        def fetch(url):
+            temp_path = None
             try:
-                info = download(url, pic_path)
-                if valid_pic(pic_path):
-                    filesize = get_fmt_size(pic_path)
-                    width, height = get_pic_size(pic_path)
-                    elapsed = time.strftime("%M:%S", time.gmtime(info["elapsed"]))
-                    speed = get_fmt_size(info["rate"]) + "/s"
-                    logger.info(f"已下载高清封面: {width}x{height}, {filesize} [{elapsed}, {speed}]")
-                    return (url, pic_path)
-                else:
-                    failed_reasons.append(f"高清封面 {url}: 图片无效或已损坏")
-                    break
-            except requests.exceptions.HTTPError as e:
-                # HTTPError通常说明猜测的高清封面地址实际不可用，因此不再重试
-                failed_reasons.append(f"高清封面 {url}: HTTP {e.response.status_code if e.response else '?'}")
-                break
+                if stopped.is_set():
+                    return None
+                with tempfile.NamedTemporaryFile(prefix=".javsp-cover-", dir=temp_dir, delete=False) as temp:
+                    temp_path = temp.name
+                for attempt in range(retry):
+                    if stopped.is_set():
+                        return None
+                    try:
+                        info = download(url, temp_path)
+                        if stopped.is_set():
+                            return None
+                        if not valid_pic(temp_path):
+                            failed_reasons.append(f"{label} {url}: 图片无效或已损坏")
+                            return None
+                        detail = ""
+                        if highres:
+                            filesize = get_fmt_size(temp_path)
+                            width, height = get_pic_size(temp_path)
+                            elapsed = time.strftime("%M:%S", time.gmtime(info["elapsed"]))
+                            speed = get_fmt_size(info["rate"]) + "/s"
+                            detail = f"{width}x{height}, {filesize} [{elapsed}, {speed}]"
+                        with winner_lock:
+                            if stopped.is_set():
+                                return None
+                            pic_path = get_pic_path(fanart_path, url)
+                            os.replace(temp_path, pic_path)
+                            stopped.set()
+                        return url, pic_path, detail
+                    except requests.exceptions.HTTPError as e:
+                        # 高清地址可能由规则猜测生成，HTTP错误不再重试。
+                        if highres:
+                            status = e.response.status_code if e.response is not None else "?"
+                            failed_reasons.append(f"{label} {url}: HTTP {status}")
+                            return None
+                        if attempt == retry - 1:
+                            failed_reasons.append(f"{label} {url}: {type(e).__name__}: {e} (重试{retry}次)")
+                    except Exception as e:
+                        if attempt == retry - 1:
+                            failed_reasons.append(f"{label} {url}: {type(e).__name__}: {e} (重试{retry}次)")
+                return None
             except Exception as e:
-                last_err = e
-        if last_err is not None:
-            failed_reasons.append(f"高清封面 {url}: {type(last_err).__name__}: {last_err} (重试{Cfg().network.retry}次)")
-    # 如果没有高清封面或高清封面下载失败
-    for url in covers:
-        pic_path = get_pic_path(fanart_path, url)
-        last_err = None
-        for attempt in range(Cfg().network.retry):
-            try:
-                download(url, pic_path)
-                if valid_pic(pic_path):
-                    logger.debug(f"已下载封面: '{url}'")
-                    return (url, pic_path)
-                else:
-                    failed_reasons.append(f"封面 {url}: 图片无效或已损坏")
-                    break
-            except Exception as e:
-                last_err = e
-        if last_err is not None:
-            failed_reasons.append(f"封面 {url}: {type(last_err).__name__}: {last_err} (重试{Cfg().network.retry}次)")
+                failed_reasons.append(f"{label} {url}: {type(e).__name__}: {e}")
+                return None
+            finally:
+                if temp_path is not None:
+                    try:
+                        os.unlink(temp_path)
+                    except FileNotFoundError:
+                        pass
+
+        executor = ThreadPoolExecutor(max_workers=min(3, len(urls)), thread_name_prefix="cover")
+        try:
+            futures = [executor.submit(fetch, url) for url in urls]
+            for future in as_completed(futures):
+                result = future.result()
+                if result is not None:
+                    url, pic_path, detail = result
+                    if highres:
+                        logger.info(f"已下载高清封面: {detail}")
+                    else:
+                        logger.debug(f"已下载封面: '{url}'")
+                    return url, pic_path
+        finally:
+            stopped.set()
+            # 已开始的请求结束后自行清理临时文件，不阻塞成功结果返回。
+            executor.shutdown(wait=False, cancel_futures=True)
+        return None
+
+    result = download_group(big_covers or [], highres=True)
+    if result is None:
+        result = download_group(covers, highres=False)
+    if result is not None:
+        return result
     reason_detail = "; ".join(failed_reasons) if failed_reasons else "无可用封面地址"
     logger.error(f"下载封面图片失败: {movie_id}: {reason_detail}")
-    return (None, reason_detail)  # 返回 (None, 原因) 以便调用方获取详情
+    return None, reason_detail
 
 
 def get_pic_path(fanart_path, url):
