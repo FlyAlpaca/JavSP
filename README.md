@@ -1,75 +1,58 @@
 # JavSP 2.0
 
-汇总多站点影片元数据，按命名规则整理本地影片，为 Emby、Jellyfin、Kodi 生成 NFO、封面和海报。
+JavSP 从文件名识别影片番号，汇总多个站点的元数据，整理本地影片，并为 Emby、Jellyfin、Kodi 等媒体库生成 NFO 和图片。当前版本以 Docker 批处理方式运行：处理完一批影片后退出，不持续监听目录，也不要求键盘输入。
 
-本项目是 [Yuukiy/JavSP](https://github.com/Yuukiy/JavSP) 的社区延续版本，在 [darksoap/JavSP](https://github.com/darksoap/JavSP) 基础上特化为 Docker 运行。2.0 将处理流程拆为六个组件，并把影片、字幕与元数据的提交和失败恢复统一管理。
+本仓库延续 [Yuukiy/JavSP](https://github.com/Yuukiy/JavSP)，基于 [darksoap/JavSP](https://github.com/darksoap/JavSP) 开发。2.0 将扫描、抓取、字段合并、输出规划和文件提交分开管理；具体改动见 [更新日志](./CHANGELOG.md)。
 
 [![Tests](https://github.com/FlyAlpaca/JavSP/actions/workflows/tests.yml/badge.svg)](https://github.com/FlyAlpaca/JavSP/actions/workflows/tests.yml)
 [![Docker Build](https://github.com/FlyAlpaca/JavSP/actions/workflows/docker-build.yml/badge.svg)](https://github.com/FlyAlpaca/JavSP/actions/workflows/docker-build.yml)
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 [![License](https://img.shields.io/badge/license-GPL--3.0-green)](./LICENSE)
 
-## 功能
+## 快速开始
 
-- 从文件名或目录识别番号，识别连续分片。
-- 并发抓取多个站点，按配置优先级合并字段，追踪字段来源。
-- 使用本地 Hy-MT2 模型翻译含日文的标题与简介，统一演员别名和分类标签。
-- 下载普通或高清封面，裁剪海报、添加字幕及无码标记，生成 `folder.jpg`。
-- 并发下载剧照，匹配 `.srt`、`.ass` 字幕，支持移动或硬链接整理。
-- 先准备和校验产物再提交；提交失败时恢复源文件和被替换的元数据。
-- 输出成功、失败和未处理影片清单，提供适用于自动化的退出码。
-
-项目通过 Docker 容器运行，提供中文 CLI。详细变化见 [更新日志](./CHANGELOG.md)。
-
-## Docker 快速开始
-
-镜像支持 `linux/amd64` 和 `linux/arm64`。2.0.0 镜像在对应版本发布后可使用以下标签：
+准备三个宿主机目录：影片目录、配置目录、模型缓存目录。影片和配置目录需要容器写入权限。镜像支持 `linux/amd64`、`linux/arm64`。
 
 ```bash
-docker run --rm \
-  --name javsp \
+docker run --rm --name javsp \
   -v /path/to/media:/media \
   -v /path/to/config:/app/config \
   -v /path/to/models:/app/models \
   ghcr.io/flyalpaca/javsp:2.0.0
 ```
 
-也可使用 `haobiubiu/javsp:2.0.0`。
+也可使用 `haobiubiu/javsp:2.0.0`。将三个 `/path/to/...` 替换为实际的宿主机路径；配置里的扫描路径应使用**容器内**路径 `/media`。首次运行会在挂载的配置目录生成 `config.yml`，默认扫描 `/media`。容器不会等待配置编辑，首次运行就会开始处理；需要预先自定义规则时，可先从 [默认配置](./config_default.yml) 复制并编辑宿主机的 `config.yml`，再运行容器。
 
-| 挂载路径 | 用途 |
+启动时依次校验配置和扫描目录、准备数据源、验证本地翻译模型并启动翻译服务，随后扫描影片。默认模型为约 4.6 GB 的 Hy-MT2 7B GGUF；首次运行需要下载模型，并为 `/app/models` 留出约 5 GB 空间。已缓存且校验通过的模型可以复用。模型下载或服务启动失败会阻止批处理；稳定版更新检查失败只会记录提醒。
+
+默认仅处理符合番号识别规则且达到 `232MiB` 的视频，跳过已有 NFO 的目录，并忽略 `#整理完成` 等目录。若未找到可处理影片，程序会以非零状态退出。可在 [默认配置](./config_default.yml) 调整扫描规则。
+
+| 镜像标签 | 用途 |
 | --- | --- |
-| `/media` | 待整理影片与输出目录；需要写入权限 |
-| `/app/config` | 用户配置目录；需要写入权限 |
-| `/app/models` | GGUF 模型缓存；首次下载需要约 5 GB 可用空间，重建容器后仍可复用 |
+| `2.0.0` | 固定版本，由 Git 标签 `v2.0.0` 构建 |
+| `latest` | 最近发布的稳定版本 |
+| `dev` | 手动触发工作流构建的开发版本 |
 
-首次启动时，如果 `/app/config/config.yml` 不存在，入口脚本会从镜像内的 `/app/config_default.yml` 复制生成它。之后编辑挂载目录中的 `config.yml`，重新运行容器生效。首次生成的文件包含完整默认配置，也可以替换成只包含覆盖项的配置。启动时会校验配置和扫描目录、检查程序稳定版更新、准备本地数据源，再校验模型缓存并启动本地服务；全部就绪后才扫描影片。版本查询失败仅记录提醒，不阻断批处理，也不会自动更新程序。已有有效模型缓存时可离线启动。
+推送 Git 标签后，发布工作流通过测试才会构建并发布镜像。镜像是否已可拉取，以容器仓库中的发布结果为准。
 
-程序按无人值守方式运行；请确保配置中扫描目录指向容器内路径：
+## 能做什么
+
+- 识别影片番号与连续分片；同一影片的站点抓取并发进行，按配置优先级合并字段。
+- 可选用 R18.dev 本地数据库，并以在线站点补齐未命中或为空的字段。
+- 用容器内的 Hy-MT2 模型翻译含日文假名的标题和简介；整理演员别名、分类及标签。
+- 下载封面和剧照，裁剪海报，生成 `folder.jpg`，匹配 `.srt`、`.ass` 字幕。
+- 将影片和字幕移入目标目录，或保留原位置只更新元数据；支持硬链接整理。
+- 提交前准备并校验产物，提交失败时尽量恢复本次移动和替换的文件。
+
+默认要求抓取结果包含标题和封面。高清封面下载失败后会尝试普通封面；剧照单张失败不会阻止其他剧照或影片处理。
+
+## 配置
+
+容器首次启动会将镜像内的默认模板复制到 `/app/config/config.yml`。之后编辑宿主机的 `/path/to/config/config.yml` 即可，下一次运行生效。程序始终先读取随包发布的默认配置，再读取用户配置，所以用户文件也可以只保留需要修改的字段：
 
 ```yaml
 scanner:
   input_directory: /media
-```
-
-CLI 整理一批影片后退出；持续监听目录不属于当前功能。
-扫描目录缺失、不是目录或配置无效时会直接报错退出。程序不会等待键盘输入。
-
-| 镜像标签 | 含义 |
-| --- | --- |
-| `2.0.0` | 固定版本，对应 Git tag `v2.0.0` |
-| `latest` | 最近一次发布的稳定版本 |
-| `dev` | 手动触发发布工作流的构建 |
-| `1.10.2.1` 等 | 历史四段版本标签 |
-
-启用 Slimeface 裁剪后端时需在镜像构建阶段安装 `crop` 可选依赖，并在配置中选择该引擎。配置字段及注释见 [默认配置](./config_default.yml)。
-
-## 配置
-
-程序始终加载随包发布的 `config_default.yml`，再加载用户覆盖项。不要直接修改默认模板。
-
-```yaml
-scanner:
-  input_directory: /path/to/media
 network:
   proxy_server: null
 summarizer:
@@ -84,56 +67,31 @@ translator:
   auto_download: true
 ```
 
-### 配置位置和优先级
-
-翻译始终启用，仅处理含假名的日文标题和简介；纯汉字文本无法可靠判别语言时保持原样。可将 `translator.model` 改为 `hy_mt2_1_8b_q4_k_m` 以使用更小的模型。模型运行和生成参数见[默认配置](./config_default.yml)，默认 CPU 设置面向 i3-1315U／24 GB 内存，实际性能因机器而异。翻译请求仅发送到容器内的 llama.cpp 服务；首次模型下载仍需访问 Hugging Face。若关闭 `auto_download`，请提前将所选官方 GGUF 放入 `model_dir`。旧配置中的 `translator.engine`、`translator.fields` 必须删除，不能用 `engine: null` 关闭翻译。
-
-用户配置位于 `/app/config/config.yml`。容器入口首次启动时会从默认模板创建该文件；也可通过 `-c` 指定其他容器内路径。
-
-指定 `-c /path/to/config.yml` 后，使用该用户配置文件，不再自动查找其他用户配置。覆盖优先级从低到高为：
-
-1. 包内默认配置。
-2. 指定或自动找到的用户配置。
-3. 环境变量。
-4. 命令行字段覆盖。
-
-环境变量使用 `JAVSP_` 前缀和双下划线区分层级；命令行字段覆盖使用 `--o` 前缀及点号路径，参数名与值之间用空格（不支持等号写法）：
+配置优先级从低到高为：包内默认配置、用户配置、`JAVSP_` 环境变量、`--o` 命令行覆盖。`-c` 可指定其他**容器内**用户配置路径；指定后不会自动查找 `/app/config/config.yml`。环境变量以双下划线表示层级，命令行覆盖使用点号路径，参数名和值用空格分隔：
 
 ```bash
-docker run --rm -v /path/to/media:/media -v /path/to/config:/app/config -v /path/to/models:/app/models \
-  -e JAVSP_SCANNER__INPUT_DIRECTORY=/media ghcr.io/flyalpaca/javsp:2.0.0
-docker run --rm -v /path/to/media:/media -v /path/to/config:/app/config -v /path/to/models:/app/models \
-  ghcr.io/flyalpaca/javsp:2.0.0 --oscanner.input_directory /media --osummarizer.move_files false
+docker run --rm \
+  -v /path/to/media:/media -v /path/to/config:/app/config -v /path/to/models:/app/models \
+  -e JAVSP_SCANNER__INPUT_DIRECTORY=/media \
+  ghcr.io/flyalpaca/javsp:2.0.0
+
+docker run --rm \
+  -v /path/to/media:/media -v /path/to/config:/app/config -v /path/to/models:/app/models \
+  ghcr.io/flyalpaca/javsp:2.0.0 \
+  --oscanner.input_directory /media --osummarizer.move_files false
 ```
 
-### 整理模式
+更多命名规则、网络代理、站点顺序和图片选项见 [默认配置](./config_default.yml)。
 
-- `move_files: true`：按模板整理影片，并在启用 `match_subtitles` 时移动匹配字幕。
-- `move_files: false`：保留影片和字幕，在影片所在目录生成或更新元数据。同目录多部影片会依次更新同名产物，包括 `folder.jpg`。
-- `path.hard_link: true`：整理时优先创建硬链接，保留源文件；文件系统不支持或跨设备时回退复制。
+### 文件整理方式
 
-默认必需字段为标题和封面。高清封面组全部失败后尝试普通封面；每组最多同时下载三张，采用首个完成且校验有效的结果。剧照最多并发三张，由 `scrap_interval` 控制请求启动间隔，单张失败不阻止其他图片或影片整理。
+| 设置 | 结果 |
+| --- | --- |
+| `summarizer.move_files: true` | 按命名模板移动影片；启用 `match_subtitles` 时一起移动匹配的字幕 |
+| `summarizer.move_files: false` | 影片和字幕留在原处，在影片所在目录生成或更新元数据 |
+| `summarizer.path.hard_link: true` | 整理影片时优先使用硬链接并保留源文件；不支持或跨设备时复制 |
 
-### R18.dev 本地数据库
-
-在用户配置中加入以下覆盖项即可启用本地库：
-
-```yaml
-r18dev:
-  enabled: true
-crawler:
-  online_enabled: true
-```
-
-`r18dev.enabled` 默认关闭，`crawler.online_enabled` 默认开启。数据库固定保存在**程序启动工作目录**的 `config/r18dev.sqlite`，没有路径配置项。Docker 对应 `/app/config/r18dev.sqlite`，应保持 `/app/config` 卷持久化。使用 `-c` 指定其他配置文件时，数据库位置仍由启动工作目录决定。
-
-启用后，每次启动先检查 [R18.dev 最新转储](https://r18.dev/dumps)。版本未变时不下载；首次运行下载并导入，后续有新版本时先更新再扫描。已有数据库首次升级时会补建查询索引，可能需要额外磁盘空间和时间。转储是数百 MiB 的压缩文件，导入后的 SQLite 数据库及更新期间的临时库需要更多磁盘空间。下载或更新失败时保留可用旧库；首次下载失败且在线抓取已开启时退回在线抓取，两者都不可用则报错退出。
-
-逐片查询先读本地库；未命中或本地记录的任一可映射字段为空时，才启动已配置的在线站点抓取器。在线结果只填补空白，本地字段优先。关闭在线抓取时仅使用本地数据；两个来源不能同时关闭。本地库未收录的影片在纯本地模式下会整理失败。
-
-## 输出示例
-
-采用默认命名配置整理单片时，输出类似：
+默认输出示例：
 
 ```text
 #整理完成/
@@ -150,74 +108,62 @@ crawler:
             └── 1.jpg
 ```
 
-分片使用 `-CD1`、`-CD2` 等后缀。图片扩展名以实际下载格式为准，也可能是 `.png`、`.webp` 等。`folder.jpg` 使用裁剪和标记后的海报，等比例缩小至不超过 300×450 像素；小图不放大。自定义海报或横版封面已占用 `folder.jpg` 时保留原图。
+多分片影片使用 `-CD1`、`-CD2` 等后缀。图片扩展名随下载格式变化，可能为 `.jpg`、`.png` 或 `.webp`。`folder.jpg` 是不放大小图的海报缩略图，最大 300×450 像素；自定义输出已占用该路径时保留该图片。NFO 的 `genre` 来自自定义分类，站点分类与自定义标签写入 `tag`。
 
-NFO 的 `genre` 来自自定义分类配置；站点分类与自定义标签写入 `tag`。
+`move_files: false` 时，同一目录多部影片可能依次更新同名的 NFO 和图片，包括 `folder.jpg`；需要每部影片独立元数据时，请为它们使用独立目录。
 
-## 2.0 处理架构
+### 本地翻译模型
 
-```mermaid
-flowchart TB
-    P[Pipeline / JobRunner<br/>统一编排、状态、错误和结果]
-    S[Scanner<br/>识别文件与影片]
-    C[CrawlerExecutor<br/>调度、超时和节流]
-    M[MetadataMerger<br/>字段选择和来源]
-    O[OutputPlanner<br/>计算路径与操作计划]
-    E[OutputExecutor<br/>准备、校验、提交和失败恢复]
-    P --> S
-    S --> C
-    C --> M
-    M --> O
-    O --> E
-    E --> P
+翻译始终启用，仅处理含日文假名的标题和简介；无法可靠识别语言的纯汉字文本保持原样。翻译请求只发送给容器内的 `llama.cpp` 服务，首次模型下载需要访问 Hugging Face。可改用约 1.1 GB 的 `hy_mt2_1_8b_q4_k_m` 模型，以减少模型缓存空间。设置 `auto_download: false` 时，需要提前把配置所选的官方 GGUF 放入 `model_dir`；启动会校验文件大小和 SHA-256。
+
+模型线程数、上下文和生成参数见 [默认配置](./config_default.yml)。默认 CPU 设置面向 i3-1315U／24 GB 内存，处理速度因机器而异。Slimeface 海报裁剪需要在构建镜像时安装 `crop` 可选依赖，并在配置里选择该引擎。
+
+### R18.dev 本地数据库
+
+在用户配置里添加：
+
+```yaml
+r18dev:
+  enabled: true
+crawler:
+  online_enabled: true
 ```
 
-影片逐部处理，每部影片内部的站点抓取并发执行。翻译位于元数据合并之后、输出规划之前。规划只读计算路径和操作；执行器在临时目录准备产物并校验，再提交影片、字幕和元数据。
+本地库默认关闭。启用后，程序启动时检查 [R18.dev 转储](https://r18.dev/dumps)；首次下载并导入，之后有新版才更新。库固定保存在**启动工作目录**的 `config/r18dev.sqlite`，Docker 中即 `/app/config/r18dev.sqlite`，与 `-c` 指定的配置文件位置无关。请持久化 `/app/config`，并为压缩转储、数据库及更新时的临时库预留空间。
 
-抓取超时后停止后续重试，排除超时来源并等待在途线程结束。Python 线程无法被强制终止，因此这里的超时不是整个任务的硬截止时间。
+处理影片时先查询本地库；未命中或可映射字段为空，才查询在线站点。在线字段只补空白。若关闭 `crawler.online_enabled`，只用本地库，未收录的影片会失败；本地库和在线抓取不能同时关闭。更新失败时保留可用旧库；首次下载失败且在线抓取开启时，退回在线抓取。
 
-## 失败恢复与退出码
+## 失败处理与日志
 
-影片目标已存在时整理失败，避免覆盖影片；字幕目标已存在时警告并跳过，保留源字幕。已有 NFO 和图片允许更新，提交前先保留备份。
+目标影片已存在时不会覆盖，当前影片整理失败；目标字幕已存在时跳过该字幕并保留源文件。已有 NFO 和图片允许更新，更新前会备份。异常或取消发生在当前进程内时，程序逆序恢复已移动的影片、字幕及被替换的元数据，并清理本次新增产物。普通单片失败且恢复完成后，继续处理下一部影片。
 
-运行期间发生异常或取消时，执行器逆序恢复已移动的影片和字幕、被替换的元数据，并删除本次新增产物。恢复成功的普通单片失败不会阻止下一部影片；取消或恢复不完整会停止批次，并列出未处理影片。
+恢复不完整时，程序停止本批次，并在日志中列出 `.javsp-*` 恢复目录。目录内的 `recovery.json` 记录原始错误、未恢复操作和相关路径；请保留这些文件，按清单人工核对后再运行。断电或强制终止后不会自动恢复；多文件提交也不保证整目录同时可见。
 
-恢复不完整时，日志会给出 `.javsp-*` 恢复目录，其中的 `recovery.json` 记录原始错误、未恢复操作和相关路径。保留这些目录及对应文件，按清单人工处理后再运行。
-
-恢复仅覆盖当前进程运行期间；断电或强制终止后不会自动恢复。多文件提交不具有目录级原子可见性。
-
-退出码针对已识别并进入整理队列的影片；扫描跳过项记录在日志中。
-
-控制台日志输出到 stdout，默认显示 INFO 及以上级别；在 `config.yml` 中设置 `other.debug: true` 可查看 DEBUG 详情。启用 `summarizer.filemove_log` 后，文件移动明细写入扫描目录下的 `filemove.log`，不会在控制台重复输出。
+控制台默认输出 INFO 及以上日志；`other.debug: true` 可显示 DEBUG。设置 `summarizer.filemove_log: true` 后，文件移动明细写入扫描目录下的 `filemove.log`。抓取超时会停止后续重试，但仍等待已启动的线程结束，因此超时不是整部影片的硬截止时间。
 
 | 退出码 | 含义 |
 | --- | --- |
-| `0` | 本批次影片全部整理成功 |
-| `1` | 存在整理失败、取消、恢复不完整，或未找到可处理影片等启动错误 |
+| `0` | 已进入整理队列的影片全部成功 |
+| `1` | 存在整理失败、取消、恢复不完整，或启动检查失败、未找到可处理影片 |
+
+扫描时跳过的文件只记录在日志里，不计入整理队列的成功率。
 
 ## 从 1.x 升级
 
-- 原有命名和抓取配置可继续使用；旧翻译配置中的 `engine`、`fields` 需要按上文迁移为本地模型配置。
-- 输出目录和主要产物命名保持一致；失败时恢复范围扩大到本次生成或替换的元数据。
-- 不兼容的输出路径重叠会提前报错；检查自定义模板是否把不同产物写入同一文件。
-- Docker 可固定使用 `2.0.0`，保留原来的 `/media` 和 `/app/config` 挂载。
-- 本地安装后刷新项目包，使安装元数据、运行日志和 Git 版本保持一致：
+1. 保留原有 `/media` 和 `/app/config` 挂载，并新增持久化的 `/app/models` 挂载。首次启动前预留模型下载所需空间。
+2. 检查旧 `config.yml`：删除 `translator.engine` 和 `translator.fields`，改用 `translator.model`、`model_dir`、`runtime` 和 `generation`。`engine: null` 也不能关闭翻译。
+3. 检查自定义输出路径。若不同产物指向同一路径，2.0 会在提交前报错。先用少量影片验证命名结果，再处理整个目录。
+4. 将镜像固定为 `2.0.0`。`latest` 随后续稳定版发布变化；历史四段版本标签仍用于 1.x 镜像。
 
-```bash
-uv sync --locked --reinstall-package javsp
-# pip 安装环境使用：
-python -m pip install --no-deps --force-reinstall .
-```
+本地 Python 环境仅用于开发和测试。升级本地安装后，可执行 `uv sync --locked --reinstall-package javsp` 刷新安装元数据。
 
-## 开发与反馈
+## 开发、反馈与许可
 
-组件接口、测试和构建命令见 [开发指南](./docs/development.md)。默认测试离线运行；在线抓取测试需要显式启用，并可能更新样本。
+代码结构、测试及构建命令见 [开发指南](./docs/development.md)。默认测试离线运行；在线抓取测试需显式启用。
 
 [问题反馈](https://github.com/FlyAlpaca/JavSP/issues) · [功能建议](https://github.com/FlyAlpaca/JavSP/issues/new/choose) · [上游 Wiki](https://github.com/Yuukiy/JavSP/wiki)
 
-## 许可与使用约定
-
-保留原项目及社区贡献者的署名与许可。本项目受 [GPL-3.0](./LICENSE) 与 [Anti 996 License](https://github.com/996icu/996.ICU/blob/master/LICENSE_CN) 约束。使用本项目还须接受以下条款：
+保留原项目及社区贡献者的署名与许可。本项目受 [GPL-3.0](./LICENSE) 与 [Anti 996 License](https://github.com/996icu/996.ICU/blob/master/LICENSE_CN) 约束。使用本项目还须接受以下约定：
 
 - 本软件仅供学习 Python 和技术交流使用。
 - 请勿在微博、微信等墙内公共社交平台宣传本项目。
