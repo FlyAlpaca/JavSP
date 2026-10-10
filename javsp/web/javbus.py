@@ -7,6 +7,7 @@ from lxml import etree
 
 from javsp.config import Cfg, CrawlerID
 from javsp.datatype import GenreMap, MovieInfo
+from javsp.logging_config import configure_logging
 from javsp.web.base import is_cloudflare_challenge, request_get, resp2html, xpath_first
 from javsp.web.exceptions import CrawlerError, MovieNotFoundError, SiteBlocked
 
@@ -140,7 +141,7 @@ def parse_clean_data(movie: MovieInfo):
 
 
 if __name__ == "__main__":
-    logger.root.handlers[1].level = logging.DEBUG
+    configure_logging(debug=True)
 
     movie = MovieInfo("NANP-030")
     try:

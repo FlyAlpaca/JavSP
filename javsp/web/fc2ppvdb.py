@@ -4,6 +4,7 @@ import logging
 
 from javsp.datatype import MovieInfo
 from javsp.lib import strftime_to_minutes
+from javsp.logging_config import configure_logging
 from javsp.web.base import get_html, get_list_first, select_fc2_cover, xpath_first
 from javsp.web.exceptions import CrawlerError, MovieNotFoundError
 
@@ -74,7 +75,7 @@ def parse_data(movie: MovieInfo):
 
 
 if __name__ == "__main__":
-    logger.root.handlers[1].level = logging.DEBUG
+    configure_logging(debug=True)
 
     movie = MovieInfo("FC2-4497837")
     try:

@@ -32,6 +32,7 @@ def setup_filemove_log(cfg, log_dir=None):
     filemove_handler.setFormatter(logging.Formatter("%(asctime)s - %(message)s"))
     filemove_logger.addHandler(filemove_handler)
     filemove_logger.setLevel(logging.DEBUG)
+    filemove_logger.propagate = False
 
 
 class MovieInfo(BaseModel):

@@ -9,6 +9,7 @@ import lxml.html
 
 from javsp.config import Cfg
 from javsp.datatype import MovieInfo
+from javsp.logging_config import configure_logging
 from javsp.web.base import Request, resp2html
 from javsp.web.exceptions import CrawlerError, MovieNotFoundError, WebsiteError
 
@@ -68,7 +69,7 @@ def parse_data(movie: MovieInfo):
 
 
 if __name__ == "__main__":
-    logger.root.handlers[1].level = logging.DEBUG
+    configure_logging(debug=True)
 
     movie = MovieInfo("FC2-1879420")
     try:
