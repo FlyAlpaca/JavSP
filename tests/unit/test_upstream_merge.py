@@ -6,6 +6,7 @@ from lxml import etree
 
 from javsp import config
 from javsp.datatype import GenreMap, MovieInfo
+from javsp.metadata import summarizer
 from javsp.publish import nfo
 from javsp.scan import file
 
@@ -43,6 +44,31 @@ def test_genre_translation_removal_and_order(tmp_path):
     )
     mapping = GenreMap(str(csv_file))
     assert mapping.map(["1", "繁體", "日本語", "2", "删除", "未知"]) == ["简体", "未知"]
+
+
+def test_genre_mapping_is_reused_across_movies(monkeypatch):
+    loads = []
+    original = summarizer.GenreMap
+
+    def load(file):
+        loads.append(file)
+        return original(file)
+
+    monkeypatch.setattr(summarizer, "GenreMap", load)
+    summarizer._genre_map_for_source.cache_clear()
+    try:
+        first = MovieInfo("ABC-123", genre_id=["2h"])
+        second = MovieInfo("ABC-124", genre_id=["2h"])
+        summarizer.normalize_genres({"javbus": first})
+        summarizer.normalize_genres({"javbus": second})
+        assert first.genre_norm == second.genre_norm == ["69"]
+        for movie_id in ("ABC-123", "ABC-124"):
+            local = MovieInfo(movie_id, genre=["分類"])
+            summarizer.normalize_genres({"r18dev": local})
+            assert local.genre_norm is None
+        assert loads == ["data/genre_javbus.csv", "data/genre_r18dev.csv"]
+    finally:
+        summarizer._genre_map_for_source.cache_clear()
 
 
 def test_scan_unreadable_child_continues(tmp_path, monkeypatch):

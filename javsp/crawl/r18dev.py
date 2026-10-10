@@ -28,6 +28,14 @@ TABLES = {
     "derived_label",
     "derived_series",
 }
+ENTITY_TABLES = (
+    "derived_actress",
+    "derived_category",
+    "derived_director",
+    "derived_maker",
+    "derived_label",
+    "derived_series",
+)
 MAPPABLE_FIELDS = (
     "title",
     "plot",
@@ -164,10 +172,29 @@ def _import_dump(stream, path, source_url):
         db.execute("CREATE INDEX video_cid ON derived_video (content_id)")
         for table in ("derived_video_actress", "derived_video_category", "derived_video_director"):
             db.execute(f"CREATE INDEX {table}_cid ON {table} (content_id)")
+        # 关联名称及制作信息按实体 id 查询；这些表在转储中没有主键。
+        for table in ENTITY_TABLES:
+            db.execute(f"CREATE INDEX {table}_id ON {table} (id)")
         db.execute("INSERT INTO dump_meta VALUES (?)", (source_url,))
         db.commit()
     finally:
         db.close()
+
+
+def _ensure_entity_indexes(path):
+    """为旧版已导入的数据库补建查询索引；失败时仍保留可用旧库。"""
+    try:
+        with sqlite3.connect(path) as db:
+            present = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='index'")}
+            missing = [table for table in ENTITY_TABLES if f"{table}_id" not in present]
+            if not missing:
+                return
+            db.execute("BEGIN")
+            for table in missing:
+                db.execute(f"CREATE INDEX {table}_id ON {table} (id)")
+        logger.info("R18.dev 本地数据库查询索引已更新")
+    except (OSError, sqlite3.Error) as error:
+        logger.warning("R18.dev 本地数据库查询索引更新失败，继续使用原数据库: %s", error)
 
 
 def prepare_database(path: Path, online_enabled: bool, *, session=None):
@@ -176,6 +203,8 @@ def prepare_database(path: Path, online_enabled: bool, *, session=None):
     usable = _valid(path)
     if path.exists() and not usable:
         logger.warning("R18.dev 本地数据库无效，将重新下载: %s", path)
+    if usable:
+        _ensure_entity_indexes(path)
     session = session or requests
     response = None
     temporary = path.with_name(path.name + ".tmp")

@@ -2,6 +2,7 @@
 
 import gzip
 import io
+import sqlite3
 
 import pytest
 
@@ -125,6 +126,36 @@ def test_download_update_and_keep_old_on_failure(tmp_path):
     assert prepare_database(path, False, session=Session(url("2026-10-20"), dump(broken=True))) == path
     assert lookup(path, Movie("ABC-123")).title == "更新标题"
     assert not path.with_name(path.name + ".tmp").exists()
+
+
+def test_existing_database_gets_indexed_entity_lookups(tmp_path):
+    path = tmp_path / "config/r18dev.sqlite"
+    source_url = url("2026-10-06")
+    prepare_database(path, False, session=Session(source_url, dump()))
+    with sqlite3.connect(path) as db:
+        for table in (
+            "derived_actress",
+            "derived_category",
+            "derived_director",
+            "derived_maker",
+            "derived_label",
+            "derived_series",
+        ):
+            db.execute(f"DROP INDEX {table}_id")
+        plan = db.execute("EXPLAIN QUERY PLAN SELECT name_ja FROM derived_maker WHERE id = ?", ("1",)).fetchall()
+        assert any("SCAN derived_maker" in row[3] for row in plan)
+
+    prepare_database(path, False, session=Session(source_url, b"not a dump"))
+    with sqlite3.connect(path) as db:
+        plan = db.execute("EXPLAIN QUERY PLAN SELECT name_ja FROM derived_maker WHERE id = ?", ("1",)).fetchall()
+        assert any("USING INDEX derived_maker_id" in row[3] for row in plan)
+        plan = db.execute(
+            "EXPLAIN QUERY PLAN SELECT e.name_kanji FROM derived_video_actress AS r "
+            "JOIN derived_actress AS e ON e.id = r.actress_id WHERE r.content_id = ?",
+            ("abc00123",),
+        ).fetchall()
+        assert any("USING INDEX derived_actress_id" in row[3] for row in plan)
+    assert lookup(path, Movie("ABC-123")).actress == ["女優"]
 
 
 def test_first_download_failure_and_ambiguous_id(tmp_path):
