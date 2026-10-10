@@ -116,8 +116,3 @@ def write_nfo(info: MovieInfo, nfo_file):
                 doctype='<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>',
             )
         )
-
-
-if __name__ == "__main__":
-    info = MovieInfo(from_file=R"unittest\data\IPX-177 (javbus).json")
-    write_nfo(info)

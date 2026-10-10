@@ -4,18 +4,19 @@
 
 import os
 import sys
+from pathlib import Path
 
 from tqdm import tqdm
 
-file_dir = os.path.dirname(__file__)
-data_dir = os.path.abspath(os.path.join(file_dir, "../unittest/data"))
-sys.path.insert(0, os.path.abspath(os.path.join(file_dir, "..")))
+proj_root = Path(__file__).resolve().parent.parent
+data_dir = proj_root / "tests" / "data"
+sys.path.insert(0, str(proj_root))
 from javsp.datatype import MovieInfo
 
 # 搜索抓取器并导入它们
 all_crawler = {}
 exclude_files = ["fc2fan"]
-for file in os.listdir("../javsp/web"):
+for file in sorted(os.listdir(proj_root / "javsp" / "web")):
     name, ext = os.path.splitext(file)
     if ext == ".py" and name not in exclude_files:
         modu = "javsp.web." + name

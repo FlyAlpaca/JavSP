@@ -1,6 +1,6 @@
 """翻译模块测试
 
-使用 unittest/data 中的影片数据提取日文标题/简介作为翻译输入，
+使用 tests/data 中的影片数据提取日文标题/简介作为翻译输入，
 通过 mock _request 实例的方法来测试翻译逻辑的正确性。
 """
 
@@ -26,14 +26,14 @@ from javsp.web.translate import (
 )
 
 file_dir = os.path.dirname(__file__)
-data_dir = os.path.join(file_dir, "data")
+data_dir = os.path.join(file_dir, "../data")
 
 
 # ---------------------------------------------------------------------------
 # 从测试数据中提取日文文本
 # ---------------------------------------------------------------------------
 def _load_test_texts():
-    """从 unittest/data 的 JSON 文件中提取日文标题和简介"""
+    """从 tests/data 的 JSON 文件中提取日文标题和简介"""
     texts = []
     seen = set()
     for filepath in glob(os.path.join(data_dir, "*.json")):
@@ -635,7 +635,7 @@ class TestTranslateMovieInfo:
 # 参数化测试：使用真实测试数据
 # ---------------------------------------------------------------------------
 class TestParametrized:
-    """使用 unittest/data 中的真实数据测试各引擎"""
+    """使用 tests/data 中的真实数据测试各引擎"""
 
     @pytest.fixture
     def openai_engine(self):

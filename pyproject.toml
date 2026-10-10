@@ -33,7 +33,6 @@ dependencies = [
 crop = ["slimeface>=2024.9.27"]
 dev = [
     "pytest>=9.0",
-    "flake8>=7.0.0",
     "cx-freeze>=8.5",
     "types-lxml>=2026.2",
     "types-pillow>=10.2.0",
@@ -81,7 +80,8 @@ packages = ["javsp"]
 # ----- 工具配置 -----
 [tool.pytest.ini_options]
 pythonpath = ["."]
-testpaths = ["unittest"]
+testpaths = ["tests"]
+markers = ["integration: 依赖在线站点或 Windows 打包产物的集成测试"]
 
 [tool.ruff]
 target-version = "py311"

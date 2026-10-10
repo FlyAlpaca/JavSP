@@ -1,6 +1,7 @@
 import os
 import re
 from glob import glob
+from pathlib import Path
 
 import pytest
 
@@ -9,13 +10,24 @@ data_dir = os.path.join(os.path.dirname(__file__), "data")
 
 def pytest_addoption(parser):
     parser.addoption("--only", action="store", default="", help="仅测试指定抓取器的数据")
+    parser.addoption("--run-integration", action="store_true", help="运行依赖在线站点或打包产物的集成测试")
+
+
+def pytest_collection_modifyitems(config, items):
+    integration_dir = Path(__file__).parent / "integration"
+    skip = pytest.mark.skip(reason="集成测试需要显式指定 --run-integration")
+    for item in items:
+        if integration_dir in item.path.parents:
+            item.add_marker(pytest.mark.integration)
+            if not config.getoption("--run-integration"):
+                item.add_marker(skip)
 
 
 def pytest_runtest_logreport(report):
     """定制 short test summary info 显示格式"""
     # report 的部分属性形如
-    # nodeid: unittest/test_crawlers.py::test_crawler[082713-417: avsox]
-    # location: ('unittest\\test_crawlers.py', 27, 'test_crawler[082713-417: avsox]')
+    # nodeid: tests/integration/test_crawlers.py::test_crawler[082713-417: avsox]
+    # location: ('tests/integration/test_crawlers.py', 27, 'test_crawler[082713-417: avsox]')
     # keywords: test_crawler, JavSP
 
     # 为test_crawlers.py定制short test summary格式
@@ -23,16 +35,11 @@ def pytest_runtest_logreport(report):
         report.nodeid = re.sub(r"^.*::test_crawler", "", report.nodeid)
 
 
-@pytest.fixture
-def crawler(request):
-    return request.config.getoption("--only")
-
-
 def pytest_generate_tests(metafunc):
     if "crawler_params" in metafunc.fixturenames:
         # 根据测试数据文件夹中的文件生成测试数据
         testcases = {}
-        data_files = glob(data_dir + os.sep + "*.json")
+        data_files = sorted(glob(data_dir + os.sep + "*.json"))
         target_crawler = metafunc.config.getoption("--only")
         for file in data_files:
             basename = os.path.basename(file)
