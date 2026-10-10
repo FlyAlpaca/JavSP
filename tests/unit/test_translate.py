@@ -2,6 +2,7 @@
 
 import hashlib
 import re
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
@@ -228,13 +229,34 @@ def test_terminal_progress_uses_single_tqdm_bar(monkeypatch):
     bar = MagicMock()
     constructor = MagicMock(return_value=bar)
     monkeypatch.setattr("javsp.download.tqdm", constructor)
-    monkeypatch.setattr("javsp.download.sys.stderr.isatty", lambda: True)
+    monkeypatch.setattr("javsp.download.sys.stdout.isatty", lambda: True)
     with DownloadProgress(100, 25, "下载翻译模型", logging.getLogger("javsp.translate")) as progress:
         progress.update(20)
     assert constructor.call_args.kwargs["initial"] == 25
     assert constructor.call_args.kwargs["disable"] is False
+    assert constructor.call_args.kwargs["file"] is sys.stdout
     bar.update.assert_called_once_with(20)
     bar.close.assert_called_once()
+
+
+def test_progress_logs_when_stdout_is_redirected(monkeypatch, caplog):
+    import logging
+
+    from javsp.download import DownloadProgress
+
+    bar = MagicMock()
+    constructor = MagicMock(return_value=bar)
+    monkeypatch.setattr("javsp.download.tqdm", constructor)
+    monkeypatch.setattr("javsp.download.sys.stdout.isatty", lambda: False)
+    monkeypatch.setattr("javsp.download.sys.stderr.isatty", lambda: True)
+    caplog.set_level("INFO", logger="javsp.crawl.r18dev")
+
+    with DownloadProgress(100, 0, "下载 R18.dev 数据库", logging.getLogger("javsp.crawl.r18dev")) as progress:
+        progress.update(100)
+
+    assert constructor.call_args.kwargs["disable"] is True
+    assert "下载 R18.dev 数据库: 0%" in caplog.text
+    assert "下载 R18.dev 数据库: 100%" in caplog.text
 
 
 def test_missing_model_offline_fails(tmp_path, small_model):
