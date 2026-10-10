@@ -245,7 +245,7 @@ class Movie:
 
     def rename_files(self, use_hardlink: bool = False) -> list:
         """兼容影片/字幕移动接口，复用输出事务的预检、提交及回滚。"""
-        from javsp.output import OutputExecutor
+        from javsp.publish.output import OutputExecutor
 
         return OutputExecutor(Cfg()).execute_files(self, use_hardlink).moved_files
 

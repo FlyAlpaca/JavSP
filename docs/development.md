@@ -4,7 +4,14 @@
 
 | 路径 | 用途 |
 | --- | --- |
-| `javsp/` | 应用源码；`web/` 为动态加载的站点抓取器，`cropper/` 为裁剪后端 |
+| `javsp/` | CLI、配置、基础数据类型和公共辅助模块 |
+| `javsp/workflow/` | 流水线编排、阶段事件与结果契约 |
+| `javsp/scan/` | 番号识别与本地文件扫描 |
+| `javsp/crawl/` | 抓取调度与 R18.dev 本地数据源 |
+| `javsp/web/` | 动态加载的站点抓取器、网络请求和翻译 |
+| `javsp/metadata/` | 来源合并、字段选择与元数据整理 |
+| `javsp/publish/` | 路径规划、图片及 NFO 生成、文件提交和恢复 |
+| `javsp/cropper/` | 海报裁剪后端 |
 | `data/` | 运行时分类映射和演员别名，随安装包发布 |
 | `image/` | README 标志、Windows 图标和运行时水印 |
 | `tests/unit/` | 本地测试，网络请求由 mock 或本地 HTTP 服务提供 |
@@ -20,8 +27,12 @@
 
 ## 2.0 流水线
 
-`javsp/models.py` 定义扫描、抓取、阶段事件、输出及单片/批次结果；`javsp/pipeline.py` 负责逐部影片编排。
+`javsp/workflow/models.py` 定义扫描、抓取、阶段事件、输出及单片/批次结果；`javsp/workflow/pipeline.py` 负责逐部影片编排。
 核心组件显式接收配置，CLI 将事件转成进度条，人工番号确认仍在扫描之后完成。
+
+新代码从上述职责目录导入模块。根目录中同名的 `avid.py`、`file.py`、`dispatcher.py`、`r18dev.py`、
+`summarizer.py`、`image.py`、`nfo.py`、`processor.py`、`output.py`、`models.py` 和 `pipeline.py`
+是旧导入路径的兼容入口，与新路径引用同一个模块对象，已有调用和模块属性补丁仍可使用。
 
 | 组件 | 接口 | 边界 |
 | --- | --- | --- |

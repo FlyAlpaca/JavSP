@@ -41,14 +41,14 @@ logger = logging.getLogger("main")
 
 from javsp.__version__ import __version__
 from javsp.config import Cfg
+from javsp.crawl.dispatcher import import_crawlers
+from javsp.crawl.r18dev import prepare_database
 from javsp.datatype import Movie, setup_filemove_log
-from javsp.dispatcher import import_crawlers
 from javsp.func import check_update, get_scan_dir
 from javsp.lib import prompt
-from javsp.models import Stage
-from javsp.pipeline import JobRunner, Pipeline
-from javsp.r18dev import prepare_database
-from javsp.summarizer import load_actress_aliases
+from javsp.metadata.summarizer import load_actress_aliases
+from javsp.workflow.models import Stage
+from javsp.workflow.pipeline import JobRunner, Pipeline
 
 
 def reviewMovieID(all_movies, root):
