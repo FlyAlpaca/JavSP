@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 import requests
 
-from javsp import dispatcher
+from javsp.crawl import dispatcher
 from javsp.datatype import Movie
 
 

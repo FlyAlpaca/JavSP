@@ -3,12 +3,12 @@
 import sys
 from types import SimpleNamespace
 
-from javsp import dispatcher
 from javsp.config import Cfg
+from javsp.crawl import dispatcher
 from javsp.datatype import Movie, MovieInfo
-from javsp.file import Scanner
-from javsp.models import CrawlResult
-from javsp.summarizer import MetadataMerger
+from javsp.metadata.summarizer import MetadataMerger
+from javsp.scan.file import Scanner
+from javsp.workflow.models import CrawlResult
 
 
 def test_scan_results_are_independent(tmp_path):

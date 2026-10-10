@@ -2,7 +2,7 @@ import os
 
 import pytest
 
-from javsp.avid import get_cid, get_id
+from javsp.scan.avid import get_cid, get_id
 
 file_dir = os.path.dirname(__file__)
 

@@ -9,7 +9,7 @@ import pytest
 import requests
 from PIL import Image
 
-from javsp import processor
+from javsp.publish import processor
 
 
 def movie_for(tmp_path, urls):

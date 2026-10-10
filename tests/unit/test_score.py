@@ -10,8 +10,8 @@ from lxml import etree
 
 from javsp.config import Cfg
 from javsp.datatype import Movie, MovieInfo
-from javsp.nfo import write_nfo
-from javsp.processor import generate_names
+from javsp.publish.nfo import write_nfo
+from javsp.publish.processor import generate_names
 
 
 @pytest.fixture

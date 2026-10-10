@@ -3,7 +3,7 @@ import os
 import pytest
 
 from javsp.datatype import Movie
-from javsp.file import find_matching_subtitles
+from javsp.scan.file import find_matching_subtitles
 
 DEFAULT_SIZE = 512 * 2**20  # 512 MiB
 
