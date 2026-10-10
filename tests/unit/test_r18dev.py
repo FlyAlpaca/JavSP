@@ -287,12 +287,13 @@ def test_database_resumes_partial_segment(tmp_path, wasabi_server, monkeypatch):
     path = tmp_path / "r18dev.sqlite"
     session = Session(url("2026-10-06"), dump())
     monkeypatch.setattr("javsp.download.CHUNK_SIZE", 16)
+    monkeypatch.setattr("javsp.download.PART_SIZE", 256)
     wasabi_server.fail_once = True
     assert prepare_database(path, True, session=session) is None
     assert any(part.stat().st_size for part in tmp_path.glob("*.part*"))
     before = len(wasabi_server.requests)
     prepare_database(path, False, session=session)
-    starts = {i * len(dump()) // 4 for i in range(4)}
+    starts = set(range(0, len(dump()), 256))
     assert any(
         request and request != "bytes=0-0" and int(request[6:].split("-")[0]) not in starts
         for _, request, _ in wasabi_server.requests[before:]
@@ -314,7 +315,8 @@ def test_database_single_connection_resume(tmp_path, wasabi_server, monkeypatch)
 
 
 @pytest.mark.parametrize("mode", ["ignore_range", "bad_range"])
-def test_database_range_fallback(tmp_path, wasabi_server, mode):
+def test_database_range_fallback(tmp_path, wasabi_server, mode, monkeypatch):
+    monkeypatch.setattr("javsp.download.PART_SIZE", 256)
     session = Session(url("2026-10-06"), dump())
     setattr(wasabi_server, mode, True)
     path = tmp_path / "r18dev.sqlite"

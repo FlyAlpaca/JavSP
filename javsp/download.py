@@ -7,14 +7,17 @@ import sys
 import tempfile
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
+from itertools import islice
 from pathlib import Path
 
 import requests
 from tqdm import tqdm
 
 CHUNK_SIZE = 1024 * 1024
+PART_SIZE = 4 * 1024 * 1024
+MAX_CONNECTIONS = 4
 _CONTENT_RANGE = re.compile(r"bytes (\d+)-(\d+)/(\d+)")
 
 
@@ -39,12 +42,18 @@ class DownloadSpec:
 
 
 def parts(spec: DownloadSpec) -> list[tuple[int, int, Path]]:
-    return [(i * spec.size // 4, (i + 1) * spec.size // 4 - 1, Path(f"{spec.prefix}.part{i}")) for i in range(4)]
+    return [
+        (start, min(start + PART_SIZE, spec.size) - 1, Path(f"{spec.prefix}.part-v2-{start // PART_SIZE}"))
+        for start in range(0, spec.size, PART_SIZE)
+    ]
 
 
 def clear_parts(spec: DownloadSpec) -> None:
     for _, _, part in parts(spec):
         part.unlink(missing_ok=True)
+    # 旧版四等分分片与当前范围不兼容。
+    for index in range(4):
+        Path(f"{spec.prefix}.part{index}").unlink(missing_ok=True)
     Path(f"{spec.prefix}.single.part").unlink(missing_ok=True)
 
 
@@ -206,14 +215,23 @@ def download_file(
         segments = parts(spec)
         initial = sum(_part_length(part, end - start + 1) for start, end, part in segments)
         with DownloadProgress(spec.size, initial, label, logger) as progress:
-            with ThreadPoolExecutor(max_workers=4) as pool:
-                futures = [pool.submit(_download_part, spec, part, options, progress) for part in segments]
+            with ThreadPoolExecutor(max_workers=MAX_CONNECTIONS) as pool:
+                remaining = iter(segments)
+                futures = {
+                    pool.submit(_download_part, spec, part, options, progress)
+                    for part in islice(remaining, MAX_CONNECTIONS)
+                }
                 errors = []
-                for future in as_completed(futures):
-                    try:
-                        future.result()
-                    except Exception as error:
-                        errors.append(error)
+                while futures:
+                    completed, futures = wait(futures, return_when=FIRST_COMPLETED)
+                    for future in completed:
+                        try:
+                            future.result()
+                        except Exception as error:
+                            errors.append(error)
+                    if not errors:
+                        for part in islice(remaining, MAX_CONNECTIONS - len(futures)):
+                            futures.add(pool.submit(_download_part, spec, part, options, progress))
         if errors:
             changed = next((error for error in errors if isinstance(error, ObjectChanged)), None)
             if changed is not None:
