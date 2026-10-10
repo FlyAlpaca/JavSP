@@ -1,6 +1,9 @@
 """从JavBus抓取数据"""
 
 import logging
+from urllib.parse import urlsplit
+
+from lxml import etree
 
 from javsp.config import Cfg, CrawlerID
 from javsp.datatype import GenreMap, MovieInfo
@@ -46,10 +49,24 @@ def parse_data(movie: MovieInfo):
     resp = request_get(url, delay_raise=True)
     if is_cloudflare_challenge(resp):
         raise SiteBlocked(f"JavBus: 无法通过CloudFlare检测: {url}")
-    # 疑似JavBus检测到类似爬虫的行为时会要求登录，不过发现目前不需要登录也可以从重定向前的网页中提取信息
-    if resp.history and resp.history[0].status_code == 302:
-        html = resp2html(resp.history[0])
-    else:
+    # 旧版登录跳转的302响应可能带有影片数据；普通重定向通常只有空正文。
+    html = None
+    for previous in resp.history:
+        if previous.status_code != 302 or not previous.content.strip():
+            continue
+        try:
+            candidate = resp2html(previous)
+        except etree.ParserError:
+            continue
+        page_title = candidate.xpath(XP["page_title"])
+        if candidate.xpath(XP["info"]) or (page_title and page_title[0].startswith("404 Page Not Found!")):
+            html = candidate
+            break
+    if html is None:
+        if urlsplit(resp.url).path.rstrip("/") == "/doc/driver-verify":
+            raise SiteBlocked(f"JavBus: 需要浏览器验证，无法抓取影片页面: {url}")
+        if not resp.content.strip():
+            raise CrawlerError(f"JavBus: 返回空页面: {resp.url}")
         html = resp2html(resp)
     # 引入登录验证后状态码不再准确，因此还要额外通过检测标题来确认是否发生了404
     page_title = html.xpath(XP["page_title"])
