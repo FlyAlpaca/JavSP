@@ -33,3 +33,7 @@ jobs:
         run: uv run --locked --extra dev ruff check .
       - name: Run offline unit tests
         run: uv run --locked --extra dev pytest tests/unit
+      - name: Build source and wheel distributions
+        run: uv build --offline
+      - name: Check wheel resources
+        run: uv run --locked --extra dev python tools/check_dist.py dist
