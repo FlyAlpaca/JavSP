@@ -48,7 +48,8 @@ def test_cached_model_needs_no_network(tmp_path, small_model):
     session.get.assert_not_called()
 
 
-def test_download_replaces_invalid_cache_atomically(tmp_path, small_model, capsys):
+def test_download_replaces_invalid_cache_atomically(tmp_path, small_model, caplog):
+    caplog.set_level("INFO", logger="javsp.translate")
     spec, content = small_model
     path = tmp_path / spec.filename
     path.write_bytes(b"damaged")
@@ -60,9 +61,8 @@ def test_download_replaces_invalid_cache_atomically(tmp_path, small_model, capsy
     assert path.read_bytes() == content
     assert list(tmp_path.glob("*.part")) == []
     assert session.get.call_args.args[0] == spec.url
-    output = capsys.readouterr().err
-    assert "下载翻译模型" in output
-    assert "100%" in output
+    assert "下载翻译模型: 0%" in caplog.text
+    assert "下载翻译模型: 100%" in caplog.text
 
 
 def test_model_download_uses_configured_proxy(tmp_path, small_model, monkeypatch):
