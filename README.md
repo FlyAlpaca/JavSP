@@ -1,121 +1,221 @@
 ![JavSP](./image/JavSP.svg)
 
-# Jav Scraper Package - Continuum
+# JavSP 2.0
 
-> 本项目是 [JavSP](https://github.com/Yuukiy/JavSP) 的延续版本（community continue），在 [darksoap/JavSP](https://github.com/darksoap/JavSP) 基础上增加 Docker 支持。
+汇总多站点影片元数据，按命名规则整理本地影片，为 Emby、Jellyfin、Kodi 生成 NFO、封面和海报。
 
-**汇总多站点数据的AV元数据刮削器**
+本项目是 [Yuukiy/JavSP](https://github.com/Yuukiy/JavSP) 的社区延续版本，在 [darksoap/JavSP](https://github.com/darksoap/JavSP) 基础上增加 Docker 支持。2.0 将处理流程拆为六个组件，并把影片、字幕与元数据的提交和失败恢复统一管理。
 
-提取影片文件名中的番号信息，自动抓取并汇总多个站点数据的 AV 元数据，按照指定的规则分类整理影片文件，并创建供 Emby、Jellyfin、Kodi 等软件使用的元数据文件
+[![Tests](https://github.com/FlyAlpaca/JavSP/actions/workflows/tests.yml/badge.svg)](https://github.com/FlyAlpaca/JavSP/actions/workflows/tests.yml)
+[![Docker Build](https://github.com/FlyAlpaca/JavSP/actions/workflows/docker-build.yml/badge.svg)](https://github.com/FlyAlpaca/JavSP/actions/workflows/docker-build.yml)
+![Python](https://img.shields.io/badge/python-3.11%2B-blue)
+[![License](https://img.shields.io/badge/license-GPL--3.0-green)](./LICENSE)
 
-封面下载每组最多并发 3 个地址，采用组内首个下载完成且校验有效的图片。启用高清封面时，先尝试高清组，全部失败后再尝试普通组。各任务使用独立临时文件，成功后取消尚未开始的任务，已开始的请求结束后自动清理临时文件。
+## 功能
 
-剧照最多同时下载 3 张，并按 `summarizer.extra_fanarts.scrap_interval` 统一控制请求启动间隔。全部剧照保留原有编号，等待下载任务全部结束后继续整理，最后一张完成后不再额外等待；单张下载失败会记录警告并继续处理其他图片。
+- 从文件名或目录识别番号，识别连续分片，支持人工确认和更正。
+- 并发抓取多个站点，按配置优先级合并字段，追踪字段来源。
+- 翻译标题与简介，统一演员别名和分类标签。
+- 下载普通或高清封面，裁剪海报、添加字幕及无码标记，生成 `folder.jpg`。
+- 并发下载剧照，匹配 `.srt`、`.ass` 字幕，支持移动或硬链接整理。
+- 先准备和校验产物再提交；提交失败时恢复源文件和被替换的元数据。
+- 输出成功、失败和未处理影片清单，提供适用于自动化的退出码。
 
-整理时使用裁剪并添加水印后的海报生成文件夹封面 `folder.jpg`，按原比例缩小到不超过 300×450 像素，小图不放大。自定义海报或横版封面名称为 `folder.jpg` 时保留原图；关闭文件移动时，该封面生成在影片所在目录，同目录多部影片会使用最后处理的封面。
+项目提供中文 CLI，不包含 WebUI。详细变化见 [更新日志](./CHANGELOG.md)。
 
-**WebUI**: UI界面不是[此项目的目标](https://github.com/Yuukiy/JavSP/issues/148)。
+## Docker 快速开始
 
-**i18n**: This project currently supports only Chinese. However, if you're willing, you can [vote here](https://github.com/Yuukiy/JavSP/discussions/157) for the language you'd like to see added
-
-![Python 3.14](https://img.shields.io/badge/python-3.14-green.svg)
-[![Docker Build](https://img.shields.io/github/actions/workflow/status/FlyAlpaca/JavSP/docker-build.yml?label=docker)](https://github.com/FlyAlpaca/JavSP/pkgs/container/javsp)
-![License](https://img.shields.io/github/license/Yuukiy/JavSP)
-[![LICENSE](https://img.shields.io/badge/license-Anti%20996-blue.svg)](https://github.com/996icu/996.ICU/blob/master/LICENSE)
-[![996.icu](https://img.shields.io/badge/link-996.icu-red.svg)](https://996.icu)
-
-## 功能特点
-
-下面这些是一些已实现或待实现的功能，在逐渐实现和完善，如果想到新的功能点也会加进来。
-
-- [x] 自动识别影片番号
-- [x] 支持处理影片分片
-- [x] 汇总多个站点的数据生成NFO数据文件
-- [x] 提供站点抓取器集成测试（需联网手动运行）
-- [x] 多线程并行抓取
-- [x] 下载高清封面
-- [x] 基于AI人体分析裁剪素人等非常规封面的海报
-- [x] 自动检查和更新新版本
-- [x] 翻译标题和剧情简介
-- [x] 匹配本地字幕
-- [x] 使用小缩略图创建文件夹封面
-- [x] 保持不同站点间 genre 分类的统一
-- [ ] 不同的运行模式（抓取数据+整理，仅抓取数据）
-- [ ] 可选：所有站点均抓取失败时由人工介入
-
-## 迁移
-
-功能修改日志：[ChangeLog](./CHANGELOG.md)
-
-## Docker
-
-支持 `linux/amd64` 和 `linux/arm64` 双架构。镜像托管在 GitHub Container Registry (ghcr.io) 和 Docker Hub。
-
-### 快速开始
+镜像支持 `linux/amd64` 和 `linux/arm64`。2.0.0 镜像在对应版本发布后可使用以下标签：
 
 ```bash
-docker run -d \
+docker run --rm \
   --name javsp \
   -v /path/to/media:/media \
   -v /path/to/config:/app/config \
-  ghcr.io/FlyAlpaca/javsp:latest
+  ghcr.io/flyalpaca/javsp:2.0.0
 ```
 
-也可从 Docker Hub 拉取：
+也可使用 `haobiubiu/javsp:2.0.0`。
+
+| 挂载路径 | 用途 |
+| --- | --- |
+| `/media` | 待整理影片与输出目录；需要写入权限 |
+| `/app/config` | 用户配置目录；需要写入权限 |
+
+首次启动时，如果 `/app/config/config.yml` 不存在，入口脚本会从镜像内的 `/app/config_default.yml` 复制生成它。之后编辑挂载目录中的 `config.yml`，重新运行容器生效。首次生成的文件包含完整默认配置，也可以替换成只包含覆盖项的配置。
+
+无人值守运行建议设置：
+
+```yaml
+scanner:
+  input_directory: /media
+other:
+  interactive: false
+  auto_exit: true
+```
+
+CLI 整理一批影片后退出；持续监听目录不属于当前功能。
+
+| 镜像标签 | 含义 |
+| --- | --- |
+| `2.0.0` | 固定版本，对应 Git tag `v2.0.0` |
+| `latest` | 最近一次发布的稳定版本 |
+| `dev` | 手动触发发布工作流的构建 |
+| `1.10.2.1` 等 | 历史四段版本标签 |
+
+## 从源码运行
+
+需要 Python 3.11–3.15（项目约束为 `>=3.11,<3.16`）；CI 验证 Python 3.11 和 3.14。Docker 使用 Python 3.14。
 
 ```bash
-docker pull haobiubiu/javsp:latest
+git clone https://github.com/FlyAlpaca/JavSP.git
+cd JavSP
+git checkout v2.0.0
+uv sync --locked
+uv run --locked javsp --oscanner.input_directory '/path/to/media'
 ```
 
-### 挂载说明
+`v2.0.0` 在该版本发布后可用。也可在已取得的源码目录安装并运行：
 
-| 容器路径 | 说明 |
-|-----------|------|
-| `/media` | 影片文件目录 |
-| `/app/config` | 配置文件目录，首次启动后会自动生成 `config_default.yml`，可在此基础上创建 `config.yml` 覆盖默认配置 |
+```bash
+python -m pip install .
+javsp -c /path/to/config.yml
+```
 
-### 可用标签
+启用 Slimeface 裁剪后端时安装 `crop` 可选依赖，并在配置中选择该引擎。配置字段及注释见 [默认配置](./config_default.yml)。
 
-- `latest` — 最新的稳定版
-- `v1.10.0.x` — 指定版本
-- `dev` — 手动触发的开发构建
+## 配置
 
-## [安装并运行JavSP](https://github.com/Yuukiy/JavSP/wiki/%E5%AE%89%E8%A3%85%E5%B9%B6%E8%BF%90%E8%A1%8CJavSP)
+程序始终加载随包发布的 `config_default.yml`，再加载用户覆盖项。不要直接修改默认模板。
 
-## 使用
+```yaml
+scanner:
+  input_directory: /path/to/media
+network:
+  proxy_server: null
+summarizer:
+  move_files: true
+  match_subtitles: true
+  path:
+    output_folder_pattern: '#整理完成/{actress}/[{num}] {title}'
+    hard_link: false
+translator:
+  engine: null
+```
 
-软件开箱即用。如果想让软件更符合你的使用需求，也许你需要更改配置文件:
+### 配置位置和优先级
 
-> 在程序同目录下创建 `config.yml`，只需写需要覆盖的配置项即可（未配置的项使用 `config_default.yml` 中的默认值）。
+用户配置查找顺序：当前工作目录、可执行文件目录（仅冻结程序）、源码或安装资源根目录。每个位置优先查找 `config/config.yml`，再查找 `config.yml`。Docker 中对应 `/app/config/config.yml`。
 
-此外软件也支持通过 `-c` 参数指定配置文件路径，以及从环境变量（`JAVSP_` 前缀）和命令行参数覆盖配置。运行 `JavSP -h` 查看支持的参数列表
+指定 `-c /path/to/config.yml` 后，使用该用户配置文件，不再自动查找其他用户配置。覆盖优先级从低到高为：
 
-更详细的使用说明请前往 [JavSP Wiki](https://github.com/Yuukiy/JavSP/wiki) 查看
+1. 包内默认配置。
+2. 指定或自动找到的用户配置。
+3. 环境变量。
+4. 命令行字段覆盖。
 
-如果使用的时候遇到问题也欢迎给我反馈😊
+环境变量使用 `JAVSP_` 前缀和双下划线区分层级；命令行字段覆盖使用 `--o` 前缀及点号路径，参数名与值之间用空格（不支持等号写法）：
 
-## 问题反馈
+```bash
+JAVSP_SCANNER__INPUT_DIRECTORY=/path/to/media uv run --locked javsp
+uv run --locked javsp --oscanner.input_directory '/path/to/media' --osummarizer.move_files false
+```
 
-如果使用中遇到了 Bug，请[前往 Issue 区反馈](https://github.com/FlyAlpaca/JavSP/issues)（提问前请先搜索是否已有类似问题）
+### 整理模式
 
-## 参与贡献
+- `move_files: true`：按模板整理影片，并在启用 `match_subtitles` 时移动匹配字幕。
+- `move_files: false`：保留影片和字幕，在影片所在目录生成或更新元数据。同目录多部影片会依次更新同名产物，包括 `folder.jpg`。
+- `path.hard_link: true`：整理时优先创建硬链接，保留源文件；文件系统不支持或跨设备时回退复制。
 
-目录说明、开发环境和测试命令见 [开发指南](./docs/development.md)。
+默认必需字段为标题和封面。高清封面组全部失败后尝试普通封面；每组最多同时下载三张，采用首个完成且校验有效的结果。剧照最多并发三张，由 `scrap_interval` 控制请求启动间隔，单张失败不阻止其他图片或影片整理。
 
-此项目不需要捐赠。如果你想要帮助改进这个项目，欢迎通过以下方式参与进来（并不仅局限于代码）：
+## 输出示例
 
-- 帮助撰写和改进Wiki
-- 帮助完善单元测试数据（不必非要写代码，例如如果你发现有某系列的番号识别不准确，总结一下提issue也是很好的）
-- 帮助翻译 genre
-- Bugfix / 新功能？欢迎发 Pull Request
-- 要不考虑点个 Star ?（我会很开心的）
+采用默认命名配置整理单片时，输出类似：
 
-## 许可
+```text
+#整理完成/
+└── 演员名/
+    └── [ABC-123] 影片标题/
+        ├── ABC-123.mp4
+        ├── ABC-123.srt
+        ├── movie.nfo
+        ├── fanart.jpg
+        ├── poster.jpg
+        ├── folder.jpg
+        └── extrafanart/
+            ├── 0.jpg
+            └── 1.jpg
+```
 
-此项目的所有权利与许可受 GPL-3.0 License 与 [Anti 996 License](https://github.com/996icu/996.ICU/blob/master/LICENSE_CN) 共同限制。此外，如果你使用此项目，表明你还额外接受以下条款：
+分片使用 `-CD1`、`-CD2` 等后缀。图片扩展名以实际下载格式为准，也可能是 `.png`、`.webp` 等。`folder.jpg` 使用裁剪和标记后的海报，等比例缩小至不超过 300×450 像素；小图不放大。自定义海报或横版封面已占用 `folder.jpg` 时保留原图。
 
-- 本软件仅供学习 Python 和技术交流使用
-- 请勿在微博、微信等墙内的公共社交平台上宣传此项目
-- 用户在使用本软件时，请遵守当地法律法规
-- 禁止将本软件用于商业用途
+NFO 的 `genre` 来自自定义分类配置；站点分类与自定义标签写入 `tag`。
 
+## 2.0 处理架构
+
+```mermaid
+flowchart TB
+    P[Pipeline / JobRunner<br/>统一编排、状态、错误和结果]
+    S[Scanner<br/>识别文件与影片]
+    C[CrawlerExecutor<br/>调度、超时和节流]
+    M[MetadataMerger<br/>字段选择和来源]
+    O[OutputPlanner<br/>计算路径与操作计划]
+    E[OutputExecutor<br/>准备、校验、提交和失败恢复]
+    P --> S
+    S --> C
+    C --> M
+    M --> O
+    O --> E
+    E --> P
+```
+
+影片逐部处理，每部影片内部的站点抓取并发执行。翻译位于元数据合并之后、输出规划之前。规划只读计算路径和操作；执行器在临时目录准备产物并校验，再提交影片、字幕和元数据。
+
+抓取超时后停止后续重试，排除超时来源并等待在途线程结束。Python 线程无法被强制终止，因此这里的超时不是整个任务的硬截止时间。
+
+## 失败恢复与退出码
+
+影片目标已存在时整理失败，避免覆盖影片；字幕目标已存在时警告并跳过，保留源字幕。已有 NFO 和图片允许更新，提交前先保留备份。
+
+运行期间发生异常或取消时，执行器逆序恢复已移动的影片和字幕、被替换的元数据，并删除本次新增产物。恢复成功的普通单片失败不会阻止下一部影片；取消或恢复不完整会停止批次，并列出未处理影片。
+
+恢复不完整时，日志会给出 `.javsp-*` 恢复目录，其中的 `recovery.json` 记录原始错误、未恢复操作和相关路径。保留这些目录及对应文件，按清单人工处理后再运行。
+
+恢复仅覆盖当前进程运行期间；断电或强制终止后不会自动恢复。多文件提交不具有目录级原子可见性。
+
+退出码针对已识别并进入整理队列的影片；扫描跳过项记录在日志中。
+
+| 退出码 | 含义 |
+| --- | --- |
+| `0` | 本批次影片全部整理成功 |
+| `1` | 存在整理失败、取消、恢复不完整，或未找到可处理影片等启动错误 |
+
+## 从 1.x 升级
+
+- 继续使用现有 `config.yml`，配置字段和命名模板保持兼容，无需迁移脚本。
+- 输出目录和主要产物命名保持一致；失败时恢复范围扩大到本次生成或替换的元数据。
+- 不兼容的输出路径重叠会提前报错；检查自定义模板是否把不同产物写入同一文件。
+- Docker 可固定使用 `2.0.0`，保留原来的 `/media` 和 `/app/config` 挂载。
+- 本地安装后刷新项目包，使安装元数据、运行日志和 Git 版本保持一致：
+
+```bash
+uv sync --locked --reinstall-package javsp
+# pip 安装环境使用：
+python -m pip install --no-deps --force-reinstall .
+```
+
+## 开发与反馈
+
+组件接口、测试和构建命令见 [开发指南](./docs/development.md)。默认测试离线运行；在线抓取测试需要显式启用，并可能更新样本。
+
+[问题反馈](https://github.com/FlyAlpaca/JavSP/issues) · [功能建议](https://github.com/FlyAlpaca/JavSP/issues/new/choose) · [上游 Wiki](https://github.com/Yuukiy/JavSP/wiki)
+
+## 许可与使用约定
+
+保留原项目及社区贡献者的署名与许可。本项目受 [GPL-3.0](./LICENSE) 与 [Anti 996 License](https://github.com/996icu/996.ICU/blob/master/LICENSE_CN) 约束。使用本项目还须接受以下条款：
+
+- 本软件仅供学习 Python 和技术交流使用。
+- 请勿在微博、微信等墙内公共社交平台宣传本项目。
+- 使用时遵守当地法律法规。
+- 禁止用于商业用途。

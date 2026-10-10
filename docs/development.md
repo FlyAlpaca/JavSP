@@ -18,6 +18,37 @@
 根目录的 `setup.py` 专用于 cx_Freeze 可执行文件构建，仍需保留。
 `config_default.yml` 是随包发布的默认配置；用户的 `config.yml` 放在运行目录。
 
+## 2.0 流水线
+
+`javsp/models.py` 定义扫描、抓取、阶段事件、输出及单片/批次结果；`javsp/pipeline.py` 负责逐部影片编排。
+核心组件显式接收配置，CLI 将事件转成进度条，人工番号确认仍在扫描之后完成。
+
+| 组件 | 接口 | 边界 |
+| --- | --- | --- |
+| Scanner | `scan(root) -> ScanResult` | 独立返回影片、无法识别、重复和跳过条目 |
+| CrawlerExecutor | `crawl(movie, progress=None) -> CrawlResult` | 站点并发、重试、软截止、线程回收；返回最终数据源身份 |
+| MetadataMerger | `merge(movie, result) -> MovieInfo` | 分类归一化、字段优先级、必需字段、演员别名及来源；不修改输入来源 |
+| OutputPlanner | `plan(movie, info) -> OutputPlan` | 在影片副本上只读规划路径与影片/字幕操作 |
+| OutputExecutor | `execute(plan) -> OutputResult` | 暂存、校验、提交、备份与逆序回滚 |
+| JobRunner / Pipeline | `run(movie)` / `run(root)` | 任务状态、阶段错误、批次停止及未处理列表 |
+
+翻译位于合并与规划之间。现有列表/字典接口通过适配器继续使用，包括 `scan_movies`、`parallel_crawler`、
+`info_summary`、`generate_names`、`Movie.rename_files` 和 `RunNormalMode`，实际处理复用新实现。
+
+### 输出事务与恢复边界
+
+临时产物与备份创建在对应目标文件系统中的 `.javsp-*` 目录。提交前检查文件状态；普通文件移动使用拒绝已有目标的重命名，
+缺少该系统接口的平台使用硬链接发布后删除源名称；跨设备时先复制并验证大小，再发布和删除源文件。硬链接失败回退复制。元数据替换前备份旧文件，回滚按反向操作恢复。
+只有整片提交成功后才发布影片结果、写正式移动日志和清理空源目录。
+
+回滚发现外部修改或恢复操作失败时保留可恢复文件及 `recovery.json`，任务错误标记为未恢复，批次停止。
+清单包含操作路径、备份、文件状态和恢复错误，供人工处理；已完成回滚的操作会更新状态。
+恢复支持运行期间异常和取消，不保证多文件同时可见，不实现断电、kill 后的启动恢复。
+
+普通失败且恢复成功时继续；取消或恢复不完整时保留未处理影片列表。节流被取消时，上一部已成功提交的任务仍为成功。
+组件测试使用本地媒体、图片与模拟抓取器，覆盖跨设备复制、替换失败、取消和回滚冲突。
+工作线程与下载池在取消时仍等待实际任务结束；被中断的 join/shutdown 不会让后台写入与临时目录清理重叠。
+
 ## 环境与本地检查
 
 在仓库根目录执行：
@@ -69,3 +100,15 @@ Docker 构建上下文排除测试、开发文档、虚拟环境、缓存和本�
 wheel 保留运行时资源，避免移动 `data/`、`image/` 或默认配置导致资源查找失败。
 SVG 标志仅保留实际使用的 Roboto 字体，删除导出工具嵌入的其他字体。
 `__pycache__/`、`.pytest_cache/`、`.ruff_cache/` 均为可重新生成的缓存，不应提交。
+
+
+## 版本与发布
+
+版本由 Git tag 和 Hatch VCS 驱动。2.0 使用中文注释标签 `v2.0.0`；wheel/sdist 和安装元数据版本为 `2.0.0`。
+发布前通过 Ruff、全部离线单元测试和构建，确认工作区只包含任务修改，再提交并在最终提交创建标签。
+更新 tag 后使用 `uv sync --locked --extra dev --reinstall-package javsp` 刷新本地安装元数据；
+`uv run --locked python tools/version.py`、运行时版本和 wheel METADATA 应一致。
+
+无 Git 元数据的构建（Docker）由 `SETUPTOOLS_SCM_PRETEND_VERSION` 传入版本；cx_Freeze 的版本文件仍为构建时生成的
+`javsp/VERSION`，不纳入源码版本控制。Docker 工作流验证三段或四段稳定版本标签，标签推送生成版本号和 `latest`，
+手动触发只生成 `dev`。推送标签会触发发布；本地创建标签不会发布镜像。
