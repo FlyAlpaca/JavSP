@@ -10,6 +10,8 @@
 
 封面下载每组最多并发 3 个地址，采用组内首个下载完成且校验有效的图片。启用高清封面时，先尝试高清组，全部失败后再尝试普通组。各任务使用独立临时文件，成功后取消尚未开始的任务，已开始的请求结束后自动清理临时文件。
 
+剧照最多同时下载 3 张，并按 `summarizer.extra_fanarts.scrap_interval` 统一控制请求启动间隔。全部剧照保留原有编号，等待下载任务全部结束后继续整理，最后一张完成后不再额外等待；单张下载失败会记录警告并继续处理其他图片。
+
 **WebUI**: UI界面不是[此项目的目标](https://github.com/Yuukiy/JavSP/issues/148)。
 
 **i18n**: This project currently supports only Chinese. However, if you're willing, you can [vote here](https://github.com/Yuukiy/JavSP/discussions/157) for the language you'd like to see added

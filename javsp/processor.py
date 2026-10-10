@@ -238,6 +238,53 @@ def download_cover(covers, fanart_path, big_covers=None, movie_id=""):
     return None, reason_detail
 
 
+def download_extra_fanarts(movie: Movie, scrape_interval: float, tqdm_bar=None):
+    """并发保存全部剧照，按统一的启动间隔限速，等待所有任务结束。"""
+    if not movie.info.preview_pics:
+        return
+    destination_dir = os.path.join(movie.save_dir, "extrafanart")
+    os.makedirs(destination_dir, exist_ok=True)
+    start_lock = threading.Lock()
+    next_start = 0.0
+
+    def fetch(idx, url):
+        nonlocal next_start
+        temp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(prefix=".javsp-fanart-", dir=destination_dir, delete=False) as temp:
+                temp_path = temp.name
+            with start_lock:
+                delay = next_start - time.monotonic()
+                if delay > 0:
+                    time.sleep(delay)
+                next_start = time.monotonic() + max(0, scrape_interval)
+            info = download(url, temp_path)
+            if not valid_pic(temp_path):
+                logger.warning(f"下载剧照{idx}失败: {url}: 图片无效或已损坏")
+                return
+            filesize = get_fmt_size(temp_path)
+            width, height = get_pic_size(temp_path)
+            elapsed = time.strftime("%M:%S", time.gmtime(info["elapsed"]))
+            speed = get_fmt_size(info["rate"]) + "/s"
+            os.replace(temp_path, os.path.join(destination_dir, f"{idx}.png"))
+            logger.info(f"已下载剧照{url} {idx}.png: {width}x{height}, {filesize} [{elapsed}, {speed}]")
+        except Exception as e:
+            logger.warning(f"下载剧照{idx}失败: {url}, {e}")
+        finally:
+            if temp_path is not None:
+                try:
+                    os.unlink(temp_path)
+                except FileNotFoundError:
+                    pass
+
+    with ThreadPoolExecutor(max_workers=3, thread_name_prefix="fanart") as executor:
+        futures = [executor.submit(fetch, idx, url) for idx, url in enumerate(movie.info.preview_pics)]
+        for completed, future in enumerate(as_completed(futures), start=1):
+            future.result()
+            if tqdm_bar is not None:
+                tqdm_bar.set_description(f"下载剧照 {completed}/{len(futures)}")
+
+
 def get_pic_path(fanart_path, url):
     """根据 fanart 路径和封面 URL 推断图片保存路径"""
     fanart_base = os.path.splitext(fanart_path)[0]
