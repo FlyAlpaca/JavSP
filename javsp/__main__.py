@@ -44,14 +44,12 @@ from javsp.__version__ import __version__
 from javsp.config import Cfg
 from javsp.datatype import Movie, setup_filemove_log
 from javsp.dispatcher import import_crawlers, parallel_crawler
-from javsp.file import get_fmt_size, scan_movies
+from javsp.file import scan_movies
 from javsp.func import check_update, get_scan_dir
-from javsp.image import get_pic_size, valid_pic
 from javsp.lib import prompt
 from javsp.nfo import write_nfo
-from javsp.processor import download_cover, generate_names, process_poster
+from javsp.processor import download_cover, download_extra_fanarts, generate_names, process_poster
 from javsp.summarizer import info_summary, load_actress_aliases
-from javsp.web.base import download
 from javsp.web.translate import translate_movie_info
 
 
@@ -195,30 +193,7 @@ def _process_single_movie(movie, total_step, stats, cfg):
                 cfg.summarizer.extra_fanarts.scrap_interval.total_seconds()
             )
             inner_bar.set_description("下载剧照")
-            if movie.info.preview_pics:
-                extrafanartdir = os.path.join(movie.save_dir, "extrafanart")
-                os.makedirs(extrafanartdir, exist_ok=True)
-                for idx, pic_url in enumerate(movie.info.preview_pics):
-                    inner_bar.set_description(f"下载剧照 {idx}")
-
-                    fanart_destination = os.path.join(extrafanartdir, f"{idx}.png")
-                    try:
-                        info = download(pic_url, fanart_destination)
-                        if valid_pic(fanart_destination):
-                            filesize = get_fmt_size(fanart_destination)
-                            width, height = get_pic_size(fanart_destination)
-                            elapsed = time.strftime(
-                                "%M:%S", time.gmtime(info["elapsed"])
-                            )
-                            speed = get_fmt_size(info["rate"]) + "/s"
-                            logger.info(
-                                f"已下载剧照{pic_url} {idx}.png: {width}x{height}, {filesize} [{elapsed}, {speed}]"
-                            )
-                        else:
-                            logger.warning(f"下载剧照{idx}失败: {pic_url}")
-                    except Exception as e:
-                        logger.warning(f"下载剧照{idx}失败: {pic_url}, {e}")
-                    time.sleep(scrape_interval)
+            download_extra_fanarts(movie, scrape_interval, inner_bar)
             check_step(True)
 
         inner_bar.set_description("写入NFO")

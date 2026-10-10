@@ -167,7 +167,7 @@ summarizer:
   extra_fanarts:
     # 是否下载剧照？
     enabled: true
-    # 连续下载两张剧照之间的间隔时间
+    # 剧照最多并发下载3张；此间隔统一控制相邻下载请求的启动时间
     scrap_interval: PT1.5S
 
 ################################
