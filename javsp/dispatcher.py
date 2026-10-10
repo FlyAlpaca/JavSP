@@ -15,8 +15,11 @@ try:
 except ImportError:
     CURL_CFFI_AVAILABLE = False
 
+from copy import copy
+
 from javsp.config import Cfg
-from javsp.datatype import GenreMap, Movie, MovieInfo
+from javsp.datatype import Movie, MovieInfo
+from javsp.models import CrawlResult
 from javsp.web.exceptions import (
     CredentialError,
     MovieDuplicateError,
@@ -28,10 +31,11 @@ from javsp.web.exceptions import (
 logger = logging.getLogger(__name__)
 
 
-def import_crawlers():
+def import_crawlers(cfg=None):
     """按配置文件的抓取器顺序导入爬虫模块"""
+    cfg = cfg if cfg is not None else Cfg()
     unknown_mods = []
-    for _, mods in Cfg().crawler.selection.items():
+    for _, mods in cfg.crawler.selection.items():
         for name in mods:
             try:
                 __import__("javsp.web." + name)
@@ -41,14 +45,16 @@ def import_crawlers():
         logger.warning("配置的抓取器无效: " + ", ".join(unknown_mods))
 
 
-def parallel_crawler(movie: Movie, tqdm_bar=None):
+def _crawl(movie: Movie, cfg, tqdm_bar=None) -> CrawlResult:
     """使用多线程抓取不同网站的数据"""
+    movie = copy(movie)
     failed_crawlers = []  # (crawler_name, error_reason)
     stopped = threading.Event()
 
     def wrapper(parser, info: MovieInfo, retry):
         crawler_name = threading.current_thread().name
         short_name = crawler_name.replace("javsp.web.", "")
+        last_error = "未执行抓取（重试次数为 0）"
         for cnt in range(retry):
             if stopped.is_set():
                 return
@@ -75,11 +81,13 @@ def parallel_crawler(movie: Movie, tqdm_bar=None):
                 failed_crawlers.append((short_name, str(e)))
                 break
             except requests.exceptions.RequestException as e:
+                last_error = str(e)
                 logger.debug(f"{short_name}: 网络错误，正在重试 ({cnt + 1}/{retry}): \n{repr(e)}")
                 if tqdm_bar is not None and hasattr(tqdm_bar, "set_description"):
                     tqdm_bar.set_description(f"{short_name}: 网络错误，正在重试")
             except Exception as e:
                 if CURL_CFFI_AVAILABLE and isinstance(e, curl_cffi.requests.exceptions.RequestException):
+                    last_error = str(e)
                     logger.debug(f"{short_name}: 网络错误，正在重试 ({cnt + 1}/{retry}): \n{repr(e)}")
                     if tqdm_bar is not None and hasattr(tqdm_bar, "set_description"):
                         tqdm_bar.set_description(f"{short_name}: 网络错误，正在重试")
@@ -88,19 +96,22 @@ def parallel_crawler(movie: Movie, tqdm_bar=None):
                     failed_crawlers.append((short_name, f"{type(e).__name__}: {e}"))
                     break
 
+        else:
+            failed_crawlers.append((short_name, last_error))
+
     # 根据影片的数据源获取对应的抓取器
-    crawler_mods: list[str] = Cfg().crawler.selection[movie.data_src]
+    crawler_mods: list[str] = cfg.crawler.selection[movie.data_src]
 
     all_info = {i: MovieInfo(movie) for i in crawler_mods}
     # 番号为cid但同时也有有效的dvdid时，也尝试使用普通模式进行抓取
     if movie.data_src == "cid" and movie.dvdid:
-        crawler_mods = crawler_mods + Cfg().crawler.selection.normal
+        crawler_mods = crawler_mods + cfg.crawler.selection["normal"]
         for i in all_info.values():
             i.dvdid = None
-        for i in Cfg().crawler.selection.normal:
+        for i in cfg.crawler.selection["normal"]:
             all_info[i] = MovieInfo(movie.dvdid)
     thread_pool = []
-    timeout = Cfg().network.retry * Cfg().network.timeout.total_seconds()
+    timeout = cfg.network.retry * cfg.network.timeout.total_seconds()
     deadline = time.monotonic() + timeout
     try:
         for mod_partial, info in all_info.items():
@@ -111,7 +122,7 @@ def parallel_crawler(movie: Movie, tqdm_bar=None):
             else:
                 parser = getattr(sys.modules[mod], "parse_data")
             # 将all_info中的info实例传递给parser，parser抓取完成后，info实例的值已经完成更新
-            th = threading.Thread(target=wrapper, name=mod, args=(parser, info, Cfg().network.retry))
+            th = threading.Thread(target=wrapper, name=mod, args=(parser, info, cfg.network.retry))
             th.start()
             thread_pool.append(th)
         for th in thread_pool:
@@ -128,44 +139,45 @@ def parallel_crawler(movie: Movie, tqdm_bar=None):
         all_info[th.name.replace("javsp.web.", "")]._success = False
     # 根据抓取结果更新影片类型判定
     if movie.data_src == "cid" and movie.dvdid:
-        titles = [all_info[i].title for i in Cfg().crawler.selection[movie.data_src] if all_info[i]._success]
+        titles = [all_info[i].title for i in cfg.crawler.selection[movie.data_src] if all_info[i]._success]
         if any(titles):
             movie.dvdid = None
-            all_info = {k: v for k, v in all_info.items() if k in Cfg().crawler.selection["cid"]}
+            all_info = {k: v for k, v in all_info.items() if k in cfg.crawler.selection["cid"]}
         else:
             logger.debug(f"自动更正影片数据源类型: {movie.dvdid} ({movie.cid}): normal")
             movie.data_src = "normal"
             movie.cid = None
-            all_info = {k: v for k, v in all_info.items() if k not in Cfg().crawler.selection["cid"]}
+            all_info = {k: v for k, v in all_info.items() if k not in cfg.crawler.selection["cid"]}
     # 删除抓取失败的站点对应的数据
     all_info = {k: v for k, v in all_info.items() if v._success}
     for info in all_info.values():
         info._success = False
 
-    # 智能报错：只有全部失败才汇总输出，单源失败仅记录简要信息
-    if not all_info:
-        total = len(Cfg().crawler.selection[movie.data_src])
-        failed_list = "\n".join(f"  - {name}: {reason}" for name, reason in failed_crawlers)
-        movie_id = movie.dvdid or movie.cid or "未知番号"
-        raise Exception(f"所有 {total} 个抓取器均失败 ({movie_id}):\n{failed_list}")
-    elif failed_crawlers:
-        failed_names = {name for name, _ in failed_crawlers}
-        logger.info(f"部分抓取器失败: {', '.join(sorted(failed_names))}")  # 抓取失败名单
+    return CrawlResult(all_info, failed_crawlers, movie.dvdid, movie.cid, movie.data_src)
 
-    # 删除all_info中键名中的'javsp.web.'前缀
-    all_info = {k.replace("javsp.web.", ""): v for k, v in all_info.items()}
-    # 对各来源的genre进行归一化：优先使用已有的genre_norm，否则根据站点genre_id做映射
-    genre_maps = {}
-    for name, info in all_info.items():
-        if info.genre_norm:
-            continue
-        if not info.genre_id and not info.genre:
-            continue
-        try:
-            genre_map = genre_maps.setdefault(name, GenreMap(f"data/genre_{name}.csv"))
-        except FileNotFoundError:
-            logger.debug(f"'{name}' 缺少 genre 映射表，跳过归一化")
-            continue
-        ids = info.genre_id if info.genre_id else info.genre
-        info.genre_norm = genre_map.map(ids)
-    return all_info
+
+class CrawlerExecutor:
+    """逐部任务共用的站点调度器；超时为软截止，返回前回收工作线程。"""
+
+    def __init__(self, cfg):
+        self.cfg = cfg
+
+    def crawl(self, movie: Movie, progress=None) -> CrawlResult:
+        return _crawl(movie, self.cfg, progress)
+
+    def throttle(self):
+        interval = self.cfg.crawler.sleep_after_scraping.total_seconds()
+        if interval > 0:
+            time.sleep(interval)
+
+
+def parallel_crawler(movie: Movie, tqdm_bar=None):
+    """兼容旧字典接口，包括身份更新和分类归一化。"""
+    from javsp.summarizer import normalize_genres
+
+    cfg = Cfg()
+    result = CrawlerExecutor(cfg).crawl(movie, tqdm_bar)
+    movie.dvdid, movie.cid, movie.data_src = result.dvdid, result.cid, result.data_src
+    result.require_data()
+    normalize_genres(result.data)
+    return result.data
