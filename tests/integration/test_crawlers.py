@@ -9,10 +9,6 @@ import requests
 from javsp.datatype import MovieInfo
 from javsp.web.exceptions import CrawlerError, SiteBlocked
 
-file_dir = os.path.dirname(__file__)
-data_dir = os.path.join(file_dir, "data")
-
-
 logger = logging.getLogger(__name__)
 
 
@@ -52,7 +48,6 @@ def compare(avid, scraper, file):
         parse_data(online)
     except SiteBlocked as e:
         pytest.skip(f"站点被屏蔽: {e}")
-        return
     except (CrawlerError, requests.exceptions.ReadTimeout) as e:
         logger.info(e)
 

@@ -12,10 +12,11 @@
 # 4. 对于部分不直观的翻译或者被设置为删除的标签，应当在csv的note列中说明这样做的原因
 
 import csv
-import os
 import sys
+from pathlib import Path
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+proj_root = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(proj_root))
 from javsp.web.base import get_html
 from javsp.web.proxyfree import get_proxy_free_url
 
@@ -128,7 +129,7 @@ def write_csv(data):
     """将genre按照中文翻译排序后写入csv文件"""
     # data格式: {'site_name': name, 'header': ['id', 'url', 'zh_tw'...], 'record': {id1: [ls1], id2: [ls2]...}}
     record = data["record"]
-    csv_name = f"data/genre_{data['site_name']}.csv"
+    csv_name = proj_root / "data" / f"genre_{data['site_name']}.csv"
     csv_header = data["header"] + ["translate", "note"]
     # p[1][1] 必须是最接近最终翻译文本的那一列（如繁体中文）
     sort_record = {k: v for k, v in sorted(record.items(), key=lambda p: p[1][1])}

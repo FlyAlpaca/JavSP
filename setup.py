@@ -46,7 +46,7 @@ packages = [
 build_exe = {
     "include_files": include_files,
     "includes": includes,
-    "excludes": ["unittest"],
+    "excludes": ["unittest", "tests"],
     "packages": packages,
     "silent": True,
 }

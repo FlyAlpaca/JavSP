@@ -49,7 +49,7 @@ def test_from_file():
     write_back = False
     rewrite_lines = []
 
-    datafile = os.path.join(file_dir, "testdata_avid.txt")
+    datafile = os.path.join(file_dir, "../data/testdata_avid.txt")
     with open(datafile, encoding="utf-8") as f:
         lines = f.readlines()
         for line_no, line in enumerate(lines, start=1):

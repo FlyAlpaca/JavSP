@@ -136,12 +136,6 @@ class MovieInfo(BaseModel):
         if from_file is not None:
             kwargs["from_file"] = from_file
 
-        # 校验：必须提供 dvdid/cid/from_file 之一
-        has_id = kwargs.get("dvdid") or kwargs.get("cid") or kwargs.get("from_file")
-        if not has_id and not kwargs.get("title"):  # 允许从文件加载时暂无 id
-            # 宽松模式：from_file 在 model_validator 中处理，这里不做严格校验
-            pass
-
         super().__init__(**kwargs)
 
     def __repr__(self) -> str:
@@ -156,7 +150,7 @@ class MovieInfo(BaseModel):
         if not filepath:
             id = self.dvdid if self.dvdid else self.cid
             if crawler:
-                filepath = f"../unittest/data/{id} ({crawler}).json"
+                filepath = f"../tests/data/{id} ({crawler}).json"
                 filepath = os.path.join(os.path.dirname(__file__), filepath)
             else:
                 filepath = id + ".json"
