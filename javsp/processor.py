@@ -184,7 +184,7 @@ def download_cover(covers, fanart_path, big_covers=None, movie_id=""):
                         with winner_lock:
                             if stopped.is_set():
                                 return None
-                            pic_path = get_pic_path(fanart_path, url)
+                            pic_path = get_pic_path(fanart_path, temp_path)
                             os.replace(temp_path, pic_path)
                             stopped.set()
                         return url, pic_path, detail
@@ -266,8 +266,9 @@ def download_extra_fanarts(movie: Movie, scrape_interval: float, tqdm_bar=None):
             width, height = get_pic_size(temp_path)
             elapsed = time.strftime("%M:%S", time.gmtime(info["elapsed"]))
             speed = get_fmt_size(info["rate"]) + "/s"
-            os.replace(temp_path, os.path.join(destination_dir, f"{idx}.png"))
-            logger.info(f"已下载剧照{url} {idx}.png: {width}x{height}, {filesize} [{elapsed}, {speed}]")
+            pic_path = get_pic_path(os.path.join(destination_dir, str(idx)), temp_path)
+            os.replace(temp_path, pic_path)
+            logger.info(f"已下载剧照{url} {os.path.basename(pic_path)}: {width}x{height}, {filesize} [{elapsed}, {speed}]")
         except Exception as e:
             logger.warning(f"下载剧照{idx}失败: {url}, {e}")
         finally:
@@ -285,16 +286,18 @@ def download_extra_fanarts(movie: Movie, scrape_interval: float, tqdm_bar=None):
                 tqdm_bar.set_description(f"下载剧照 {completed}/{len(futures)}")
 
 
-def get_pic_path(fanart_path, url):
-    """根据 fanart 路径和封面 URL 推断图片保存路径"""
+def get_pic_path(fanart_path, image_path):
+    """根据下载图片的实际格式生成路径，保留原始图片内容。"""
     fanart_base = os.path.splitext(fanart_path)[0]
-    pic_extend = url.split(".")[-1]
-    # 判断 url 是否带？后面的参数
-    if "?" in pic_extend:
-        pic_extend = pic_extend.split("?")[0]
-
-    pic_path = fanart_base + "." + pic_extend
-    return pic_path
+    with Image.open(image_path) as image:
+        image_format = image.format
+    # 同一格式有多个后缀时使用常见名称，其他格式使用 Pillow 注册的后缀。
+    extension = {"JPEG": ".jpg", "PNG": ".png", "WEBP": ".webp", "TIFF": ".tiff"}.get(image_format)
+    if extension is None:
+        extension = next((ext for ext, fmt in Image.registered_extensions().items() if fmt == image_format), None)
+    if extension is None:
+        raise ValueError(f"图片格式没有对应扩展名: {image_format}")
+    return fanart_base + extension
 
 
 def process_poster(movie: Movie):
