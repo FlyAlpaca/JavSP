@@ -1,21 +1,29 @@
 """R18.dev 转储的原子导入与本地只读查询。"""
 
 import gzip
+import hashlib
 import io
 import logging
 import re
 import sqlite3
+import xml.etree.ElementTree as ET
 from contextlib import closing
+from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
 import requests
-from tqdm import tqdm
 
+from javsp.config import Cfg
 from javsp.datatype import MovieInfo
+from javsp.download import DownloadError, DownloadSpec, clear_parts, download_file
 
 logger = logging.getLogger(__name__)
-LATEST_URL = "https://r18.dev/dumps/latest"
+BUCKET_URL = "https://r18dotdev.s3.eu-west-1.wasabisys.com/"
+_DUMP_PREFIX = "dumps/r18dotdev_dump_"
+_DUMP_NAME = re.compile(r"dumps/r18dotdev_dump_(\d{4}-\d{2}-\d{2})\.sql\.gz")
+_XML_NS = {"s": "http://s3.amazonaws.com/doc/2006-03-01/"}
 SOURCE = "r18dev"
 TABLES = {
     "derived_video",
@@ -58,6 +66,76 @@ _ESCAPE = re.compile(r"\\([\\nrtbfv])")
 _ESCAPES = {"\\": "\\", "n": "\n", "r": "\r", "t": "\t", "b": "\b", "f": "\f", "v": "\v"}
 
 
+@dataclass(frozen=True)
+class DumpObject:
+    url: str
+    dump_date: date
+    etag: str
+    size: int
+
+
+def _date_from_url(url: str) -> date | None:
+    match = re.search(r"(?:^|/)r18dotdev_dump_(\d{4}-\d{2}-\d{2})\.sql\.gz$", urlparse(url).path)
+    if match is None:
+        return None
+    try:
+        return date.fromisoformat(match.group(1))
+    except ValueError:
+        return None
+
+
+def _latest_dump(session, options: dict) -> DumpObject:
+    latest = None
+    token = None
+    seen_tokens = set()
+    while True:
+        params = {"list-type": "2", "prefix": _DUMP_PREFIX, "max-keys": "1000"}
+        if token is not None:
+            params["continuation-token"] = token
+        with session.get(BUCKET_URL, params=params, timeout=(10, 60), **options) as response:
+            response.raise_for_status()
+            root = ET.fromstring(response.content)
+        if root.tag != f"{{{_XML_NS['s']}}}ListBucketResult":
+            raise ValueError("Wasabi 对象列表格式异常")
+        for item in root.findall("s:Contents", _XML_NS):
+            key = item.findtext("s:Key", default="", namespaces=_XML_NS)
+            match = _DUMP_NAME.fullmatch(key)
+            if match is None:
+                continue
+            try:
+                dump_date = date.fromisoformat(match.group(1))
+                size = int(item.findtext("s:Size", default="", namespaces=_XML_NS))
+            except ValueError:
+                continue
+            etag = item.findtext("s:ETag", default="", namespaces=_XML_NS)
+            if size <= 0 or not re.fullmatch(r'"[A-Za-z0-9-]+"', etag):
+                continue
+            candidate = DumpObject(BUCKET_URL + quote(key, safe="/"), dump_date, etag, size)
+            if latest is None or candidate.dump_date > latest.dump_date:
+                latest = candidate
+        if root.findtext("s:IsTruncated", default="false", namespaces=_XML_NS) != "true":
+            break
+        token = root.findtext("s:NextContinuationToken", namespaces=_XML_NS)
+        if not token or token in seen_tokens:
+            raise ValueError("Wasabi 对象列表分页标记异常")
+        seen_tokens.add(token)
+    if latest is None:
+        raise ValueError("Wasabi 对象列表中没有有效的 R18.dev 转储")
+    return latest
+
+
+def _local_version(path: Path) -> tuple[date | None, str | None, int | None]:
+    with closing(_connect(path)) as db:
+        columns = {row[1] for row in db.execute("PRAGMA table_info(dump_meta)")}
+        fields = [field for field in ("source_url", "dump_date", "etag", "size") if field in columns]
+        row = dict(zip(fields, db.execute(f"SELECT {', '.join(fields)} FROM dump_meta").fetchone(), strict=True))
+    try:
+        local_date = date.fromisoformat(row["dump_date"]) if row.get("dump_date") else _date_from_url(row["source_url"])
+    except ValueError:
+        local_date = None
+    return local_date, row.get("etag"), row.get("size")
+
+
 def _decode(value):
     if value == r"\N":
         return None
@@ -86,13 +164,16 @@ def _valid(path):
         return False
 
 
-def _import_dump(stream, path, source_url):
+def _import_dump(stream, path, source: DumpObject):
     """只识别 pg_dump 的 COPY 数据块，不执行转储中的 SQL。"""
     db = sqlite3.connect(path)
     try:
         db.execute("PRAGMA journal_mode=OFF")
         db.execute("PRAGMA synchronous=OFF")
-        db.execute("CREATE TABLE dump_meta (source_url TEXT NOT NULL)")
+        db.execute(
+            "CREATE TABLE dump_meta (source_url TEXT NOT NULL, dump_date TEXT NOT NULL, "
+            "etag TEXT NOT NULL, size INTEGER NOT NULL)"
+        )
         current = None
         columns = []
         pending = []
@@ -176,7 +257,10 @@ def _import_dump(stream, path, source_url):
         # 关联名称及制作信息按实体 id 查询；这些表在转储中没有主键。
         for table in ENTITY_TABLES:
             db.execute(f"CREATE INDEX {table}_id ON {table} (id)")
-        db.execute("INSERT INTO dump_meta VALUES (?)", (source_url,))
+        db.execute(
+            "INSERT INTO dump_meta VALUES (?, ?, ?, ?)",
+            (source.url, source.dump_date.isoformat(), source.etag, source.size),
+        )
         db.commit()
     finally:
         db.close()
@@ -206,39 +290,49 @@ def prepare_database(path: Path, online_enabled: bool, *, session=None):
         logger.warning("R18.dev 本地数据库无效，将重新下载: %s", path)
     if usable:
         _ensure_entity_indexes(path)
-    session = session or requests
-    response = None
+    client = session or requests.Session()
+    proxy = Cfg().network.proxy_server
+    options = {"proxies": {"http": str(proxy), "https": str(proxy)}} if proxy is not None else {}
     temporary = path.with_name(path.name + ".tmp")
+    archive = None
+    download = None
     try:
-        response = session.get(LATEST_URL, stream=True, timeout=(10, 60))
-        response.raise_for_status()
-        source_url = response.url
-        if not re.search(r"r18dotdev_dump_\d{4}-\d{2}-\d{2}\.sql\.gz$", urlparse(source_url).path):
-            raise ValueError(f"R18.dev 转储地址格式异常: {source_url}")
+        source = _latest_dump(client, options)
         if usable:
-            with closing(_connect(path)) as db:
-                old_url = db.execute("SELECT source_url FROM dump_meta").fetchone()[0]
-            if old_url == source_url:
-                logger.info("R18.dev 本地数据库已是最新版本")
+            old_date, old_etag, old_size = _local_version(path)
+            if old_date and (
+                old_date > source.dump_date
+                or (old_date == source.dump_date and old_etag == source.etag and old_size == source.size)
+            ):
+                logger.info("R18.dev 本地数据库已是最新版本: %s", old_date)
                 return path
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary.unlink(missing_ok=True)
-        logger.info("正在下载并导入 R18.dev 数据库: %s", source_url)
-        response.raw.decode_content = False
-        size = response.headers.get("Content-Length")
-        total = int(size) if size and size.isdecimal() and int(size) > 0 else None
-        with tqdm.wrapattr(
-            response.raw, "read", total=total, desc="下载 R18.dev 数据库", unit="B", unit_scale=True, unit_divisor=1024
-        ) as download:
-            with gzip.GzipFile(fileobj=download) as compressed:
-                with io.TextIOWrapper(compressed, encoding="utf-8") as stream:
-                    _import_dump(stream, temporary, source_url)
+        identity = hashlib.sha256(f"{source.url}\0{source.size}\0{source.etag}".encode()).hexdigest()[:24]
+        download = DownloadSpec(source.url, source.size, path.parent / f".r18dev-{source.dump_date}-{identity}", source.etag)
+        logger.info("正在下载并导入 R18.dev 数据库: %s", source.url)
+        archive = download_file(download, client=client, options=options, label="下载 R18.dev 数据库", logger=logger)
+        with gzip.open(archive, "rb") as compressed:
+            with io.TextIOWrapper(compressed, encoding="utf-8") as stream:
+                _import_dump(stream, temporary, source)
         if not _valid(temporary):
             raise ValueError("R18.dev 本地数据库校验失败")
         temporary.replace(path)
+        clear_parts(download)
         logger.info("R18.dev 本地数据库已更新: %s", path)
         return path
-    except (OSError, UnicodeError, sqlite3.Error, ValueError, requests.RequestException) as error:
+    except (
+        OSError,
+        EOFError,
+        UnicodeError,
+        sqlite3.Error,
+        ValueError,
+        ET.ParseError,
+        requests.RequestException,
+        DownloadError,
+    ) as error:
+        if download is not None and (archive is not None or isinstance(error, DownloadError)):
+            clear_parts(download)
         logger.warning("R18.dev 数据库更新失败: %s", error)
         if usable:
             return path
@@ -247,8 +341,10 @@ def prepare_database(path: Path, online_enabled: bool, *, session=None):
             return None
         raise RuntimeError("R18.dev 数据库不可用，且在线抓取已关闭") from error
     finally:
-        if response is not None:
-            response.close()
+        if session is None:
+            client.close()
+        if archive is not None:
+            archive.unlink(missing_ok=True)
         temporary.unlink(missing_ok=True)
 
 

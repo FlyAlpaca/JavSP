@@ -1,12 +1,20 @@
 """R18.dev 本地转储、更新与在线补缺的离线验证。"""
 
 import gzip
-import io
+import hashlib
+import re
 import sqlite3
+import threading
+import xml.etree.ElementTree as ET
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from types import SimpleNamespace
+from urllib.parse import parse_qs, urlparse
 
 import pytest
+import requests
 
 from javsp.config import Cfg
+from javsp.crawl import r18dev
 from javsp.crawl.dispatcher import CrawlerExecutor
 from javsp.crawl.r18dev import TABLES, lookup, prepare_database
 from javsp.datatype import Movie, MovieInfo
@@ -85,44 +93,127 @@ def dump(title="本地标题", *, duplicate=False, broken=False, blank_preview=F
     return gzip.compress("".join(lines).encode())
 
 
-class Response:
-    def __init__(self, url, body, size=None):
-        self.url = url
-        self.raw = io.BytesIO(body)
-        self.headers = {"Content-Length": str(size)} if size is not None else {}
-
-    def raise_for_status(self):
-        pass
-
-    def close(self):
-        self.raw.close()
+_server_state = None
 
 
-class Session:
-    def __init__(self, url, body, size=None):
-        self.url, self.body, self.size = url, body, size
+@pytest.fixture(autouse=True)
+def wasabi_server(monkeypatch):
+    global _server_state
+    state = SimpleNamespace(
+        objects={},
+        requests=[],
+        page_size=1000,
+        list_error=False,
+        ignore_range=False,
+        probe_ignored=False,
+        bad_range=False,
+        fail_once=False,
+        change_after_probe=False,
+    )
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            parsed = urlparse(self.path)
+            if parsed.path == "/":
+                if state.list_error:
+                    self.send_error(503)
+                    return
+                params = parse_qs(parsed.query)
+                keys = sorted(key for key in state.objects if key.startswith(params.get("prefix", [""])[0]))
+                token = params.get("continuation-token", [None])[0]
+                if token:
+                    keys = [key for key in keys if key > token]
+                page = keys[: state.page_size]
+                ns = "http://s3.amazonaws.com/doc/2006-03-01/"
+                root = ET.Element(f"{{{ns}}}ListBucketResult")
+                ET.SubElement(root, f"{{{ns}}}IsTruncated").text = "true" if len(keys) > len(page) else "false"
+                if len(keys) > len(page):
+                    ET.SubElement(root, f"{{{ns}}}NextContinuationToken").text = page[-1]
+                for key in page:
+                    body = state.objects[key]
+                    entry = ET.SubElement(root, f"{{{ns}}}Contents")
+                    ET.SubElement(entry, f"{{{ns}}}Key").text = key
+                    ET.SubElement(entry, f"{{{ns}}}Size").text = str(len(body))
+                    ET.SubElement(entry, f"{{{ns}}}ETag").text = '"' + hashlib.sha256(body).hexdigest() + '"'
+                payload = ET.tostring(root)
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+            key = parsed.path.lstrip("/")
+            if key not in state.objects:
+                self.send_error(404)
+                return
+            body = state.objects[key]
+            etag = '"' + hashlib.sha256(body).hexdigest() + '"'
+            requested = self.headers.get("Range")
+            state.requests.append((key, requested, self.headers.get("If-Match")))
+            if self.headers.get("If-Match") != etag:
+                self.send_response(412)
+                self.end_headers()
+                return
+            match = re.fullmatch(r"bytes=(\d+)-(\d+)", requested or "")
+            if match and not state.ignore_range and not (state.probe_ignored and requested == "bytes=0-0"):
+                start, end = map(int, match.groups())
+                payload = body[start : end + 1]
+                self.send_response(206)
+                range_start = 0 if state.bad_range and requested != "bytes=0-0" else start
+                self.send_header("Content-Range", f"bytes {range_start}-{end}/{len(body)}")
+            else:
+                payload = body
+                self.send_response(200)
+            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("ETag", etag)
+            self.end_headers()
+            if state.change_after_probe and requested == "bytes=0-0":
+                state.change_after_probe = False
+                state.objects[key] = body + b"changed"
+            if state.fail_once and requested != "bytes=0-0":
+                state.fail_once = False
+                self.wfile.write(payload[: max(1, len(payload) // 2)])
+                self.wfile.flush()
+                self.close_connection = True
+            else:
+                self.wfile.write(payload)
+
+        def log_message(self, *_):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    state.base = f"http://127.0.0.1:{server.server_port}/"
+    monkeypatch.setattr(r18dev, "BUCKET_URL", state.base)
+    _server_state = state
+    yield state
+    _server_state = None
+    server.shutdown()
+    thread.join()
+    server.server_close()
+
+
+class Session(requests.Session):
+    def __init__(self, source_url, body):
+        super().__init__()
+        self.url = source_url
         self.calls = 0
+        _server_state.objects = {urlparse(source_url).path.lstrip("/"): body}
 
     def get(self, *args, **kwargs):
         self.calls += 1
-        return Response(self.url, self.body, self.size)
+        return super().get(*args, **kwargs)
 
 
-@pytest.mark.parametrize("known_size", [True, False])
-def test_database_download_progress(tmp_path, capsys, known_size):
+def test_database_download_progress(tmp_path, caplog):
+    caplog.set_level("INFO", logger="javsp.crawl.r18dev")
     body = dump()
-    size = len(body) if known_size else None
-    prepare_database(tmp_path / "r18dev.sqlite", False, session=Session(url("2026-10-06"), body, size))
-    output = capsys.readouterr().err
-    assert "下载 R18.dev 数据库" in output
-    if known_size:
-        assert "100%" in output
-    else:
-        assert "100%" not in output
+    prepare_database(tmp_path / "r18dev.sqlite", False, session=Session(url("2026-10-06"), body))
+    assert "下载 R18.dev 数据库: 100%" in caplog.text
 
 
 def url(date):
-    return f"https://example.test/r18dotdev_dump_{date}.sql.gz"
+    return f"{_server_state.base}dumps/r18dotdev_dump_{date}.sql.gz"
 
 
 def test_download_update_and_keep_old_on_failure(tmp_path):
@@ -140,6 +231,114 @@ def test_download_update_and_keep_old_on_failure(tmp_path):
     assert prepare_database(path, False, session=Session(url("2026-10-20"), dump(broken=True))) == path
     assert lookup(path, Movie("ABC-123")).title == "更新标题"
     assert not path.with_name(path.name + ".tmp").exists()
+
+
+def test_list_pagination_and_newest_valid_date(tmp_path, wasabi_server):
+    path = tmp_path / "r18dev.sqlite"
+    session = Session(url("2026-10-06"), dump("最新标题"))
+    wasabi_server.objects[urlparse(url("2026-09-29")).path.lstrip("/")] = dump("旧标题")
+    wasabi_server.objects["dumps/r18dotdev_dump_2026-99-99.sql.gz"] = dump("无效日期")
+    wasabi_server.objects["dumps/r18dotdev_dump_2026-10-20.sql.gz"] = b""
+    wasabi_server.page_size = 1
+    assert prepare_database(path, False, session=session) == path
+    assert lookup(path, Movie("ABC-123")).title == "最新标题"
+    assert session.calls >= 3
+
+
+def test_same_date_etag_change_and_no_downgrade(tmp_path, wasabi_server):
+    path = tmp_path / "r18dev.sqlite"
+    source_url = url("2026-10-06")
+    first = Session(source_url, dump("初版"))
+    prepare_database(path, False, session=first)
+    with sqlite3.connect(path) as db:
+        assert db.execute("SELECT dump_date, etag, size FROM dump_meta").fetchone()[0] == "2026-10-06"
+    unchanged = Session(source_url, dump("初版"))
+    before = len(wasabi_server.requests)
+    prepare_database(path, False, session=unchanged)
+    assert len(wasabi_server.requests) == before
+    assert unchanged.calls == 1
+    changed = Session(source_url, dump("修订版"))
+    prepare_database(path, False, session=changed)
+    assert lookup(path, Movie("ABC-123")).title == "修订版"
+    older = Session(url("2026-09-29"), dump("旧日期"))
+    prepare_database(path, False, session=older)
+    assert older.calls == 1
+    assert lookup(path, Movie("ABC-123")).title == "修订版"
+
+
+def test_legacy_database_reimports_same_date_once(tmp_path):
+    path = tmp_path / "r18dev.sqlite"
+    source_url = url("2026-10-06")
+    prepare_database(path, False, session=Session(source_url, dump("旧版")))
+    with sqlite3.connect(path) as db:
+        db.execute("ALTER TABLE dump_meta RENAME TO old_dump_meta")
+        db.execute("CREATE TABLE dump_meta (source_url TEXT NOT NULL)")
+        db.execute("INSERT INTO dump_meta SELECT source_url FROM old_dump_meta")
+        db.execute("DROP TABLE old_dump_meta")
+    upgraded = Session(source_url, dump("同日新内容"))
+    prepare_database(path, False, session=upgraded)
+    assert upgraded.calls > 1
+    assert lookup(path, Movie("ABC-123")).title == "同日新内容"
+    with sqlite3.connect(path) as db:
+        assert db.execute("SELECT dump_date, etag, size FROM dump_meta").fetchone()[0] == "2026-10-06"
+
+
+def test_database_resumes_partial_segment(tmp_path, wasabi_server, monkeypatch):
+    path = tmp_path / "r18dev.sqlite"
+    session = Session(url("2026-10-06"), dump())
+    monkeypatch.setattr("javsp.download.CHUNK_SIZE", 16)
+    wasabi_server.fail_once = True
+    assert prepare_database(path, True, session=session) is None
+    assert any(part.stat().st_size for part in tmp_path.glob("*.part*"))
+    before = len(wasabi_server.requests)
+    prepare_database(path, False, session=session)
+    starts = {i * len(dump()) // 4 for i in range(4)}
+    assert any(
+        request and request != "bytes=0-0" and int(request[6:].split("-")[0]) not in starts
+        for _, request, _ in wasabi_server.requests[before:]
+    )
+    assert not list(tmp_path.glob("*.part*"))
+
+
+def test_database_single_connection_resume(tmp_path, wasabi_server, monkeypatch):
+    path = tmp_path / "r18dev.sqlite"
+    session = Session(url("2026-10-06"), dump())
+    monkeypatch.setattr("javsp.download.CHUNK_SIZE", 16)
+    wasabi_server.probe_ignored = True
+    wasabi_server.fail_once = True
+    assert prepare_database(path, True, session=session) is None
+    before = len(wasabi_server.requests)
+    prepare_database(path, False, session=session)
+    assert any(request and request != "bytes=0-0" for _, request, _ in wasabi_server.requests[before:])
+    assert not list(tmp_path.glob("*.part*"))
+
+
+@pytest.mark.parametrize("mode", ["ignore_range", "bad_range"])
+def test_database_range_fallback(tmp_path, wasabi_server, mode):
+    session = Session(url("2026-10-06"), dump())
+    setattr(wasabi_server, mode, True)
+    path = tmp_path / "r18dev.sqlite"
+    assert prepare_database(path, False, session=session) == path
+    assert any(request is None for _, request, _ in wasabi_server.requests)
+
+
+def test_object_changes_during_download_preserves_old(tmp_path, wasabi_server):
+    path = tmp_path / "r18dev.sqlite"
+    prepare_database(path, False, session=Session(url("2026-10-06"), dump("旧版")))
+    session = Session(url("2026-10-13"), dump("新版"))
+    wasabi_server.change_after_probe = True
+    assert prepare_database(path, False, session=session) == path
+    assert lookup(path, Movie("ABC-123")).title == "旧版"
+    assert not list(tmp_path.glob("*.part*"))
+
+
+def test_listing_failure_preserves_old(tmp_path, wasabi_server):
+    path = tmp_path / "r18dev.sqlite"
+    prepare_database(path, False, session=Session(url("2026-10-06"), dump()))
+    session = Session(url("2026-10-13"), dump("新版"))
+    wasabi_server.list_error = True
+    assert prepare_database(path, False, session=session) == path
+    assert lookup(path, Movie("ABC-123")).title == "本地标题"
 
 
 def test_existing_database_gets_indexed_entity_lookups(tmp_path):
