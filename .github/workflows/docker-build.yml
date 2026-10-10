@@ -32,12 +32,12 @@ jobs:
       - name: Extract version from tag
         id: version
         run: |
-          # Tag 推送支持 v2.0.0 和历史四段版本；手动触发仅生成 dev 镜像
-          if [ "${{ github.ref_type }}" = "tag" ]; then
-            VERSION="${{ github.ref_name }}"
+          # 新的 vX.X.X 标签支持任意主版本，兼容历史四段版本；手动触发仅生成 dev 镜像
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            VERSION="$GITHUB_REF_NAME"
             VERSION="${VERSION#v}"
-            if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
-              echo "Invalid stable version tag: ${{ github.ref_name }}" >&2
+            if [[ ! "$VERSION" =~ ^[0-9]+[.][0-9]+[.][0-9]+([.][0-9]+)?$ ]]; then
+              echo "Invalid stable version tag: $GITHUB_REF_NAME" >&2
               exit 1
             fi
           else
@@ -67,7 +67,7 @@ jobs:
           images: ${{ env.GHCR_REGISTRY }}/${{ env.GHCR_IMAGE }}
           flavor: latest=false
           tags: |
-            type=match,pattern=^v(\d+\.\d+\.\d+(?:\.\d+)?)$,group=1,enable=${{ github.event_name == 'push' }}
+            type=match,pattern=^v([0-9]+[.][0-9]+[.][0-9]+([.][0-9]+)?)$,group=1,enable=${{ github.event_name == 'push' }}
             type=raw,value=latest,enable=${{ github.event_name == 'push' }}
             type=raw,value=dev,enable=${{ github.event_name == 'workflow_dispatch' }}
           labels: |
@@ -126,7 +126,7 @@ jobs:
           images: ${{ env.DH_REGISTRY }}/${{ env.DH_IMAGE }}
           flavor: latest=false
           tags: |
-            type=match,pattern=^v(\d+\.\d+\.\d+(?:\.\d+)?)$,group=1,enable=${{ github.event_name == 'push' }}
+            type=match,pattern=^v([0-9]+[.][0-9]+[.][0-9]+([.][0-9]+)?)$,group=1,enable=${{ github.event_name == 'push' }}
             type=raw,value=latest,enable=${{ github.event_name == 'push' }}
             type=raw,value=dev,enable=${{ github.event_name == 'workflow_dispatch' }}
 
