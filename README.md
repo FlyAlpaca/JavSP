@@ -116,6 +116,8 @@ docker run --rm \
 
 翻译始终启用，仅处理含日文假名的标题和简介；无法可靠识别语言的纯汉字文本保持原样。翻译请求只发送给容器内的 `llama.cpp` 服务，首次模型下载需要访问 Hugging Face。可改用约 1.1 GB 的 `hy_mt2_1_8b_q4_k_m` 模型，以减少模型缓存空间。设置 `auto_download: false` 时，需要提前把配置所选的官方 GGUF 放入 `model_dir`；启动会校验文件大小和 SHA-256。
 
+若首次下载报 `Connection to huggingface.co timed out`，先确认容器能访问 Hugging Face。使用代理时，在 `config.yml` 设置 `network.proxy_server` 为**容器可访问**的代理地址；模型下载也会使用它。容器里的 `127.0.0.1` 指向容器自身，不能直接指向宿主机代理。也可以在宿主机下载与 `translator.model` 对应的官方 GGUF，放入挂载到 `/app/models` 的目录，设置 `translator.auto_download: false` 后重启；文件名、大小和 SHA-256 必须与程序内的模型规格一致。
+
 模型线程数、上下文和生成参数见 [默认配置](./config_default.yml)。默认 CPU 设置面向 i3-1315U／24 GB 内存，处理速度因机器而异。Slimeface 海报裁剪需要在构建镜像时安装 `crop` 可选依赖，并在配置里选择该引擎。
 
 ### R18.dev 本地数据库

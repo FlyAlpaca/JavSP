@@ -65,6 +65,23 @@ def test_download_replaces_invalid_cache_atomically(tmp_path, small_model, capsy
     assert "100%" in output
 
 
+def test_model_download_uses_configured_proxy(tmp_path, small_model, monkeypatch):
+    _, content = small_model
+    response = MagicMock()
+    response.iter_content.return_value = [content]
+    session = MagicMock()
+    session.get.return_value.__enter__.return_value = response
+    network = SimpleNamespace(proxy_server="http://proxy:7890")
+    monkeypatch.setattr("javsp.translate.Cfg", lambda: SimpleNamespace(network=network))
+
+    ensure_model(Translator(model_dir=tmp_path), session)
+
+    assert session.get.call_args.kwargs["proxies"] == {
+        "http": "http://proxy:7890",
+        "https": "http://proxy:7890",
+    }
+
+
 def test_failed_download_preserves_existing_file(tmp_path, small_model):
     spec, _ = small_model
     path = tmp_path / spec.filename

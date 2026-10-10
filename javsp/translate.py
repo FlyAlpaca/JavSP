@@ -13,7 +13,7 @@ from pathlib import Path
 import requests
 from tqdm import tqdm
 
-from javsp.config import Translator
+from javsp.config import Cfg, Translator
 from javsp.datatype import MovieInfo
 
 logger = logging.getLogger(__name__)
@@ -83,11 +83,13 @@ def ensure_model(cfg: Translator, session=None) -> Path:
 
     logger.info("下载本地翻译模型: %s", spec.url)
     client = session or requests.Session()
+    proxy = Cfg().network.proxy_server
+    request_options = {"proxies": {"http": str(proxy), "https": str(proxy)}} if proxy is not None else {}
     temporary = None
     try:
         with tempfile.NamedTemporaryFile(prefix=f".{spec.filename}.", suffix=".part", dir=model_dir, delete=False) as file:
             temporary = Path(file.name)
-            with client.get(spec.url, stream=True, timeout=(30, 120)) as response:
+            with client.get(spec.url, stream=True, timeout=(30, 120), **request_options) as response:
                 response.raise_for_status()
                 with tqdm(
                     total=spec.size, desc="下载翻译模型", unit="B", unit_scale=True, unit_divisor=1024
@@ -102,7 +104,10 @@ def ensure_model(cfg: Translator, session=None) -> Path:
         logger.info("本地翻译模型已准备: %s", path)
         return path
     except (OSError, requests.RequestException) as error:
-        raise TranslateError(f"模型下载失败: {error}") from error
+        raise TranslateError(
+            f"模型下载失败: {error}；请检查容器到 Hugging Face 的连接或 network.proxy_server，"
+            "也可手动放入官方 GGUF 并设置 translator.auto_download: false"
+        ) from error
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
