@@ -4,10 +4,10 @@ import logging
 import os
 import re
 
-from javsp.avid import guess_av_type
 from javsp.chromium import get_browsers_cookies
 from javsp.config import Cfg, CrawlerID
 from javsp.datatype import GenreMap, MovieInfo
+from javsp.scan.avid import guess_av_type
 from javsp.web.base import Request, is_cloudflare_challenge, resp2html, xpath_first
 from javsp.web.exceptions import (
     CrawlerError,
