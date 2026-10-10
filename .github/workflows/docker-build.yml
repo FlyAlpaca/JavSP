@@ -32,10 +32,14 @@ jobs:
       - name: Extract version from tag
         id: version
         run: |
-          # Tag 推送：v1.10.0.1 → 1.10.0.1；手动触发：用 git describe 或回退到 0.0.0.0
+          # Tag 推送支持 v2.0.0 和历史四段版本；手动触发仅生成 dev 镜像
           if [ "${{ github.ref_type }}" = "tag" ]; then
             VERSION="${{ github.ref_name }}"
             VERSION="${VERSION#v}"
+            if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+              echo "Invalid stable version tag: ${{ github.ref_name }}" >&2
+              exit 1
+            fi
           else
             VERSION="$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0.0")"
             VERSION="${VERSION#v}"
@@ -61,8 +65,10 @@ jobs:
         uses: docker/metadata-action@v6
         with:
           images: ${{ env.GHCR_REGISTRY }}/${{ env.GHCR_IMAGE }}
+          flavor: latest=false
           tags: |
-            type=match,pattern=v(\d+\.\d+\.\d+\.\d+),group=1
+            type=match,pattern=^v(\d+\.\d+\.\d+(?:\.\d+)?)$,group=1,enable=${{ github.event_name == 'push' }}
+            type=raw,value=latest,enable=${{ github.event_name == 'push' }}
             type=raw,value=dev,enable=${{ github.event_name == 'workflow_dispatch' }}
           labels: |
             org.opencontainers.image.title=JavSP
@@ -118,8 +124,10 @@ jobs:
         uses: docker/metadata-action@v6
         with:
           images: ${{ env.DH_REGISTRY }}/${{ env.DH_IMAGE }}
+          flavor: latest=false
           tags: |
-            type=match,pattern=v(\d+\.\d+\.\d+\.\d+),group=1
+            type=match,pattern=^v(\d+\.\d+\.\d+(?:\.\d+)?)$,group=1,enable=${{ github.event_name == 'push' }}
+            type=raw,value=latest,enable=${{ github.event_name == 'push' }}
             type=raw,value=dev,enable=${{ github.event_name == 'workflow_dispatch' }}
 
       - name: Build and push to Docker Hub
