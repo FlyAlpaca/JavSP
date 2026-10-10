@@ -220,8 +220,9 @@ def entry():
             loc = " → ".join(str(part) for part in err["loc"])
             msg = err["msg"]
             print(f"配置错误 [{loc}]: {msg}")
-        input("按回车键退出...")
-        exit(1)
+        if sys.stdin and sys.stdin.isatty():
+            input("按回车键退出...")
+        sys.exit(1)
 
     load_actress_aliases()
 
@@ -272,5 +273,6 @@ if __name__ == "__main__":
         import traceback
 
         traceback.print_exc()
-        input(f"程序发生错误: {e}\n按回车键退出...")
+        if sys.stdin and sys.stdin.isatty():
+            input(f"程序发生错误: {e}\n按回车键退出...")
         sys.exit(1)
