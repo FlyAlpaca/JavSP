@@ -38,12 +38,9 @@ for handler in root_logger.handlers:
 logger = logging.getLogger("main")
 
 from javsp.config import Cfg
-from javsp.crawl.dispatcher import import_crawlers
-from javsp.crawl.r18dev import prepare_database
 from javsp.datatype import setup_filemove_log
-from javsp.func import get_scan_dir
-from javsp.metadata.summarizer import load_actress_aliases
-from javsp.translate import LocalTranslator, TranslateError
+from javsp.startup import StartupError, startup_context
+from javsp.translate import TranslateError
 from javsp.workflow.models import Stage
 from javsp.workflow.pipeline import JobRunner, Pipeline
 
@@ -139,18 +136,10 @@ def print_summary(stats):
     print()
 
 
-def _run_with_translator(cfg, translator):
-    """模型已就绪后才开始扫描和处理媒体文件。"""
-    load_actress_aliases()
-
+def _run_with_translator(cfg, root, translator):
+    """全部启动资源就绪后扫描和处理媒体文件。"""
     if cfg.other.debug:
         logging.getLogger().setLevel(logging.DEBUG)
-
-    if getattr(getattr(cfg, "r18dev", None), "enabled", False):
-        cfg._r18dev_db_path = prepare_database(cfg._r18dev_db_path, cfg.crawler.online_enabled)
-    root = get_scan_dir(cfg.scanner.input_directory)
-    error_exit(root, "扫描目录不存在或不是目录，请检查容器挂载和 scanner.input_directory")
-    import_crawlers(cfg)
     os.chdir(root)
     setup_filemove_log(cfg, log_dir=root)
 
@@ -180,8 +169,11 @@ def entry():
     previous_handler = signal.signal(signal.SIGTERM, stop_on_term)
     try:
         try:
-            with LocalTranslator(cfg.translator) as translator:
-                result = _run_with_translator(cfg, translator)
+            with startup_context(cfg) as (root, translator):
+                result = _run_with_translator(cfg, root, translator)
+        except StartupError as error:
+            logger.error("启动检查失败: %s", error)
+            sys.exit(1)
         except TranslateError as error:
             logger.error("本地翻译启动失败: %s", error)
             sys.exit(1)
