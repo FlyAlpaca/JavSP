@@ -1,9 +1,12 @@
 import logging
+import os
+import sys
 from argparse import ArgumentParser, RawTextHelpFormatter
 from enum import StrEnum
 from pathlib import Path
 from typing import Literal, TypeAlias
 
+import yaml
 from confz import BaseConfig, CLArgSource, EnvSource, FileSource
 from pydantic import ByteSize, Field, NonNegativeInt, PositiveInt, model_validator
 from pydantic_core import Url
@@ -13,6 +16,7 @@ from javsp.lib import resource_path
 
 _logger = logging.getLogger(__name__)
 
+DEFAULT_CONFIG_FILE = "config_default.yml"
 USER_CONFIG_FILE = "config/config.yml"
 
 
@@ -290,6 +294,31 @@ class Other(BaseConfig):
     auto_exit: bool = True
 
 
+def _find_user_config() -> str | None:
+    """查找用户配置文件 config.yml
+
+    查找顺序（命中即返回）：
+    1. 当前工作目录（CWD）：便于 pip 安装后用户在任意运行目录放置 config.yml
+    2. 可执行文件所在目录（仅 frozen 模式，即 cx_Freeze 打包后）
+    3. 源码根目录（开发模式 -e 安装时从仓库根目录读取）
+
+    每个目录优先查找 config/config.yml，再查找 config.yml。
+    这样可以让用户配置文件"放在外面"，而不是被锁在 site-packages 内部。
+    """
+    candidates = [os.getcwd()]
+    if getattr(sys, "frozen", False):
+        candidates.append(os.path.dirname(sys.executable))
+    # 开发模式回退：源码根目录（javsp 包的上一级）
+    candidates.append(str(Path(__file__).resolve().parent.parent))
+    for dir_path in candidates:
+        # 保留 Docker/既有部署的 config 子目录，同时兼容根目录配置。
+        for filename in (USER_CONFIG_FILE, "config.yml"):
+            candidate = os.path.join(dir_path, filename)
+            if os.path.isfile(candidate):
+                return candidate
+    return None
+
+
 def get_config_source():
     """构建配置源列表，使用缓存避免重复计算
 
@@ -312,13 +341,24 @@ def get_config_source():
     args, _ = parser.parse_known_args()
     sources = []
 
-    # 1. 加载配置文件：-c 指定则用指定文件，否则使用 config.yml
+    # 1. 始终加载默认模板配置（已随 wheel 打包到 site-packages 根目录）
+    default_config = resource_path(DEFAULT_CONFIG_FILE)
+    sources.append(FileSource(file=default_config))
+
+    # 2. 加载用户配置（如果存在且非空），覆盖默认值
     if args.config is not None:
         sources.append(FileSource(file=args.config))
     else:
-        sources.append(FileSource(file=resource_path(USER_CONFIG_FILE)))
+        user_config = _find_user_config()
+        if user_config is not None:
+            try:
+                with open(user_config, encoding="utf-8") as f:
+                    if yaml.safe_load(f) is not None:
+                        sources.append(FileSource(file=user_config))
+            except Exception:
+                pass
 
-    # 2. 环境变量和命令行参数优先级最高
+    # 3. 环境变量和命令行参数优先级最高
     sources.append(EnvSource(prefix="JAVSP_", allow_all=True, nested_separator="__"))
     sources.append(CLArgSource(prefix="o"))
     _config_sources = sources
