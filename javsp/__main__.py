@@ -47,6 +47,7 @@ from javsp.func import check_update, get_scan_dir
 from javsp.lib import prompt
 from javsp.models import Stage
 from javsp.pipeline import JobRunner, Pipeline
+from javsp.r18dev import prepare_database
 from javsp.summarizer import load_actress_aliases
 
 
@@ -234,10 +235,12 @@ def entry():
     version_info = f"JavSP {__version__}"
     logger.debug(version_info.center(60, "="))
     check_update(cfg.other.check_update, cfg.other.auto_update)
+    if getattr(getattr(cfg, "r18dev", None), "enabled", False):
+        cfg._r18dev_db_path = prepare_database(cfg._r18dev_db_path, cfg.crawler.online_enabled)
     root = get_scan_dir(cfg.scanner.input_directory)
     error_exit(root, "未选择要扫描的文件夹")
     # 导入抓取器，必须在chdir之前
-    import_crawlers()
+    import_crawlers(cfg)
     os.chdir(root)
 
     # 配置文件移动日志（显式指定日志目录为扫描根目录，避免依赖全局CWD）

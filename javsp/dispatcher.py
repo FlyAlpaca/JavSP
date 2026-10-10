@@ -20,6 +20,7 @@ from javsp.concurrency import drain_threads
 from javsp.config import Cfg
 from javsp.datatype import Movie, MovieInfo
 from javsp.models import CrawlResult
+from javsp.r18dev import SOURCE, lookup, needs_online
 from javsp.web.exceptions import (
     CredentialError,
     MovieDuplicateError,
@@ -34,6 +35,8 @@ logger = logging.getLogger(__name__)
 def import_crawlers(cfg=None):
     """按配置文件的抓取器顺序导入爬虫模块"""
     cfg = cfg if cfg is not None else Cfg()
+    if not cfg.crawler.online_enabled:
+        return
     unknown_mods = []
     for _, mods in cfg.crawler.selection.items():
         for name in mods:
@@ -169,11 +172,35 @@ class CrawlerExecutor:
 
     def __init__(self, cfg):
         self.cfg = cfg
+        self.local_enabled = getattr(getattr(cfg, "r18dev", None), "enabled", False)
+        self.online_enabled = getattr(cfg.crawler, "online_enabled", True)
+        self.local_path = getattr(cfg, "_r18dev_db_path", None)
+        self._last_online = False
 
     def crawl(self, movie: Movie, progress=None) -> CrawlResult:
-        return _crawl(movie, self.cfg, progress)
+        self._last_online = False
+        local = None
+        failures = []
+        if self.local_enabled and self.local_path is not None:
+            try:
+                local = lookup(self.local_path, movie)
+            except Exception as error:
+                logger.warning("R18.dev 本地查询失败: %s", error)
+                failures.append((SOURCE, str(error)))
+        if self.online_enabled and (not self.local_enabled or needs_online(local)):
+            self._last_online = True
+            result = _crawl(movie, self.cfg, progress)
+            if local:
+                return CrawlResult(
+                    {SOURCE: local, **result.data}, failures + result.failures, movie.dvdid, movie.cid, movie.data_src
+                )
+            result.failures[:0] = failures
+            return result
+        return CrawlResult({SOURCE: local} if local else {}, failures, movie.dvdid, movie.cid, movie.data_src)
 
     def throttle(self):
+        if not self._last_online:
+            return
         interval = self.cfg.crawler.sleep_after_scraping.total_seconds()
         if interval > 0:
             time.sleep(interval)

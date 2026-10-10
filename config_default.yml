@@ -55,6 +55,8 @@ network:
 
 ################################
 crawler:
+  # 是否启用在线站点抓取；启用本地库时只在本地未命中或可映射字段为空时抓取
+  online_enabled: true
   # 要使用的爬虫列表（汇总数据时从前到后进行）
   # avsox avwiki fanza fc2 fc2fan javbus javdb javlib javmenu jav321 mgstage prestige
   selection:
@@ -78,6 +80,11 @@ crawler:
   use_javdb_cover: fallback
   # 是否统一女优艺名。启用时会尝试将女优的多个艺名统一成一个
   normalize_actress_name: true
+
+################################
+r18dev:
+  # 启用 R18.dev 本地数据库；固定保存于启动目录的 config/r18dev.sqlite
+  enabled: false
 
 ################################
 # 配置整理时的命名规则

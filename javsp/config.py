@@ -8,7 +8,7 @@ from typing import Literal, TypeAlias
 
 import yaml
 from confz import BaseConfig, CLArgSource, EnvSource, FileSource
-from pydantic import ByteSize, Field, NonNegativeInt, PositiveInt, model_validator
+from pydantic import ByteSize, Field, NonNegativeInt, PositiveInt, PrivateAttr, model_validator
 from pydantic_core import Url
 from pydantic_extra_types.pendulum_dt import Duration
 
@@ -142,6 +142,7 @@ class UseJavDBCover(StrEnum):
 
 class Crawler(BaseConfig):
     selection: CrawlerSelect
+    online_enabled: bool = True
     required_keys: list[MovieInfoField]
     hardworking: bool
     respect_site_avid: bool
@@ -149,6 +150,10 @@ class Crawler(BaseConfig):
     sleep_after_scraping: Duration
     use_javdb_cover: UseJavDBCover
     normalize_actress_name: bool
+
+
+class R18Dev(BaseConfig):
+    enabled: bool = False
 
 
 class MovieDefault(BaseConfig):
@@ -372,7 +377,15 @@ class Cfg(BaseConfig):
     scanner: Scanner
     network: Network
     crawler: Crawler
+    r18dev: R18Dev
     summarizer: Summarizer
     translator: Translator
     other: Other
     CONFIG_SOURCES = get_config_source()
+    _r18dev_db_path: Path | None = PrivateAttr(default_factory=lambda: (Path.cwd() / "config/r18dev.sqlite").resolve())
+
+    @model_validator(mode="after")
+    def require_data_source(self):
+        if not self.r18dev.enabled and not self.crawler.online_enabled:
+            raise ValueError("本地数据库与在线抓取不能同时关闭")
+        return self
