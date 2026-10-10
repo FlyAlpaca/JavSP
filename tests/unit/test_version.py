@@ -29,17 +29,25 @@ def test_release_workflow_matches_both_version_formats():
     assert workflow["on"]["push"]["tags"] == ["v*"]
     steps = workflow["jobs"]["build-and-push"]["steps"]
     metadata_steps = [step for step in steps if step.get("uses", "").startswith("docker/metadata-action@")]
-    assert len(metadata_steps) == 2
-    for step in metadata_steps:
-        tags = step["with"]["tags"]
-        match = next(line for line in tags.splitlines() if line.startswith("type=match,"))
-        pattern = match.split("pattern=", 1)[1].split(",group=", 1)[0]
-        for tag, expected in (("v2.0.0", "2.0.0"), ("v3.4.5", "3.4.5"), ("v1.10.2.1", "1.10.2.1")):
-            assert re.fullmatch(pattern, tag).group(1) == expected
-        assert not re.fullmatch(pattern, "v2.0.0-beta")
-        assert "type=raw,value=latest,enable=${{ github.event_name == 'push' }}" in tags
-        assert "type=raw,value=dev,enable=${{ github.event_name == 'workflow_dispatch' }}" in tags
-        assert step["with"]["flavor"] == "latest=false"
+    assert len(metadata_steps) == 1
+    metadata = metadata_steps[0]
+    assert metadata["with"]["images"].splitlines() == [
+        "${{ env.GHCR_REGISTRY }}/${{ env.GHCR_IMAGE }}",
+        "${{ env.DH_REGISTRY }}/${{ env.DH_IMAGE }}",
+    ]
+    tags = metadata["with"]["tags"]
+    match = next(line for line in tags.splitlines() if line.startswith("type=match,"))
+    pattern = match.split("pattern=", 1)[1].split(",group=", 1)[0]
+    for tag, expected in (("v2.0.0", "2.0.0"), ("v3.4.5", "3.4.5"), ("v1.10.2.1", "1.10.2.1")):
+        assert re.fullmatch(pattern, tag).group(1) == expected
+    assert not re.fullmatch(pattern, "v2.0.0-beta")
+    assert "type=raw,value=latest,enable=${{ github.event_name == 'push' }}" in tags
+    assert "type=raw,value=dev,enable=${{ github.event_name == 'workflow_dispatch' }}" in tags
+    assert metadata["with"]["flavor"] == "latest=false"
+
+    build_steps = [step for step in steps if step.get("uses", "").startswith("docker/build-push-action@")]
+    assert len(build_steps) == 1
+    assert build_steps[0]["with"]["tags"] == "${{ steps.meta.outputs.tags }}"
 
 
 @pytest.mark.parametrize(
