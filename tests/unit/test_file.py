@@ -2,7 +2,7 @@ import os
 
 import pytest
 
-from javsp.file import scan_movies
+from javsp.scan.file import scan_movies
 
 DEFAULT_SIZE = 512 * 2**20  # 512 MiB
 

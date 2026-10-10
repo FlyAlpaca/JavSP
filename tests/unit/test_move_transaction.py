@@ -6,9 +6,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from javsp import datatype, output
+from javsp import datatype
 from javsp.config import Cfg
 from javsp.datatype import Movie
+from javsp.publish import output
 
 
 @pytest.fixture

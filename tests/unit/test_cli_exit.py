@@ -7,7 +7,7 @@ import pytest
 from javsp import __main__ as cli
 from javsp.config import Cfg
 from javsp.datatype import MovieInfo
-from javsp.models import JobError, JobResult, OutputResult, ScanResult, Stage
+from javsp.workflow.models import JobError, JobResult, OutputResult, ScanResult, Stage
 
 
 @pytest.mark.parametrize("failed, code", [(0, 0), (1, 1), (3, 1)])
@@ -42,7 +42,7 @@ def test_batch_continues_and_counts_failure(monkeypatch):
         return JobResult(movie, output=OutputResult(movie))
 
     monkeypatch.setattr(cli.JobRunner, "run", run)
-    monkeypatch.setattr("javsp.dispatcher.CrawlerExecutor.throttle", lambda self: None)
+    monkeypatch.setattr("javsp.crawl.dispatcher.CrawlerExecutor.throttle", lambda self: None)
     successful, stats = cli.RunNormalMode(movies, cfg)
     assert visited == movies
     assert successful == [movies[1]]

@@ -7,12 +7,12 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image
 
-from javsp import output
 from javsp.config import Cfg
 from javsp.datatype import Movie
-from javsp.models import Stage
-from javsp.pipeline import JobRunner, Pipeline
+from javsp.publish import output
 from javsp.web.exceptions import MovieNotFoundError
+from javsp.workflow.models import Stage
+from javsp.workflow.pipeline import JobRunner, Pipeline
 
 
 @pytest.fixture
@@ -38,7 +38,7 @@ def scene(tmp_path, monkeypatch):
         info.uncensored = False
     monkeypatch.setitem(sys.modules, "javsp.web.testlocal", SimpleNamespace(parse_data=parse))
     throttle = []
-    monkeypatch.setattr("javsp.dispatcher.CrawlerExecutor.throttle", lambda self: throttle.append(True))
+    monkeypatch.setattr("javsp.crawl.dispatcher.CrawlerExecutor.throttle", lambda self: throttle.append(True))
     return cfg, source, throttle
 
 
@@ -108,7 +108,7 @@ def test_cancel_between_jobs_keeps_successful_commit(scene, monkeypatch):
     cfg, source, _ = scene
     def cancel(self):
         raise KeyboardInterrupt()
-    monkeypatch.setattr("javsp.dispatcher.CrawlerExecutor.throttle", cancel)
+    monkeypatch.setattr("javsp.crawl.dispatcher.CrawlerExecutor.throttle", cancel)
     result = Pipeline(cfg).run(source)
     assert result.aborted and result.exit_code == 1
     assert result.jobs[0].success and len(result.pending) == 1

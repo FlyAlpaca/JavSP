@@ -4,8 +4,10 @@ import os
 
 from lxml import etree
 
-from javsp import config, file, nfo
+from javsp import config
 from javsp.datatype import GenreMap, MovieInfo
+from javsp.publish import nfo
+from javsp.scan import file
 
 
 def test_config_subdirectory_and_root_fallback(tmp_path, monkeypatch):

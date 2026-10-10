@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image
 
-from javsp import processor
+from javsp.publish import processor
 
 
 @pytest.fixture

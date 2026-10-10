@@ -8,10 +8,10 @@ import pytest
 from PIL import Image
 from pydantic_extra_types.pendulum_dt import Duration
 
-from javsp import output, processor
 from javsp.config import Cfg
 from javsp.datatype import Movie, MovieInfo
-from javsp.output import OutputExecutor, OutputPlanner, RecoveryError
+from javsp.publish import output, processor
+from javsp.publish.output import OutputExecutor, OutputPlanner, RecoveryError
 
 
 def config_for(tmp_path, move=True, **summary):

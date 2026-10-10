@@ -6,11 +6,11 @@ import io
 import pytest
 
 from javsp.config import Cfg
+from javsp.crawl.dispatcher import CrawlerExecutor
+from javsp.crawl.r18dev import TABLES, lookup, prepare_database
 from javsp.datatype import Movie, MovieInfo
-from javsp.dispatcher import CrawlerExecutor
-from javsp.models import CrawlResult
-from javsp.r18dev import TABLES, lookup, prepare_database
-from javsp.summarizer import MetadataMerger
+from javsp.metadata.summarizer import MetadataMerger
+from javsp.workflow.models import CrawlResult
 
 SCHEMA = {
     "derived_video": [
@@ -161,7 +161,7 @@ def test_local_priority_online_gap_and_source_tracking(tmp_path, monkeypatch):
             movie.data_src,
         )
 
-    monkeypatch.setattr("javsp.dispatcher._crawl", online)
+    monkeypatch.setattr("javsp.crawl.dispatcher._crawl", online)
     movie = Movie("ABC-123")
     result = CrawlerExecutor(cfg).crawl(movie)
     merged = MetadataMerger(cfg).merge(movie, result)
@@ -189,7 +189,7 @@ def test_complete_local_hit_skips_online_and_miss_uses_online(tmp_path, monkeypa
         calls.append(movie.dvdid)
         return CrawlResult({"javbus": MovieInfo(movie, title="在线标题")}, [], movie.dvdid, movie.cid, movie.data_src)
 
-    monkeypatch.setattr("javsp.dispatcher._crawl", online)
+    monkeypatch.setattr("javsp.crawl.dispatcher._crawl", online)
     assert list(CrawlerExecutor(cfg).crawl(Movie("ABC-123")).data) == ["r18dev"]
     assert list(CrawlerExecutor(cfg).crawl(Movie("ABC-999")).data) == ["javbus"]
     assert calls == ["ABC-999"]
