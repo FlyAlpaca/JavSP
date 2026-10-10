@@ -5,6 +5,7 @@ import logging
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 from dataclasses import dataclass
@@ -91,13 +92,34 @@ def ensure_model(cfg: Translator, session=None) -> Path:
             temporary = Path(file.name)
             with client.get(spec.url, stream=True, timeout=(30, 120), **request_options) as response:
                 response.raise_for_status()
+                terminal = sys.stderr.isatty()
+                downloaded = 0
+                last_reported = 0
+                last_report_at = time.monotonic()
+                if not terminal:
+                    logger.info("下载翻译模型: 0%% (%s 字节)", spec.size)
                 with tqdm(
-                    total=spec.size, desc="下载翻译模型", unit="B", unit_scale=True, unit_divisor=1024
+                    total=spec.size,
+                    desc="下载翻译模型",
+                    unit="B",
+                    unit_scale=True,
+                    unit_divisor=1024,
+                    disable=not terminal,
                 ) as progress:
                     for chunk in response.iter_content(chunk_size=4 * 1024 * 1024):
                         if chunk:
                             file.write(chunk)
+                            downloaded += len(chunk)
                             progress.update(len(chunk))
+                            if not terminal:
+                                now = time.monotonic()
+                                percent = min(downloaded * 100 // spec.size, 100)
+                                if percent >= last_reported + 5 or now - last_report_at >= 10:
+                                    logger.info("下载翻译模型: %d%% (%d/%d 字节)", percent, downloaded, spec.size)
+                                    last_reported = percent
+                                    last_report_at = now
+                if not terminal and downloaded * 100 // spec.size > last_reported:
+                    logger.info("下载翻译模型: %d%% (%d/%d 字节)", min(downloaded * 100 // spec.size, 100), downloaded, spec.size)
         if not _valid_model(temporary, spec):
             raise TranslateError(f"模型下载校验失败: {spec.filename}")
         temporary.replace(path)
