@@ -37,7 +37,7 @@ class CrawlResult:
     def require_data(self):
         if not self.data:
             failures = "\n".join(f"  - {name}: {reason}" for name, reason in self.failures)
-            raise ValueError(f"所有抓取器均失败 ({self.dvdid or self.cid}):\n{failures}")
+            raise ValueError(f"未获取到影片数据 ({self.dvdid or self.cid}):\n{failures}")
 
 
 @dataclass(frozen=True)

@@ -446,6 +446,26 @@ def test_complete_local_hit_skips_online_and_miss_uses_online(tmp_path, monkeypa
     assert calls == ["ABC-999"]
 
 
+def test_offline_local_miss_reports_reason(tmp_path, monkeypatch):
+    path = tmp_path / "config/r18dev.sqlite"
+    prepare_database(path, False, session=Session(url("2026-10-06"), dump()))
+    cfg = Cfg().model_copy(deep=True)
+    cfg._r18dev_db_path = path
+    cfg = cfg.model_copy(
+        update={
+            "r18dev": cfg.r18dev.model_copy(update={"enabled": True}),
+            "crawler": cfg.crawler.model_copy(update={"online_enabled": False}),
+        }
+    )
+    monkeypatch.setattr("javsp.crawl.dispatcher._crawl", lambda *args: pytest.fail("不应访问在线抓取器"))
+
+    result = CrawlerExecutor(cfg).crawl(Movie("ABC-999"))
+    with pytest.raises(ValueError, match="未获取到影片数据.*ABC-999") as error:
+        result.require_data()
+    assert "r18dev: 本地数据库未找到唯一匹配的影片记录" in str(error.value)
+    assert "在线抓取已关闭" in str(error.value)
+
+
 def test_fixed_database_path_survives_working_directory_change(tmp_path, monkeypatch):
     cfg = Cfg()
     expected = cfg._r18dev_db_path

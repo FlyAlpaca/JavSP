@@ -196,6 +196,10 @@ class CrawlerExecutor:
                 )
             result.failures[:0] = failures
             return result
+        if self.local_enabled and local is None and not failures:
+            failures.append(
+                (SOURCE, "本地数据库未找到唯一匹配的影片记录（可能未收录、番号不匹配或存在重复记录）；在线抓取已关闭")
+            )
         return CrawlResult({SOURCE: local} if local else {}, failures, movie.dvdid, movie.cid, movie.data_src)
 
     def throttle(self):
