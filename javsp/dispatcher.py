@@ -6,7 +6,6 @@ import threading
 import time
 
 import requests
-from tqdm import tqdm
 
 try:
     import curl_cffi
@@ -65,7 +64,7 @@ def _crawl(movie: Movie, cfg, tqdm_bar=None) -> CrawlResult:
                 movie_id = info.dvdid or info.cid
                 logger.debug(f"{short_name}: 抓取成功: '{movie_id}': '{info.url}'")
                 info._success = True
-                if isinstance(tqdm_bar, tqdm) and hasattr(tqdm_bar, "set_description"):
+                if tqdm_bar is not None and hasattr(tqdm_bar, "set_description"):
                     tqdm_bar.set_description(f"{short_name}: 抓取完成")
                 break
             except MovieNotFoundError as e:
