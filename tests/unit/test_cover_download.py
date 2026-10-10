@@ -215,3 +215,41 @@ def test_cover_extension_matches_content(tmp_path, monkeypatch, cover_config, hi
     with Image.open(expected) as image:
         assert image.format == image_format
     assert sorted(path.name for path in tmp_path.iterdir()) == [expected.name]
+
+
+def test_interrupted_shutdown_drains_inflight_request(tmp_path, monkeypatch, cover_config):
+    started, release, interrupted = threading.Event(), threading.Event(), threading.Event()
+    errors, workers = [], []
+    def download(url, path):
+        workers.append(threading.current_thread())
+        if url == "slow":
+            started.set()
+            assert release.wait(5)
+        else:
+            assert started.wait(5)
+        return save_image(path, "blue")
+    monkeypatch.setattr(processor, "download", download)
+    shutdown = processor.ThreadPoolExecutor.shutdown
+    def cancel_shutdown(executor, wait=True, *, cancel_futures=False):
+        if wait and not interrupted.is_set():
+            interrupted.set()
+            raise KeyboardInterrupt()
+        return shutdown(executor, wait=wait, cancel_futures=cancel_futures)
+    monkeypatch.setattr(processor.ThreadPoolExecutor, "shutdown", cancel_shutdown)
+    def crawl():
+        try:
+            processor.download_cover(["slow", "fast"], str(tmp_path / "fanart.jpg"))
+        except BaseException as error:
+            errors.append(error)
+    caller = threading.Thread(target=crawl)
+    caller.start()
+    try:
+        assert started.wait(5) and interrupted.wait(5)
+        assert caller.is_alive()
+    finally:
+        release.set()
+        caller.join(5)
+    assert not caller.is_alive()
+    assert errors and isinstance(errors[0], KeyboardInterrupt)
+    assert all(not worker.is_alive() for worker in workers)
+    assert not list(tmp_path.glob(".javsp-cover-*"))

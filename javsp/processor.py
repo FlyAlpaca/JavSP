@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 from PIL import Image
 
+from javsp.concurrency import finish_executor
 from javsp.config import Cfg
 from javsp.cropper import get_cropper
 from javsp.datatype import Movie
@@ -213,8 +214,10 @@ def download_cover(covers, fanart_path, big_covers=None, movie_id="", cfg=None):
                         pass
 
         executor = ThreadPoolExecutor(max_workers=min(3, len(urls)), thread_name_prefix="cover")
+        futures = []
         try:
-            futures = [executor.submit(fetch, url) for url in urls]
+            for url in urls:
+                futures.append(executor.submit(fetch, url))
             for future in as_completed(futures):
                 result = future.result()
                 if result is not None:
@@ -227,7 +230,7 @@ def download_cover(covers, fanart_path, big_covers=None, movie_id="", cfg=None):
         finally:
             stopped.set()
             # 回收在途请求和临时文件后再返回，避免批量运行时后台线程累积。
-            executor.shutdown(wait=True, cancel_futures=True)
+            finish_executor(executor, futures)
         return None
 
     result = download_group(big_covers or [], highres=True)
@@ -285,12 +288,17 @@ def download_extra_fanarts(movie: Movie, scrape_interval: float, tqdm_bar=None, 
                 except FileNotFoundError:
                     pass
 
-    with ThreadPoolExecutor(max_workers=3, thread_name_prefix="fanart") as executor:
-        futures = [executor.submit(fetch, idx, url) for idx, url in enumerate(movie.info.preview_pics)]
+    executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="fanart")
+    futures = []
+    try:
+        for idx, url in enumerate(movie.info.preview_pics):
+            futures.append(executor.submit(fetch, idx, url))
         for completed, future in enumerate(as_completed(futures), start=1):
             future.result()
             if tqdm_bar is not None:
                 tqdm_bar.set_description(f"下载剧照 {completed}/{len(futures)}")
+    finally:
+        finish_executor(executor, futures)
 
     return warnings
 

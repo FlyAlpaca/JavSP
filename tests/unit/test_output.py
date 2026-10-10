@@ -365,3 +365,20 @@ def test_downloaded_cover_retains_actual_source(scene, tmp_path):
     info._cover_sources = {info.covers[0]: "fallback"}
     result = OutputExecutor(cfg).execute(OutputPlanner(cfg).plan(movie, info))
     assert result.movie.info.field_sources["cover"] == "fallback"
+
+
+def test_cross_device_source_change_before_delete_is_preserved(scene, tmp_path, monkeypatch):
+    movie, info, cfg = scene
+    rename = output._rename_new
+    target = tmp_path / "out" / "ABC-123.mp4"
+    def race(source, dest):
+        if str(source) == movie.files[0]:
+            raise OSError(errno.EXDEV, "cross device")
+        rename(source, dest)
+        if str(dest) == str(target):
+            Path(movie.files[0]).write_bytes(b"external source update")
+    monkeypatch.setattr(output, "_rename_new", race)
+    with pytest.raises(RecoveryError):
+        OutputExecutor(cfg).execute(OutputPlanner(cfg).plan(movie, info))
+    assert Path(movie.files[0]).read_bytes() == b"external source update"
+    assert target.read_bytes() == b"video content"

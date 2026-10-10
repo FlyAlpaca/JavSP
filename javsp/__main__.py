@@ -96,7 +96,7 @@ def _process_single_movie(movie, total_step, stats, cfg):
 
 def RunNormalMode(all_movies, cfg):
     """CLI 进度适配，保留 (successful_movies, stats) 返回格式。"""
-    total_step = 6 + bool(cfg.translator.engine)
+    total_step = 5 + bool(cfg.translator.engine)
     outer_bar = tqdm(total=len(all_movies), desc="整理影片", ascii=True, leave=False)
     inner_bar = None
 
