@@ -55,6 +55,7 @@ def test_cached_model_needs_no_network(tmp_path, small_model):
 @pytest.fixture
 def model_server(small_model, monkeypatch):
     spec, content = small_model
+    monkeypatch.setattr("javsp.download.PART_SIZE", 256)
     state = SimpleNamespace(
         requests=[], ignore_range=False, probe_ignored=False, bad_range=False, fail_once=False, corrupted=False
     )
@@ -109,7 +110,7 @@ def test_download_replaces_invalid_cache_atomically(tmp_path, small_model, model
     assert ensure_model(Translator(model_dir=tmp_path)) == path
     assert path.read_bytes() == content
     assert list(tmp_path.glob("*.part")) == []
-    assert len([item for item in model_server.requests if item != "bytes=0-0"]) == 4
+    assert len([item for item in model_server.requests if item != "bytes=0-0"]) == (spec.size + 255) // 256
     assert "下载翻译模型: 0%" in caplog.text
     assert "下载翻译模型: 100%" in caplog.text
 
@@ -134,6 +135,7 @@ def test_model_download_uses_configured_proxy(tmp_path, small_model, monkeypatch
 def test_segment_connections_receive_proxy(tmp_path, small_model, model_server, monkeypatch):
     import requests.sessions
 
+    _, content = small_model
     network = SimpleNamespace(proxy_server="http://proxy:7890")
     monkeypatch.setattr("javsp.translate.Cfg", lambda: SimpleNamespace(network=network))
     original_get = requests.sessions.Session.get
@@ -145,7 +147,7 @@ def test_segment_connections_receive_proxy(tmp_path, small_model, model_server, 
 
     monkeypatch.setattr(requests.sessions.Session, "get", get_without_proxy)
     ensure_model(Translator(model_dir=tmp_path))
-    assert len(seen) == 5  # 范围探测和四个分片
+    assert len(seen) == 1 + (len(content) + 255) // 256  # 范围探测和固定大小的小片
     assert all(item == {"http": "http://proxy:7890", "https": "http://proxy:7890"} for item in seen)
 
 
@@ -171,7 +173,7 @@ def test_resume_partial_segment(tmp_path, small_model, model_server, monkeypatch
     assert parts and any(part.stat().st_size for part in parts)
     previous = len(model_server.requests)
     assert ensure_model(Translator(model_dir=tmp_path)).read_bytes() == content
-    segment_start = {i * spec.size // 4 for i in range(4)}
+    segment_start = set(range(0, spec.size, 256))
     assert any(
         request and int(request.removeprefix("bytes=").split("-")[0]) not in segment_start
         for request in model_server.requests[previous:]

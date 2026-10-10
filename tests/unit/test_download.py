@@ -7,7 +7,25 @@ import pytest
 import requests
 from requests.structures import CaseInsensitiveDict
 
+from javsp.download import PART_SIZE, DownloadSpec, clear_parts, parts
 from javsp.web import base
+
+
+def test_download_uses_fixed_size_parts_and_separate_resume_names(tmp_path):
+    spec = DownloadSpec("https://example.test/file", PART_SIZE * 4 + 7, tmp_path / "download")
+    segments = parts(spec)
+    assert len(segments) == 5
+    assert [(start, end) for start, end, _ in segments] == [
+        (index * PART_SIZE, (index + 1) * PART_SIZE - 1) for index in range(4)
+    ] + [(4 * PART_SIZE, 4 * PART_SIZE + 6)]
+    assert len({path for _, _, path in segments}) == 5
+    assert all(".part-v2-" in path.name for _, _, path in segments)
+    segments[0][2].write_bytes(b"partial")
+    legacy = tmp_path / "download.part0"
+    legacy.write_bytes(b"old layout")
+    clear_parts(spec)
+    assert not segments[0][2].exists()
+    assert not legacy.exists()
 
 
 class StreamingResponse:
