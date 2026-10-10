@@ -274,16 +274,20 @@ class _Transaction:
                                 raise FileExistsError(f"回滚源路径已存在: {entry.source}")
                             os.rename(staged, entry.source)
                             os.unlink(entry.target)
+                        entry.source_removed = False
                     else:
                         if entry.source:
                             self.check(entry.source, entry.source_stamp)
                         os.unlink(entry.target)
+                    entry.installed = False
                 if entry.backup:
                     self.check(entry.backup, entry.backup_stamp)
                     if os.path.lexists(entry.target):
                         raise FileExistsError(f"回滚目标路径已存在: {entry.target}")
                     os.replace(entry.backup, entry.target)
-            except (OSError, ValueError) as error:
+                    entry.backup = None
+                    entry.backup_stamp = None
+            except BaseException as error:
                 errors.append(f"{entry.target} -> {entry.source or entry.backup}: {error}")
         return errors
 
@@ -329,8 +333,10 @@ class OutputExecutor:
         if self.on_event:
             try:
                 self.on_event(StageEvent(movie.dvdid or movie.cid or "未知番号", stage))
-            except Exception:
-                logger.warning("进度回调失败", exc_info=True)
+            except BaseException:
+                if stage != Stage.ROLLBACK:
+                    raise
+                logger.warning("恢复进度回调失败，继续恢复文件", exc_info=True)
 
     def _prepare(self, plan, tx):
         movie = _snapshot(plan.movie)

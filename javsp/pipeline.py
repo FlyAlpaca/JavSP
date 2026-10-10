@@ -1,0 +1,127 @@
+"""逐部影片流水线：统一编排、阶段事件、任务错误和批次结果。"""
+
+import logging
+from copy import copy
+
+from javsp.dispatcher import CrawlerExecutor
+from javsp.file import Scanner
+from javsp.models import BatchResult, JobError, JobResult, Stage, StageEvent
+from javsp.output import OutputExecutor, OutputPlanner, RecoveryError
+from javsp.summarizer import MetadataMerger
+from javsp.web.translate import translate_movie_info
+
+logger = logging.getLogger(__name__)
+
+
+class _CrawlerProgress:
+    def __init__(self, emit):
+        self.emit = emit
+
+    def set_description(self, detail):
+        self.emit(Stage.CRAWL, detail)
+
+
+class JobRunner:
+    def __init__(self, cfg, on_event=None, *, crawler=None, merger=None, planner=None, executor=None):
+        self.cfg, self.on_event = cfg, on_event
+        self.crawler = crawler if crawler is not None else CrawlerExecutor(cfg)
+        self.merger = merger if merger is not None else MetadataMerger(cfg)
+        self.planner = planner if planner is not None else OutputPlanner(cfg)
+        self.executor = executor if executor is not None else OutputExecutor(cfg)
+
+    def _event(self, event):
+        if self.on_event:
+            try:
+                self.on_event(event)
+            except Exception:
+                logger.warning("进度回调失败", exc_info=True)
+
+    def run(self, movie) -> JobResult:
+        working = copy(movie)
+        working.files = list(movie.files)
+        stage = Stage.CRAWL
+        executing = False
+
+        def emit(next_stage, detail=""):
+            nonlocal stage
+            stage = next_stage
+            self._event(StageEvent(working.dvdid or working.cid or "未知番号", stage, detail))
+
+        self.executor.on_event = self._event
+        try:
+            emit(Stage.CRAWL)
+            result = self.crawler.crawl(working, _CrawlerProgress(emit))
+            working.dvdid, working.cid, working.data_src = result.dvdid, result.cid, result.data_src
+            result.require_data()
+            if result.failures:
+                logger.info("部分抓取器失败: " + ", ".join(sorted({name for name, _ in result.failures})))
+            emit(Stage.MERGE)
+            working.info = self.merger.merge(working, result)
+            if self.cfg.translator.engine:
+                emit(Stage.TRANSLATE)
+                translate_movie_info(working.info, self.cfg)
+            emit(Stage.PLAN)
+            plan = self.planner.plan(working, working.info)
+            stage = Stage.PREPARE
+            executing = True
+            output = self.executor.execute(plan)
+            # 只有提交成功，才对外发布影片的新路径和最终元数据。
+            movie.__dict__.update(output.movie.__dict__)
+            output.movie = movie
+            emit(Stage.DONE)
+            logger.info(f"整理完成，相关文件已保存到: {movie.save_dir}\n")
+            return JobResult(movie, output)
+        except BaseException as cause:
+            if executing:
+                stage = self.executor.stage
+            recovered = not isinstance(cause, RecoveryError)
+            original = cause.cause if not recovered else cause
+            cancelled = isinstance(original, (KeyboardInterrupt, SystemExit, GeneratorExit))
+            error = JobError(working.dvdid or working.cid or "未知番号", stage, cause, recovered,
+                             cause.paths if not recovered else [])
+            logger.error(f"整理失败: {error}")
+            logger.debug("单片任务异常", exc_info=True)
+            return JobResult(movie, error=error, cancelled=cancelled)
+
+    def run_batch(self, movies, on_result=None) -> BatchResult:
+        movies = list(movies)
+        batch = BatchResult(len(movies))
+        for index, movie in enumerate(movies):
+            job = self.run(movie)
+            batch.jobs.append(job)
+            if on_result:
+                try:
+                    on_result(job)
+                except Exception:
+                    logger.warning("任务结果回调失败", exc_info=True)
+            if job.cancelled or (job.error and not job.error.recovered):
+                batch.aborted = True
+                batch.pending = movies[index + 1:]
+                break
+            if job.success and index + 1 < len(movies):
+                try:
+                    self.crawler.throttle()
+                except BaseException as cause:
+                    batch.aborted = True
+                    batch.pending = movies[index + 1:]
+                    batch.error = JobError(movie.dvdid or movie.cid or "未知番号", Stage.CRAWL, cause)
+                    break
+        return batch
+
+
+class Pipeline:
+    def __init__(self, cfg, on_event=None):
+        self.cfg, self.on_event = cfg, on_event
+
+    def scan(self, root):
+        if self.on_event:
+            self.on_event(StageEvent("", Stage.SCAN, str(root)))
+        return Scanner(self.cfg).scan(root)
+
+    def run(self, root, review=None, on_result=None) -> BatchResult:
+        scan = self.scan(root)
+        if review:
+            review(scan.movies, root)
+        batch = JobRunner(self.cfg, self.on_event).run_batch(scan.movies, on_result)
+        batch.scan = scan
+        return batch

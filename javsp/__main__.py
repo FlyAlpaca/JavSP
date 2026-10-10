@@ -6,7 +6,6 @@ import sys
 import time
 
 from pydantic import ValidationError
-from pydantic_extra_types.pendulum_dt import Duration
 
 if sys.stdout and hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -43,22 +42,12 @@ logger = logging.getLogger("main")
 from javsp.__version__ import __version__
 from javsp.config import Cfg
 from javsp.datatype import Movie, setup_filemove_log
-from javsp.dispatcher import import_crawlers, parallel_crawler
-from javsp.file import scan_movies
+from javsp.dispatcher import import_crawlers
 from javsp.func import check_update, get_scan_dir
 from javsp.lib import prompt
-from javsp.nfo import write_nfo
-from javsp.processor import download_cover, download_extra_fanarts, generate_names, process_poster
-from javsp.summarizer import info_summary, load_actress_aliases
-from javsp.web.translate import translate_movie_info
-
-
-def _group_sources_by_crawler(field_sources: dict[str, str]) -> dict[str, list[str]]:
-    """将字段来源按爬虫分组，返回 {crawler: [field1, field2, ...]}"""
-    by_crawler = {}
-    for field, crawler in field_sources.items():
-        by_crawler.setdefault(crawler, []).append(field)
-    return by_crawler
+from javsp.models import Stage
+from javsp.pipeline import JobRunner, Pipeline
+from javsp.summarizer import load_actress_aliases
 
 
 def reviewMovieID(all_movies, root):
@@ -98,173 +87,44 @@ def reviewMovieID(all_movies, root):
 
 
 def _process_single_movie(movie, total_step, stats, cfg):
-    """处理单部影片的完整流程：抓取、汇总、翻译、命名、下载封面、处理、写入NFO、移动文件"""
-    filenames = [os.path.split(i)[1] for i in movie.files]
-    logger.info("正在整理: " + ", ".join(filenames))
-    inner_bar = tqdm(total=total_step, desc="步骤", ascii=True, leave=False)
-
-    def check_step(result, msg="步骤错误"):
-        """检查一个整理步骤的结果，并负责更新tqdm的进度"""
-        if result:
-            inner_bar.update()
-        else:
-            movie_id = movie.dvdid or movie.cid or "未知番号"
-            raise Exception(f"[{movie_id}] {msg}")
-
-    def step_with_id(step_name, fn):
-        """执行步骤，为异常补充番号上下文"""
-        try:
-            result = fn()
-            inner_bar.update()
-            return result
-        except Exception as e:
-            movie_id = movie.dvdid or movie.cid or "未知番号"
-            if movie_id in str(e):
-                raise
-            raise Exception(f"[{movie_id}] {step_name}: {e}") from e
-
-    try:
-        # 依次执行各个步骤
-        inner_bar.set_description("启动并发任务")
-        all_info = parallel_crawler(movie, inner_bar)
-        inner_bar.update()
-
-        inner_bar.set_description("汇总数据")
-        missing_keys = info_summary(movie, all_info)
-        if missing_keys:
-            movie_id = movie.dvdid or movie.cid or "未知番号"
-            raise Exception(f"[{movie_id}] 汇总数据失败：必需字段缺失 ({missing_keys})")
-        inner_bar.update()
-
-        # 记录字段来源摘要到日志
-        if movie.info and movie.info.field_sources:
-            by_crawler = _group_sources_by_crawler(movie.info.field_sources)
-            summary_parts = [f"{c}({', '.join(fs)})" for c, fs in by_crawler.items()]
-            logger.debug(f"数据来源: {'; '.join(summary_parts)}")
-
-        if cfg.translator.engine:
-            inner_bar.set_description("翻译影片信息")
-            step_with_id("翻译影片信息", lambda: translate_movie_info(movie.info))
-
-        inner_bar.set_description("生成文件名")
-        step_with_id("生成文件名", lambda: generate_names(movie))
-        check_step(movie.save_dir, "无法按命名规则生成目标文件夹")
-        try:
-            if not os.path.exists(movie.save_dir):
-                os.makedirs(movie.save_dir)
-        except OSError as e:
-            movie_id = movie.dvdid or movie.cid or "未知番号"
-            raise Exception(
-                f"[{movie_id}] 创建目标文件夹失败: {movie.save_dir}: {e}"
-            ) from e
-
-        inner_bar.set_description("下载封面图片")
-        movie_id = movie.dvdid or movie.cid or "未知番号"
-        if cfg.summarizer.cover.highres:
-            cover_dl = download_cover(
-                movie.info.covers,
-                movie.fanart_file,
-                movie.info.big_covers,
-                movie_id=movie_id,
-            )
-        else:
-            cover_dl = download_cover(
-                movie.info.covers,
-                movie.fanart_file,
-                movie_id=movie_id,
-            )
-        if not cover_dl or cover_dl[0] is None:
-            reason = cover_dl[1] if cover_dl else "未知原因"
-            raise Exception(f"[{movie_id}] 下载封面图片失败: {reason}")
-        inner_bar.update()
-        cover, pic_path = cover_dl
-        if cover != movie.info.cover:
-            movie.info.cover = cover
-        if pic_path != movie.fanart_file:
-            movie.fanart_file = pic_path
-            actual_ext = os.path.splitext(pic_path)[1]
-            movie.poster_file = os.path.splitext(movie.poster_file)[0] + actual_ext
-
-        inner_bar.set_description("处理封面")
-        step_with_id("处理封面", lambda: process_poster(movie))
-
-        if cfg.summarizer.extra_fanarts.enabled:
-            scrape_interval = (
-                cfg.summarizer.extra_fanarts.scrap_interval.total_seconds()
-            )
-            inner_bar.set_description("下载剧照")
-            download_extra_fanarts(movie, scrape_interval, inner_bar)
-            check_step(True)
-
-        inner_bar.set_description("写入NFO")
-        step_with_id("写入NFO", lambda: write_nfo(movie.info, movie.nfo_file))
-        if cfg.summarizer.move_files:
-            inner_bar.set_description("移动影片文件")
-            moved_files = step_with_id(
-                "移动影片文件",
-                lambda: movie.rename_files(cfg.summarizer.path.hard_link),
-            )
-            if cfg.summarizer.filemove_log and moved_files:
-                movie_id = movie.dvdid or movie.cid or "未知番号"
-                # 构建来源摘要用于 filemove 日志
-                source_info = ""
-                if movie.info and movie.info.field_sources:
-                    by_crawler = _group_sources_by_crawler(movie.info.field_sources)
-                    source_info = " | 来源: " + ", ".join(f"{c}({', '.join(fs)})" for c, fs in by_crawler.items())
-                for src, dst in moved_files:
-                    stats["filemove_list"].append((movie_id, src, dst, source_info))
-            logger.info(f"整理完成，相关文件已保存到: {movie.save_dir}\n")
-        else:
-            logger.info(f"刮削完成，相关文件已保存到: {movie.nfo_file}\n")
-    finally:
-        inner_bar.close()
+    """兼容单片入口，实际编排由 JobRunner 完成。"""
+    job = JobRunner(cfg).run(movie)
+    if job.error:
+        raise job.error.cause
+    return job.output
 
 
 def RunNormalMode(all_movies, cfg):
-    """普通整理模式"""
-    stats = {
-        "total": len(all_movies),
-        "success": 0,
-        "failed": 0,
-        "success_list": [],
-        "failed_list": [],
-        "filemove_list": [],
-    }
+    """CLI 进度适配，保留 (successful_movies, stats) 返回格式。"""
+    total_step = 6 + bool(cfg.translator.engine)
+    outer_bar = tqdm(total=len(all_movies), desc="整理影片", ascii=True, leave=False)
+    inner_bar = None
 
-    # 基础步骤：并发抓取(1) + 汇总(1) + 生成文件名(1) + 校验save_dir(1) + 下载封面(1) + 处理封面(1) + 写入NFO(1) = 7
-    total_step = 7
-    if cfg.translator.engine:
-        total_step += 1
-    if cfg.summarizer.extra_fanarts.enabled:
-        total_step += 1
-    if cfg.summarizer.move_files:
-        total_step += 1
+    def on_event(event):
+        nonlocal inner_bar
+        if event.stage == Stage.CRAWL and not event.detail:
+            if inner_bar:
+                inner_bar.close()
+            inner_bar = tqdm(total=total_step, desc="步骤", ascii=True, leave=False)
+        if inner_bar:
+            inner_bar.set_description(event.detail or str(event.stage))
+            if not event.detail and event.stage not in (Stage.CRAWL, Stage.ROLLBACK):
+                inner_bar.update()
 
-    outer_bar = tqdm(all_movies, desc="整理影片", ascii=True, leave=False)
-    return_movies = []
-    for movie in outer_bar:
-        try:
-            _process_single_movie(movie, total_step, stats, cfg)
-            if movie != all_movies[-1] and cfg.crawler.sleep_after_scraping > Duration(
-                0
-            ):
-                time.sleep(cfg.crawler.sleep_after_scraping.total_seconds())
-            return_movies.append(movie)
-            movie_id = movie.dvdid or movie.cid or "未知番号"
-            # 收集数据来源摘要
-            source_summary = ""
-            if movie.info and movie.info.field_sources:
-                by_crawler = _group_sources_by_crawler(movie.info.field_sources)
-                source_summary = ", ".join(f"{c}[{len(fs)}]" for c, fs in by_crawler.items())
-            stats["success"] += 1
-            stats["success_list"].append((movie_id, source_summary))
-        except Exception as e:
-            movie_id = movie.dvdid or movie.cid or "未知番号"
-            logger.error(f"整理失败: {e}")
-            logger.debug(e, exc_info=True)
-            stats["failed"] += 1
-            stats["failed_list"].append((movie_id, str(e)))
-    return return_movies, stats
+    def on_result(job):
+        nonlocal inner_bar
+        if inner_bar:
+            inner_bar.close()
+            inner_bar = None
+        outer_bar.update()
+
+    try:
+        batch = JobRunner(cfg, on_event).run_batch(all_movies, on_result)
+        return batch.legacy(cfg.summarizer.filemove_log)
+    finally:
+        if inner_bar:
+            inner_bar.close()
+        outer_bar.close()
 
 
 def error_exit(success, err_info):
@@ -308,6 +168,11 @@ def print_summary(stats):
             print(f"    [{movie_id}]{source_info}")
             print(f"      {src_rel}")
             print(f"      -> {dst_rel}")
+    if stats.get("pending_list"):
+        print("-" * width)
+        print("  未处理影片: " + ", ".join(stats["pending_list"]))
+    if stats.get("batch_error"):
+        print("  批次终止原因: " + stats["batch_error"])
     print("=" * width)
     print()
 
@@ -379,7 +244,8 @@ def entry():
     setup_filemove_log(cfg, log_dir=root)
 
     print("扫描影片文件...")
-    recognized = scan_movies(root)
+    scan_result = Pipeline(cfg).scan(root)
+    recognized = scan_result.movies
     movie_count = len(recognized)
     error_exit(movie_count, "未找到影片文件")
     logger.info(f"扫描影片文件：共找到 {movie_count} 部影片")
@@ -395,7 +261,7 @@ def entry():
             time.sleep(5)
     else:
         input("整理完成，按回车键退出...")
-    sys.exit(1 if stats["failed"] else 0)
+    sys.exit(1 if stats["failed"] or stats.get("aborted") else 0)
 
 
 if __name__ == "__main__":

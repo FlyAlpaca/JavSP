@@ -34,16 +34,17 @@ class TranslateError(Exception):
         super().__init__(f"{engine}: {message}")
 
 
-def translate_movie_info(info: MovieInfo):
+def translate_movie_info(info: MovieInfo, cfg=None):
     """根据配置翻译影片信息"""
-    engine = Cfg().translator.engine
+    cfg = cfg if cfg is not None else Cfg()
+    engine = cfg.translator.engine
     if engine is None:
         return True
 
     errors = []
 
     # 翻译标题
-    if info.title and Cfg().translator.fields.title and info.ori_title is None:
+    if info.title and cfg.translator.fields.title and info.ori_title is None:
         try:
             translated = translate(info.title, engine)
             info.ori_title = info.title
@@ -52,7 +53,7 @@ def translate_movie_info(info: MovieInfo):
             errors.append(f"翻译标题时出错: {e}")
 
     # 翻译简介
-    if info.plot and Cfg().translator.fields.plot:
+    if info.plot and cfg.translator.fields.plot:
         try:
             translated = translate(info.plot, engine)
             info.ori_plot = info.plot
