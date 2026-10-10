@@ -16,6 +16,11 @@ from javsp.workflow.models import Stage
 from javsp.workflow.pipeline import JobRunner, Pipeline
 
 
+def run_in_id_order(pipeline, source):
+    """批次边界测试需要固定处理顺序，扫描本身不保证文件顺序。"""
+    return pipeline.run(source, review=lambda movies, root: movies.sort(key=lambda movie: movie.dvdid))
+
+
 @pytest.fixture
 def scene(tmp_path, monkeypatch):
     cfg = Cfg()
@@ -52,7 +57,7 @@ def scene(tmp_path, monkeypatch):
 def test_offline_pipeline_end_to_end(scene, tmp_path):
     cfg, source, throttle = scene
     events = []
-    result = Pipeline(cfg, events.append).run(source)
+    result = run_in_id_order(Pipeline(cfg, events.append), source)
     assert result.exit_code == 0 and len(result.jobs) == 2
     assert result.scan.movies == [job.movie for job in result.jobs]
     for job in result.jobs:
@@ -92,7 +97,7 @@ def test_local_translation_updates_nfo_and_directory_name(scene, tmp_path, monke
             return {"title": "中文标题", "plot": "中文简介。"}[field]
 
     monkeypatch.setattr(sys.modules["javsp.web.testlocal"], "parse_data", parse)
-    result = Pipeline(cfg, translator=Translator()).run(source)
+    result = run_in_id_order(Pipeline(cfg, translator=Translator()), source)
     assert result.exit_code == 0
     target = tmp_path / "out" / "ABC-123 中文标题"
     nfo = etree.parse(str(target / "movie.nfo"))
@@ -107,11 +112,11 @@ def test_batch_continues_after_crawl_failure(scene, monkeypatch):
 
     def parse(info):
         if info.dvdid == "ABC-123":
-            raise MovieNotFoundError("not found")
+            raise MovieNotFoundError("testlocal", info.dvdid)
         parser(info)
 
     monkeypatch.setattr(sys.modules["javsp.web.testlocal"], "parse_data", parse)
-    result = Pipeline(cfg).run(source)
+    result = run_in_id_order(Pipeline(cfg), source)
     assert result.exit_code == 1 and not result.aborted
     assert result.jobs[0].error.stage == Stage.CRAWL
     assert result.jobs[1].success
@@ -134,7 +139,7 @@ def test_batch_recovery_and_stop_policy(scene, tmp_path, monkeypatch, failure):
             raise OSError("output failed")
 
     monkeypatch.setattr(output._Transaction, "publish", fail)
-    result = Pipeline(cfg).run(source)
+    result = run_in_id_order(Pipeline(cfg), source)
     assert result.exit_code == 1
     assert result.jobs[0].error.stage == Stage.COMMIT
     assert (source / "ABC-123.mp4").read_bytes() == b"ABC-123"
@@ -155,7 +160,7 @@ def test_cancel_between_jobs_keeps_successful_commit(scene, monkeypatch):
         raise KeyboardInterrupt()
 
     monkeypatch.setattr("javsp.crawl.dispatcher.CrawlerExecutor.throttle", cancel)
-    result = Pipeline(cfg).run(source)
+    result = run_in_id_order(Pipeline(cfg), source)
     assert result.aborted and result.exit_code == 1
     assert result.jobs[0].success and len(result.pending) == 1
     assert result.error.stage == Stage.CRAWL
@@ -186,7 +191,7 @@ def test_cancel_after_commit_keeps_successful_result(scene, tmp_path, monkeypatc
         return result
 
     monkeypatch.setattr(output._Transaction, "cleanup", cancel)
-    result = Pipeline(cfg).run(source)
+    result = run_in_id_order(Pipeline(cfg), source)
     assert result.aborted and result.exit_code == 1
     assert result.jobs[0].success and len(result.jobs) == 1
     assert result.jobs[0].movie.files == [str(tmp_path / "out" / "ABC-123" / "ABC-123.mp4")]
