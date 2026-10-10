@@ -102,7 +102,7 @@ def test_highres_failures_complete_before_ordinary_fallback(tmp_path, monkeypatc
     target = str(tmp_path / "fanart.jpg")
     assert processor.download_cover(["ordinary.jpg"], target, ["hd404.jpg", "hd-invalid.jpg"]) == (
         "ordinary.jpg",
-        target,
+        str(tmp_path / "fanart.png"),
     )
     assert calls.count("hd404.jpg") == 1
     assert not list(tmp_path.glob(".javsp-cover-*"))
@@ -138,7 +138,7 @@ def test_ordinary_http_error_retries(tmp_path, monkeypatch, cover_config):
 
     monkeypatch.setattr(processor, "download", download)
     target = str(tmp_path / "fanart.jpg")
-    assert processor.download_cover(["cover.jpg"], target) == ("cover.jpg", target)
+    assert processor.download_cover(["cover.jpg"], target) == ("cover.jpg", str(tmp_path / "fanart.png"))
     assert len(calls) == 2
     assert not list(tmp_path.glob(".javsp-cover-*"))
 
@@ -193,3 +193,25 @@ def test_parallel_downloads_are_limited_to_three(tmp_path, monkeypatch, cover_co
 def test_no_cover_addresses(tmp_path, cover_config):
     assert processor.download_cover([], str(tmp_path / "fanart.jpg")) == (None, "无可用封面地址")
     assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("highres", [True, False])
+@pytest.mark.parametrize("image_format,extension", [("JPEG", ".jpg"), ("PNG", ".png"), ("WEBP", ".webp"), ("GIF", ".gif")])
+@pytest.mark.parametrize("url", ["https://example.test/cover.jpg?size=large", "https://example.test/image?id=123"])
+def test_cover_extension_matches_content(tmp_path, monkeypatch, cover_config, highres, image_format, extension, url):
+    original = []
+
+    def download(url, path):
+        Image.new("RGB", (12, 8), "blue").save(path, format=image_format)
+        original.append(Path(path).read_bytes())
+        return {"elapsed": 1, "rate": 100}
+
+    monkeypatch.setattr(processor, "download", download)
+    target = str(tmp_path / "fanart.jpg")
+    result = processor.download_cover([] if highres else [url], target, [url] if highres else None)
+    expected = tmp_path / ("fanart" + extension)
+    assert result == (url, str(expected))
+    assert expected.read_bytes() == original[0]
+    with Image.open(expected) as image:
+        assert image.format == image_format
+    assert sorted(path.name for path in tmp_path.iterdir()) == [expected.name]

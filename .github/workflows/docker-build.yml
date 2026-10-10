@@ -13,7 +13,11 @@ env:
   DH_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/javsp
 
 jobs:
+  tests:
+    uses: ./.github/workflows/tests.yml
+
   build-and-push:
+    needs: tests
     runs-on: ubuntu-latest
     permissions:
       contents: read

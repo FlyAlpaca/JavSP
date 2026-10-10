@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 import requests
 from PIL import Image
 
@@ -143,3 +144,21 @@ def test_failed_and_invalid_images_do_not_block_others_or_replace_existing_files
 def test_no_images_creates_no_directory(tmp_path):
     processor.download_extra_fanarts(movie_for(tmp_path, []), 1.5)
     assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("image_format,extension", [("JPEG", ".jpg"), ("PNG", ".png"), ("WEBP", ".webp"), ("GIF", ".gif")])
+def test_fanart_extension_matches_content(tmp_path, monkeypatch, image_format, extension):
+    original = []
+
+    def download(url, path):
+        Image.new("RGB", (12, 8), "blue").save(path, format=image_format)
+        original.append(Path(path).read_bytes())
+        return {"elapsed": 1, "rate": 100}
+
+    monkeypatch.setattr(processor, "download", download)
+    processor.download_extra_fanarts(movie_for(tmp_path, ["https://example.test/wrong.png"]), 0)
+    target = tmp_path / "extrafanart" / ("0" + extension)
+    assert target.read_bytes() == original[0]
+    with Image.open(target) as image:
+        assert image.format == image_format
+    assert sorted(path.name for path in target.parent.iterdir()) == [target.name]

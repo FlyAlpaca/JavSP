@@ -125,13 +125,14 @@ class Request:
 
         return wrapper
 
-    def get(self, url, cookies=None, timeout=None, delay_raise=False):
+    def get(self, url, cookies=None, timeout=None, delay_raise=False, stream=False):
         r = self.__get(
             url,
             headers=self.headers,
             proxies=self.proxies,
             cookies=cookies if cookies is not None else self.cookies,
             timeout=timeout if timeout is not None else self.timeout,
+            stream=stream,
         )
         if not delay_raise:
             r.raise_for_status()
@@ -308,24 +309,22 @@ def urlretrieve(url, filename=None, reporthook=None, extra_headers=None):
     if extra_headers:
         for k, v in extra_headers.items():
             req.headers[k] = v
-    with contextlib.closing(req.get(url, timeout=Cfg().network.timeout.total_seconds() * 3)) as r:
+    with contextlib.closing(req.get(url, timeout=Cfg().network.timeout.total_seconds() * 3, stream=True, delay_raise=True)) as r:
         r.raise_for_status()
         header = r.headers
         with open(filename, "wb") as fp:
-            bs = 1024
             size = -1
-            blocknum = 0
+            downloaded = 0
             if "content-length" in header:
                 size = int(header["Content-Length"])  # 文件总大小（理论值）
             if reporthook:  # 写入前运行一次回调函数
-                reporthook(blocknum, bs, size)
-            for chunk in r.iter_content(chunk_size=1024):
+                reporthook(downloaded, 1, size)
+            for chunk in r.iter_content(chunk_size=64 * 1024):
                 if chunk:
                     fp.write(chunk)
-                    fp.flush()
-                    blocknum += 1
+                    downloaded += len(chunk)
                     if reporthook:
-                        reporthook(blocknum, bs, size)  # 每写入一次运行一次回调函数
+                        reporthook(downloaded, 1, size)  # 按实际收到的字节数更新进度
 
 
 def download(url, output_path, desc=None):
