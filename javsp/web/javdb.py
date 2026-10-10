@@ -238,13 +238,16 @@ def parse_data(movie: MovieInfo):
             movie.score = f"{float(score_match.group(1)) * 2:.2f}"
     genre_tags = info.xpath(XP["info_genre"])
     genre, genre_id = [], []
+    censor_types = set()
     for tag in genre_tags:
         pre_id = tag.get("href").split("/")[-1]
         genre.append(tag.text)
         genre_id.append(pre_id)
         # 判定影片有码/无码
         subsite = pre_id.split("?")[0]
-        movie.uncensored = {"uncensored": True, "tags": False}.get(subsite)
+        if subsite in ("uncensored", "tags"):
+            censor_types.add(subsite)
+    movie.uncensored = True if "uncensored" in censor_types else False if "tags" in censor_types else None
     # JavDB目前同时提供男女优信息，根据用来标识性别的符号筛选出女优
     actors_tag = xpath_first(info, XP["info_actor"], label=_SITE)
     all_actors = actors_tag.xpath("a/text()")

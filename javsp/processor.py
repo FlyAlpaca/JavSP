@@ -224,8 +224,8 @@ def download_cover(covers, fanart_path, big_covers=None, movie_id=""):
                     return url, pic_path
         finally:
             stopped.set()
-            # 已开始的请求结束后自行清理临时文件，不阻塞成功结果返回。
-            executor.shutdown(wait=False, cancel_futures=True)
+            # 回收在途请求和临时文件后再返回，避免批量运行时后台线程累积。
+            executor.shutdown(wait=True, cancel_futures=True)
         return None
 
     result = download_group(big_covers or [], highres=True)

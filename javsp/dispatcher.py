@@ -44,13 +44,18 @@ def import_crawlers():
 def parallel_crawler(movie: Movie, tqdm_bar=None):
     """使用多线程抓取不同网站的数据"""
     failed_crawlers = []  # (crawler_name, error_reason)
+    stopped = threading.Event()
 
     def wrapper(parser, info: MovieInfo, retry):
         crawler_name = threading.current_thread().name
         short_name = crawler_name.replace("javsp.web.", "")
         for cnt in range(retry):
+            if stopped.is_set():
+                return
             try:
                 parser(info)
+                if stopped.is_set():
+                    return
                 movie_id = info.dvdid or info.cid
                 logger.debug(f"{short_name}: 抓取成功: '{movie_id}': '{info.url}'")
                 info._success = True
@@ -95,29 +100,35 @@ def parallel_crawler(movie: Movie, tqdm_bar=None):
         for i in Cfg().crawler.selection.normal:
             all_info[i] = MovieInfo(movie.dvdid)
     thread_pool = []
-    for mod_partial, info in all_info.items():
-        mod = f"javsp.web.{mod_partial}"
-        # 优先使用带数据清洗的 parse_clean_data（如 javdb/javbus 会进行 genre 归一化）
-        if hasattr(sys.modules[mod], "parse_clean_data"):
-            parser = getattr(sys.modules[mod], "parse_clean_data")
-        else:
-            parser = getattr(sys.modules[mod], "parse_data")
-        # 将all_info中的info实例传递给parser，parser抓取完成后，info实例的值已经完成更新
-        th = threading.Thread(target=wrapper, name=mod, args=(parser, info, Cfg().network.retry))
-        th.start()
-        thread_pool.append(th)
-    # 等待所有线程结束
     timeout = Cfg().network.retry * Cfg().network.timeout.total_seconds()
     deadline = time.monotonic() + timeout
-    for th in thread_pool:
-        th: threading.Thread
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            break
-        th.join(timeout=remaining)
+    try:
+        for mod_partial, info in all_info.items():
+            mod = f"javsp.web.{mod_partial}"
+            # 优先使用带数据清洗的 parse_clean_data（如 javdb/javbus 会进行 genre 归一化）
+            if hasattr(sys.modules[mod], "parse_clean_data"):
+                parser = getattr(sys.modules[mod], "parse_clean_data")
+            else:
+                parser = getattr(sys.modules[mod], "parse_data")
+            # 将all_info中的info实例传递给parser，parser抓取完成后，info实例的值已经完成更新
+            th = threading.Thread(target=wrapper, name=mod, args=(parser, info, Cfg().network.retry))
+            th.start()
+            thread_pool.append(th)
+        for th in thread_pool:
+            th.join(timeout=max(0, deadline - time.monotonic()))
+    finally:
+        stopped.set()
+        # Python 线程不能强制终止：停止重试并回收在途请求后再读取结果。
+        timed_out = [th for th in thread_pool if th.is_alive()]
+        for th in timed_out:
+            failed_crawlers.append((th.name.replace("javsp.web.", ""), "抓取超时"))
+        for th in thread_pool:
+            th.join()
+    for th in timed_out:
+        all_info[th.name.replace("javsp.web.", "")]._success = False
     # 根据抓取结果更新影片类型判定
     if movie.data_src == "cid" and movie.dvdid:
-        titles = [all_info[i].title for i in Cfg().crawler.selection[movie.data_src]]
+        titles = [all_info[i].title for i in Cfg().crawler.selection[movie.data_src] if all_info[i]._success]
         if any(titles):
             movie.dvdid = None
             all_info = {k: v for k, v in all_info.items() if k in Cfg().crawler.selection["cid"]}

@@ -103,11 +103,10 @@ def parse_data(movie: MovieInfo):
         pre_id = tag_url.split("/")[-1]
         genre.append(tag.text)
         if "uncensored" in tag_url:
-            movie.uncensored = True
             genre_id.append("uncensored-" + pre_id)
         else:
-            movie.uncensored = False
             genre_id.append(pre_id)
+    movie.uncensored = any("uncensored" in tag.get("href", "") for tag in genre_tags) if genre_tags else None
     # JavBus的磁力链接是依赖js脚本加载的，无法通过静态网页来解析
     # actress, actress_pics
     actress, actress_pics = [], {}
