@@ -175,7 +175,8 @@ class MovieInfo(BaseModel):
         d["rawtitle"] = info.ori_title or d["title"]
         d["actress"] = ",".join(info.actress) if info.actress else Cfg().summarizer.default.actress
         d["score"] = str(info.score) if info.score else "0"
-        d["censor"] = Cfg().summarizer.censor_options_representation[1 if info.uncensored else 0]
+        censor_index = 2 if info.uncensored is None else 0 if info.uncensored else 1
+        d["censor"] = Cfg().summarizer.censor_options_representation[censor_index]
         d["serial"] = info.serial or Cfg().summarizer.default.series
         d["director"] = info.director or Cfg().summarizer.default.director
         d["producer"] = info.producer or Cfg().summarizer.default.producer
