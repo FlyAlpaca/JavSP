@@ -10,6 +10,7 @@ from pathlib import Path
 from urllib.parse import quote, urlparse
 
 import requests
+from tqdm import tqdm
 
 from javsp.datatype import MovieInfo
 
@@ -222,11 +223,16 @@ def prepare_database(path: Path, online_enabled: bool, *, session=None):
                 return path
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary.unlink(missing_ok=True)
-        logger.info("正在导入 R18.dev 数据库: %s", source_url)
+        logger.info("正在下载并导入 R18.dev 数据库: %s", source_url)
         response.raw.decode_content = False
-        with gzip.GzipFile(fileobj=response.raw) as compressed:
-            with io.TextIOWrapper(compressed, encoding="utf-8") as stream:
-                _import_dump(stream, temporary, source_url)
+        size = response.headers.get("Content-Length")
+        total = int(size) if size and size.isdecimal() and int(size) > 0 else None
+        with tqdm.wrapattr(
+            response.raw, "read", total=total, desc="下载 R18.dev 数据库", unit="B", unit_scale=True, unit_divisor=1024
+        ) as download:
+            with gzip.GzipFile(fileobj=download) as compressed:
+                with io.TextIOWrapper(compressed, encoding="utf-8") as stream:
+                    _import_dump(stream, temporary, source_url)
         if not _valid(temporary):
             raise ValueError("R18.dev 本地数据库校验失败")
         temporary.replace(path)
