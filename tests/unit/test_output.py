@@ -6,8 +6,9 @@ from pathlib import Path
 
 import pytest
 from PIL import Image
+from pydantic_extra_types.pendulum_dt import Duration
 
-from javsp import output
+from javsp import output, processor
 from javsp.config import Cfg
 from javsp.datatype import Movie, MovieInfo
 from javsp.output import OutputExecutor, OutputPlanner, RecoveryError
@@ -143,12 +144,12 @@ def test_no_move_and_shared_directory_updates(scene, tmp_path):
 
 def test_cross_device_move_and_hardlink_copy_fallback(scene, tmp_path, monkeypatch):
     movie, info, cfg = scene
-    rename = output.os.rename
+    rename = output._rename_new
     def cross_device(source, dest):
         if str(source).startswith(str(tmp_path / "src")):
             raise OSError(errno.EXDEV, "cross device")
         return rename(source, dest)
-    monkeypatch.setattr(output.os, "rename", cross_device)
+    monkeypatch.setattr(output, "_rename_new", cross_device)
     result = OutputExecutor(cfg).execute(OutputPlanner(cfg).plan(movie, info))
     assert Path(result.movie.files[0]).read_bytes() == b"video content"
     assert not Path(movie.files[0]).exists()
@@ -197,7 +198,7 @@ def test_overlapping_output_is_rejected(scene):
 
 def test_cross_device_rollback_restores_source(scene, tmp_path, monkeypatch):
     movie, info, cfg = scene
-    rename = output.os.rename
+    rename = output._rename_new
     publish = output._Transaction.publish
     def cross_device(source, dest):
         if str(source) in movie.files or (str(dest) in movie.files and Path(source).parent == tmp_path / "out"):
@@ -206,7 +207,7 @@ def test_cross_device_rollback_restores_source(scene, tmp_path, monkeypatch):
     def fail(tx, staged, target, stamp):
         publish(tx, staged, target, stamp)
         raise OSError("metadata failed")
-    monkeypatch.setattr(output.os, "rename", cross_device)
+    monkeypatch.setattr(output, "_rename_new", cross_device)
     monkeypatch.setattr(output._Transaction, "publish", fail)
     before = files_under(tmp_path)
     with pytest.raises(OSError, match="metadata failed"):
@@ -248,3 +249,119 @@ def test_preserves_original_backup_when_rollback_target_changed(scene, tmp_path,
     manifest = json.loads((Path(error.value.paths[0]) / "recovery.json").read_text())
     backup = next(e["backup"] for e in manifest["entries"] if e["target"].endswith("poster.jpg"))
     assert Path(backup).read_bytes() == b"original poster"
+
+
+@pytest.mark.parametrize("operation", ["move", "backup", "publish"])
+def test_interrupt_after_atomic_operation_still_restores(scene, tmp_path, monkeypatch, operation):
+    movie, info, cfg = scene
+    target = tmp_path / "out"
+    target.mkdir()
+    (target / "fanart.jpg").write_bytes(b"original fanart")
+    before = files_under(tmp_path)
+    interrupted = False
+    if operation in ("move", "publish"):
+        original = output._rename_new
+        def rename(source, dest):
+            nonlocal interrupted
+            original(source, dest)
+            should_interrupt = (str(source) == movie.files[0] if operation == "move"
+                                else str(dest) == str(target / "fanart.jpg"))
+            if should_interrupt and not interrupted:
+                interrupted = True
+                raise KeyboardInterrupt()
+        monkeypatch.setattr(output, "_rename_new", rename)
+    else:
+        original = output.os.replace
+        def replace(source, dest):
+            nonlocal interrupted
+            original(source, dest)
+            should_interrupt = (str(source) == str(target / "fanart.jpg") if operation == "backup"
+                                else str(dest) == str(target / "fanart.jpg"))
+            if should_interrupt and not interrupted:
+                interrupted = True
+                raise KeyboardInterrupt()
+        monkeypatch.setattr(output.os, "replace", replace)
+    with pytest.raises(KeyboardInterrupt):
+        OutputExecutor(cfg).execute(OutputPlanner(cfg).plan(movie, info))
+    assert interrupted
+    assert files_under(tmp_path) == before
+    assert not list(tmp_path.rglob(".javsp-*"))
+
+
+def test_target_created_during_video_commit_is_not_overwritten(scene, tmp_path, monkeypatch):
+    movie, info, cfg = scene
+    rename = output._rename_new
+    target = tmp_path / "out" / "ABC-123.mp4"
+    def race(source, dest):
+        if str(source) == movie.files[0]:
+            target.write_bytes(b"external video")
+        return rename(source, dest)
+    monkeypatch.setattr(output, "_rename_new", race)
+    with pytest.raises(FileExistsError):
+        OutputExecutor(cfg).execute(OutputPlanner(cfg).plan(movie, info))
+    assert target.read_bytes() == b"external video"
+    assert Path(movie.files[0]).read_bytes() == b"video content"
+    assert not list(tmp_path.rglob(".javsp-*"))
+
+
+def test_target_created_after_metadata_backup_is_preserved(scene, tmp_path, monkeypatch):
+    movie, info, cfg = scene
+    target = tmp_path / "out"
+    target.mkdir()
+    (target / "fanart.jpg").write_bytes(b"original fanart")
+    rename = output._rename_new
+    def race(source, dest):
+        if str(dest) == str(target / "fanart.jpg"):
+            Path(dest).write_bytes(b"external fanart")
+        return rename(source, dest)
+    monkeypatch.setattr(output, "_rename_new", race)
+    with pytest.raises(RecoveryError) as error:
+        OutputExecutor(cfg).execute(OutputPlanner(cfg).plan(movie, info))
+    assert (target / "fanart.jpg").read_bytes() == b"external fanart"
+    manifest = json.loads((Path(error.value.paths[0]) / "recovery.json").read_text())
+    entry = next(e for e in manifest["entries"] if e["target"].endswith("fanart.jpg"))
+    assert Path(entry["backup"]).read_bytes() == b"original fanart"
+    assert Path(movie.files[0]).read_bytes() == b"video content"
+
+
+@pytest.mark.parametrize("fail_commit", [False, True])
+def test_extra_fanarts_participate_in_transaction(scene, tmp_path, monkeypatch, fail_commit):
+    movie, info, cfg = scene
+    extras = cfg.summarizer.extra_fanarts.model_copy(update={"enabled": True, "scrap_interval": Duration(0)})
+    cfg = cfg.model_copy(update={"summarizer": cfg.summarizer.model_copy(update={"extra_fanarts": extras})})
+    info.preview_pics = [info.cover, "failed-preview"]
+    download = processor.download
+    def local_download(url, path):
+        if url == "failed-preview":
+            raise OSError("preview unavailable")
+        return download(url, path)
+    monkeypatch.setattr(processor, "download", local_download)
+    target = tmp_path / "out" / "extrafanart"
+    target.mkdir(parents=True)
+    (target / "0.jpg").write_bytes(b"original preview")
+    before = files_under(tmp_path)
+    if fail_commit:
+        publish = output._Transaction.publish
+        def fail(tx, staged, path, stamp):
+            publish(tx, staged, path, stamp)
+            if "extrafanart" in path:
+                raise OSError("extra publish failed")
+        monkeypatch.setattr(output._Transaction, "publish", fail)
+        with pytest.raises(OSError, match="extra publish failed"):
+            OutputExecutor(cfg).execute(OutputPlanner(cfg).plan(movie, info))
+        assert files_under(tmp_path) == before
+    else:
+        result = OutputExecutor(cfg).execute(OutputPlanner(cfg).plan(movie, info))
+        assert len(result.warnings) == 1 and "preview unavailable" in result.warnings[0]
+        assert (target / "0.jpg").read_bytes() != b"original preview"
+        assert not (target / "1.jpg").exists()
+    assert not list(tmp_path.rglob(".javsp-*"))
+
+
+def test_downloaded_cover_retains_actual_source(scene, tmp_path):
+    movie, info, cfg = scene
+    info.cover = "failed-cover"
+    info.covers = [str(tmp_path / "cover.jpg")]
+    info._cover_sources = {info.covers[0]: "fallback"}
+    result = OutputExecutor(cfg).execute(OutputPlanner(cfg).plan(movie, info))
+    assert result.movie.info.field_sources["cover"] == "fallback"

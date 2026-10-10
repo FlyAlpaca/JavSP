@@ -242,8 +242,9 @@ def download_cover(covers, fanart_path, big_covers=None, movie_id="", cfg=None):
 
 def download_extra_fanarts(movie: Movie, scrape_interval: float, tqdm_bar=None, destination_dir=None):
     """并发保存全部剧照，按统一的启动间隔限速，等待所有任务结束。"""
+    warnings = []
     if not movie.info.preview_pics:
-        return
+        return warnings
     destination_dir = destination_dir or os.path.join(movie.save_dir, "extrafanart")
     os.makedirs(destination_dir, exist_ok=True)
     start_lock = threading.Lock()
@@ -262,7 +263,9 @@ def download_extra_fanarts(movie: Movie, scrape_interval: float, tqdm_bar=None, 
                 next_start = time.monotonic() + max(0, scrape_interval)
             info = download(url, temp_path)
             if not valid_pic(temp_path):
-                logger.warning(f"下载剧照{idx}失败: {url}: 图片无效或已损坏")
+                warning = f"下载剧照{idx}失败: {url}: 图片无效或已损坏"
+                warnings.append(warning)
+                logger.warning(warning)
                 return
             filesize = get_fmt_size(temp_path)
             width, height = get_pic_size(temp_path)
@@ -272,7 +275,9 @@ def download_extra_fanarts(movie: Movie, scrape_interval: float, tqdm_bar=None, 
             os.replace(temp_path, pic_path)
             logger.info(f"已下载剧照{url} {os.path.basename(pic_path)}: {width}x{height}, {filesize} [{elapsed}, {speed}]")
         except Exception as e:
-            logger.warning(f"下载剧照{idx}失败: {url}, {e}")
+            warning = f"下载剧照{idx}失败: {url}, {e}"
+            warnings.append(warning)
+            logger.warning(warning)
         finally:
             if temp_path is not None:
                 try:
@@ -286,6 +291,8 @@ def download_extra_fanarts(movie: Movie, scrape_interval: float, tqdm_bar=None, 
             future.result()
             if tqdm_bar is not None:
                 tqdm_bar.set_description(f"下载剧照 {completed}/{len(futures)}")
+
+    return warnings
 
 
 def get_pic_path(fanart_path, image_path):

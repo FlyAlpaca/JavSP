@@ -124,3 +124,24 @@ def test_runner_does_not_publish_metadata_on_failure(scene):
     job = JobRunner(cfg).run(movie)
     assert job.error.stage == Stage.MERGE
     assert movie.info is None and movie.save_dir is None
+
+
+def test_cancel_after_commit_keeps_successful_result(scene, tmp_path, monkeypatch):
+    cfg, source, _ = scene
+    cleanup = output._Transaction.cleanup
+    interrupted = False
+    def cancel(tx, remove_dirs=False):
+        nonlocal interrupted
+        result = cleanup(tx, remove_dirs)
+        if not remove_dirs and not interrupted:
+            interrupted = True
+            raise KeyboardInterrupt("cancel after commit")
+        return result
+    monkeypatch.setattr(output._Transaction, "cleanup", cancel)
+    result = Pipeline(cfg).run(source)
+    assert result.aborted and result.exit_code == 1
+    assert result.jobs[0].success and len(result.jobs) == 1
+    assert result.jobs[0].movie.files == [str(tmp_path / "out" / "ABC-123" / "ABC-123.mp4")]
+    assert (tmp_path / "out" / "ABC-123" / "movie.nfo").exists()
+    assert len(result.pending) == 1 and (source / "ABC-124.mp4").exists()
+    assert result.legacy()[1]["success"] == 1

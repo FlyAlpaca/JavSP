@@ -188,10 +188,11 @@ def _format_no_sep(m):
 # =============================================================================
 
 
-def get_id(filepath_str: str) -> str:
+def get_id(filepath_str: str, cfg=None) -> str:
     """从给定的文件路径中提取番号（DVD ID）"""
     filepath = Path(filepath_str)
-    ignore_pattern = re.compile("|".join(Cfg().scanner.ignored_id_pattern))
+    cfg = cfg if cfg is not None else Cfg()
+    ignore_pattern = re.compile("|".join(cfg.scanner.ignored_id_pattern))
     norm = ignore_pattern.sub("", filepath.stem).upper()
 
     return _extract_id(norm, filepath)
