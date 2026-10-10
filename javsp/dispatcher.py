@@ -16,6 +16,7 @@ except ImportError:
 
 from copy import copy
 
+from javsp.concurrency import drain_threads
 from javsp.config import Cfg
 from javsp.datatype import Movie, MovieInfo
 from javsp.models import CrawlResult
@@ -50,7 +51,7 @@ def _crawl(movie: Movie, cfg, tqdm_bar=None) -> CrawlResult:
     failed_crawlers = []  # (crawler_name, error_reason)
     stopped = threading.Event()
 
-    def wrapper(parser, info: MovieInfo, retry):
+    def worker(parser, info: MovieInfo, retry):
         crawler_name = threading.current_thread().name
         short_name = crawler_name.replace("javsp.web.", "")
         last_error = "未执行抓取（重试次数为 0）"
@@ -98,6 +99,12 @@ def _crawl(movie: Movie, cfg, tqdm_bar=None) -> CrawlResult:
         else:
             failed_crawlers.append((short_name, last_error))
 
+    def wrapper(parser, info, retry, done):
+        try:
+            worker(parser, info, retry)
+        finally:
+            done.set()
+
     # 根据影片的数据源获取对应的抓取器
     crawler_mods: list[str] = cfg.crawler.selection[movie.data_src]
 
@@ -110,6 +117,7 @@ def _crawl(movie: Movie, cfg, tqdm_bar=None) -> CrawlResult:
         for i in cfg.crawler.selection["normal"]:
             all_info[i] = MovieInfo(movie.dvdid)
     thread_pool = []
+    completions = []
     timeout = cfg.network.retry * cfg.network.timeout.total_seconds()
     deadline = time.monotonic() + timeout
     try:
@@ -121,19 +129,20 @@ def _crawl(movie: Movie, cfg, tqdm_bar=None) -> CrawlResult:
             else:
                 parser = getattr(sys.modules[mod], "parse_data")
             # 将all_info中的info实例传递给parser，parser抓取完成后，info实例的值已经完成更新
-            th = threading.Thread(target=wrapper, name=mod, args=(parser, info, cfg.network.retry))
+            done = threading.Event()
+            th = threading.Thread(target=wrapper, name=mod, args=(parser, info, cfg.network.retry, done))
             th.start()
             thread_pool.append(th)
+            completions.append(done)
         for th in thread_pool:
             th.join(timeout=max(0, deadline - time.monotonic()))
     finally:
         stopped.set()
         # Python 线程不能强制终止：停止重试并回收在途请求后再读取结果。
-        timed_out = [th for th in thread_pool if th.is_alive()]
+        timed_out = [th for th, done in zip(thread_pool, completions) if not done.is_set()]
         for th in timed_out:
             failed_crawlers.append((th.name.replace("javsp.web.", ""), "抓取超时"))
-        for th in thread_pool:
-            th.join()
+        drain_threads(zip(thread_pool, completions))
     for th in timed_out:
         all_info[th.name.replace("javsp.web.", "")]._success = False
     # 根据抓取结果更新影片类型判定

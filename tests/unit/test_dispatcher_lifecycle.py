@@ -94,3 +94,47 @@ def test_startup_error_drains_already_started_workers(monkeypatch):
         dispatcher.parallel_crawler(Movie("ABC-123"))
     # 首个线程也可能在停止信号发出后才开始执行，此时不应启动请求。
     assert all(not worker.is_alive() for worker in workers)
+
+
+def test_cancellation_during_final_drain_waits_for_worker(monkeypatch):
+    cfg = SimpleNamespace(
+        crawler=SimpleNamespace(selection={"normal": ["testslow"]}),
+        network=SimpleNamespace(retry=1, timeout=SimpleNamespace(total_seconds=lambda: 0.01)),
+    )
+    monkeypatch.setattr(dispatcher, "Cfg", lambda: cfg)
+    started, release, interrupted = threading.Event(), threading.Event(), threading.Event()
+    errors = []
+    def slow(info):
+        started.set()
+        assert release.wait(5)
+        info.title = "late result"
+    monkeypatch.setitem(sys.modules, "javsp.web.testslow", SimpleNamespace(parse_data=slow))
+    join = threading.Thread.join
+    drain = dispatcher.drain_threads
+    def cancel_drain(workers):
+        workers = list(workers)
+        for _, done in workers:
+            wait = done.wait
+            def cancel_wait(timeout=None, wait=wait):
+                if not interrupted.is_set():
+                    interrupted.set()
+                    raise KeyboardInterrupt()
+                return wait(timeout)
+            monkeypatch.setattr(done, "wait", cancel_wait)
+        return drain(workers)
+    monkeypatch.setattr(dispatcher, "drain_threads", cancel_drain)
+    def crawl():
+        try:
+            dispatcher.parallel_crawler(Movie("ABC-123"))
+        except BaseException as error:
+            errors.append(error)
+    caller = threading.Thread(target=crawl)
+    caller.start()
+    try:
+        assert started.wait(5) and interrupted.wait(5)
+        assert caller.is_alive()
+    finally:
+        release.set()
+        join(caller, 5)
+    assert not caller.is_alive()
+    assert len(errors) == 1 and isinstance(errors[0], KeyboardInterrupt)

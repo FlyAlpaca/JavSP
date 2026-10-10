@@ -260,6 +260,7 @@ class _Transaction:
         _rename_new(staged, operation.target)
         entry.installed, entry.stamp = True, _stamp(operation.target)
         if not operation.hardlink:
+            self.check(operation.source, operation.source_stamp)
             os.unlink(operation.source)
             entry.source_removed = True
 
