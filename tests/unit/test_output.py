@@ -19,9 +19,8 @@ def config_for(tmp_path, move=True, **summary):
     paths = cfg.summarizer.path.model_copy(update={"output_folder_pattern": str(tmp_path / "out"), "hard_link": False})
     extra = cfg.summarizer.extra_fanarts.model_copy(update={"enabled": False})
     summarizer = cfg.summarizer.model_copy(update={"path": paths, "extra_fanarts": extra, "move_files": move, **summary})
-    translator = cfg.translator.model_copy(update={"engine": None})
     scanner = cfg.scanner.model_copy(update={"minimum_size": 0, "skip_nfo_dir": False})
-    return cfg.model_copy(update={"summarizer": summarizer, "translator": translator, "scanner": scanner})
+    return cfg.model_copy(update={"summarizer": summarizer, "scanner": scanner})
 
 
 @pytest.fixture

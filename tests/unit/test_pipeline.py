@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from lxml import etree
 from PIL import Image
 
 from javsp.config import Cfg
@@ -18,27 +19,33 @@ from javsp.workflow.pipeline import JobRunner, Pipeline
 @pytest.fixture
 def scene(tmp_path, monkeypatch):
     cfg = Cfg()
-    cfg = cfg.model_copy(update={
-        "scanner": cfg.scanner.model_copy(update={"minimum_size": 0, "skip_nfo_dir": False}),
-        "translator": cfg.translator.model_copy(update={"engine": None}),
-        "crawler": cfg.crawler.model_copy(update={"selection": {"normal": ["testlocal"]}, "normalize_actress_name": False}),
-        "summarizer": cfg.summarizer.model_copy(update={
-            "path": cfg.summarizer.path.model_copy(update={"output_folder_pattern": str(tmp_path / "out" / "{num}")}),
-            "extra_fanarts": cfg.summarizer.extra_fanarts.model_copy(update={"enabled": False}),
-        }),
-    })
+    cfg = cfg.model_copy(
+        update={
+            "scanner": cfg.scanner.model_copy(update={"minimum_size": 0, "skip_nfo_dir": False}),
+            "crawler": cfg.crawler.model_copy(update={"selection": {"normal": ["testlocal"]}, "normalize_actress_name": False}),
+            "summarizer": cfg.summarizer.model_copy(
+                update={
+                    "path": cfg.summarizer.path.model_copy(update={"output_folder_pattern": str(tmp_path / "out" / "{num}")}),
+                    "extra_fanarts": cfg.summarizer.extra_fanarts.model_copy(update={"enabled": False}),
+                }
+            ),
+        }
+    )
     source = tmp_path / "src"
     source.mkdir()
     for identity in ("ABC-123", "ABC-124"):
         (source / f"{identity}.mp4").write_bytes(identity.encode())
     cover = tmp_path / "cover.jpg"
     Image.new("RGB", (800, 600), "blue").save(cover)
+
     def parse(info):
         info.title, info.cover = "local title", str(cover)
         info.uncensored = False
+
     monkeypatch.setitem(sys.modules, "javsp.web.testlocal", SimpleNamespace(parse_data=parse))
     throttle = []
     monkeypatch.setattr("javsp.crawl.dispatcher.CrawlerExecutor.throttle", lambda self: throttle.append(True))
+    monkeypatch.setattr("javsp.translate.LocalTranslator.start", lambda self: self)
     return cfg, source, throttle
 
 
@@ -54,20 +61,55 @@ def test_offline_pipeline_end_to_end(scene, tmp_path):
         assert Path(job.movie.files[0]).read_bytes() == job.movie.dvdid.encode()
         assert job.movie.info.field_sources["title"] == "testlocal"
     assert throttle == [True]
-    assert [e.stage for e in events] == [Stage.SCAN] + [Stage.CRAWL, Stage.CRAWL, Stage.MERGE,
-        Stage.PLAN, Stage.PREPARE, Stage.COMMIT, Stage.DONE] * 2
+    assert [e.stage for e in events] == [Stage.SCAN] + [
+        Stage.CRAWL,
+        Stage.CRAWL,
+        Stage.MERGE,
+        Stage.TRANSLATE,
+        Stage.PLAN,
+        Stage.PREPARE,
+        Stage.COMMIT,
+        Stage.DONE,
+    ] * 2
     successful, stats = result.legacy(True)
     assert len(successful) == stats["success"] == 2 and stats["failed"] == 0
     assert len(stats["filemove_list"]) == 2
 
 
+def test_local_translation_updates_nfo_and_directory_name(scene, tmp_path, monkeypatch):
+    cfg, source, _ = scene
+    path_cfg = cfg.summarizer.path.model_copy(update={"output_folder_pattern": str(tmp_path / "out" / "{num} {title}")})
+    cfg = cfg.model_copy(update={"summarizer": cfg.summarizer.model_copy(update={"path": path_cfg})})
+    original = sys.modules["javsp.web.testlocal"].parse_data
+
+    def parse(info):
+        original(info)
+        info.title = "日本語タイトル"
+        info.plot = "日本語の紹介。"
+
+    class Translator:
+        def translate(self, text, field):
+            return {"title": "中文标题", "plot": "中文简介。"}[field]
+
+    monkeypatch.setattr(sys.modules["javsp.web.testlocal"], "parse_data", parse)
+    result = Pipeline(cfg, translator=Translator()).run(source)
+    assert result.exit_code == 0
+    target = tmp_path / "out" / "ABC-123 中文标题"
+    nfo = etree.parse(str(target / "movie.nfo"))
+    assert nfo.xpath("/movie/title/text()") == ["ABC-123 中文标题"]
+    assert nfo.xpath("/movie/originaltitle/text()") == ["日本語タイトル"]
+    assert nfo.xpath("/movie/plot/text()") == ["中文简介。"]
+
+
 def test_batch_continues_after_crawl_failure(scene, monkeypatch):
     cfg, source, throttle = scene
     parser = sys.modules["javsp.web.testlocal"].parse_data
+
     def parse(info):
         if info.dvdid == "ABC-123":
             raise MovieNotFoundError("not found")
         parser(info)
+
     monkeypatch.setattr(sys.modules["javsp.web.testlocal"], "parse_data", parse)
     result = Pipeline(cfg).run(source)
     assert result.exit_code == 1 and not result.aborted
@@ -81,6 +123,7 @@ def test_batch_continues_after_crawl_failure(scene, monkeypatch):
 def test_batch_recovery_and_stop_policy(scene, tmp_path, monkeypatch, failure):
     cfg, source, throttle = scene
     publish = output._Transaction.publish
+
     def fail(tx, staged, target, stamp):
         publish(tx, staged, target, stamp)
         if "ABC-123" in target:
@@ -89,6 +132,7 @@ def test_batch_recovery_and_stop_policy(scene, tmp_path, monkeypatch, failure):
             if failure == "recovery":
                 Path(target).write_bytes(b"external content")
             raise OSError("output failed")
+
     monkeypatch.setattr(output._Transaction, "publish", fail)
     result = Pipeline(cfg).run(source)
     assert result.exit_code == 1
@@ -106,8 +150,10 @@ def test_batch_recovery_and_stop_policy(scene, tmp_path, monkeypatch, failure):
 
 def test_cancel_between_jobs_keeps_successful_commit(scene, monkeypatch):
     cfg, source, _ = scene
+
     def cancel(self):
         raise KeyboardInterrupt()
+
     monkeypatch.setattr("javsp.crawl.dispatcher.CrawlerExecutor.throttle", cancel)
     result = Pipeline(cfg).run(source)
     assert result.aborted and result.exit_code == 1
@@ -130,6 +176,7 @@ def test_cancel_after_commit_keeps_successful_result(scene, tmp_path, monkeypatc
     cfg, source, _ = scene
     cleanup = output._Transaction.cleanup
     interrupted = False
+
     def cancel(tx, remove_dirs=False):
         nonlocal interrupted
         result = cleanup(tx, remove_dirs)
@@ -137,6 +184,7 @@ def test_cancel_after_commit_keeps_successful_result(scene, tmp_path, monkeypatc
             interrupted = True
             raise KeyboardInterrupt("cancel after commit")
         return result
+
     monkeypatch.setattr(output._Transaction, "cleanup", cancel)
     result = Pipeline(cfg).run(source)
     assert result.aborted and result.exit_code == 1

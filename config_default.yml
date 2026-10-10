@@ -176,65 +176,26 @@ summarizer:
 
 ################################
 translator:
-  # 翻译引擎配置，不设置 engine 表示禁用翻译
-  # 支持以下引擎类型:
-  #   openai_compatible: 任何兼容 OpenAI API 的服务商 (OpenAI, Groq, DeepSeek, 硅基流动等)
-  #   anthropic: Claude 原生 API
-  #   google: Google 翻译（免费，无需 API Key，大陆需代理）
-  #   bing: Bing 翻译（免费，无需 API Key）
-  #   alibaba: 阿里翻译（免费，无需 API Key，大陆可用）
-
-  ## 使用 OpenAI-compatible API (支持 OpenAI, DeepSeek, Groq, 硅基流动等): {{{
-  # engine:
-  #   type: openai_compatible
-  #   base_url: 'https://api.openai.com/v1'
-  #   api_key: ''
-  #   model: 'gpt-4o-mini'
-  #   # 可选：自定义系统提示词
-  #   # system_prompt: "将以下日文翻译成中文，保留非日文内容不变。只输出译文，不添加额外内容。"
-  #   temperature: 0.3
-  #   max_tokens: 2048
-  ## }}}
-
-  ## 使用 Anthropic Claude API: {{{
-  # engine:
-  #   type: anthropic
-  #   api_key: ''
-  #   model: 'claude-3-5-sonnet-20241022'
-  #   # 可选：自定义 API 地址（默认为官方地址，可设为中转代理）
-  #   # base_url: 'https://api.anthropic.com/v1'
-  ## }}}
-
-  ## 使用 Google 翻译（免费，无需 API Key，大陆需代理）: {{{
-  # engine:
-  #   type: google
-  #   # source_language 设为 auto 时自动检测源语言
-  #   source_language: auto
-  #   target_language: zh-CN
-  ## }}}
-
-  ## 使用 Bing 翻译（免费，无需 API Key，推荐）: {{{
-  engine:
-    type: bing
-    # source_language 设为 auto 时自动检测源语言（不传 from 参数）
-    source_language: auto
-    target_language: zh-Hans
-  ## }}}
-
-  ## 使用阿里翻译（免费，无需 API Key，大陆可用）: {{{
-  # engine:
-  #   type: alibaba
-  #   # source_language 设为 auto 时自动检测源语言
-  #   source_language: auto
-  #   target_language: zh
-  ## }}}
-
-  # 是否翻译各个字段
-  fields:
-    # 是否翻译标题
-    title: true
-    # 是否翻译剧情简介
-    plot: true
+  # 启动时校验并准备模型；只翻译含日文的标题和简介
+  model: hy_mt2_7b_q4_k_m  # 可选 hy_mt2_1_8b_q4_k_m
+  model_dir: /app/models
+  auto_download: true
+  runtime:
+    threads: 6
+    threads_batch: 6
+    ctx_size: 8192
+    batch_size: 512
+    ubatch_size: 128
+    parallel: 1
+    n_gpu_layers: 0
+    startup_timeout: 300  # 秒
+  generation:
+    temperature: 0.7
+    top_p: 0.6
+    top_k: 20
+    repeat_penalty: 1.05
+    max_tokens: 4096
+    timeout: 1800  # 单次翻译最长等待秒数
 
 ################################
 other:

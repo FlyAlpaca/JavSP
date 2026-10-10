@@ -2,6 +2,7 @@
 
 import logging
 import os
+import signal
 import sys
 
 from pydantic import ValidationError
@@ -42,21 +43,22 @@ from javsp.crawl.r18dev import prepare_database
 from javsp.datatype import setup_filemove_log
 from javsp.func import get_scan_dir
 from javsp.metadata.summarizer import load_actress_aliases
+from javsp.translate import LocalTranslator, TranslateError
 from javsp.workflow.models import Stage
 from javsp.workflow.pipeline import JobRunner, Pipeline
 
 
-def _process_single_movie(movie, total_step, stats, cfg):
+def _process_single_movie(movie, total_step, stats, cfg, translator=None):
     """兼容单片入口，实际编排由 JobRunner 完成。"""
-    job = JobRunner(cfg).run(movie)
+    job = JobRunner(cfg, translator=translator).run(movie)
     if job.error:
         raise job.error.cause
     return job.output
 
 
-def RunNormalMode(all_movies, cfg):
+def RunNormalMode(all_movies, cfg, translator=None):
     """CLI 进度适配，保留 (successful_movies, stats) 返回格式。"""
-    total_step = 5 + bool(cfg.translator.engine)
+    total_step = 6
     outer_bar = tqdm(total=len(all_movies), desc="整理影片", ascii=True, leave=False)
     inner_bar = None
 
@@ -79,7 +81,7 @@ def RunNormalMode(all_movies, cfg):
         outer_bar.update()
 
     try:
-        batch = JobRunner(cfg, on_event).run_batch(all_movies, on_result)
+        batch = JobRunner(cfg, on_event, translator=translator).run_batch(all_movies, on_result)
         return batch.legacy(cfg.summarizer.filemove_log)
     finally:
         if inner_bar:
@@ -137,6 +139,31 @@ def print_summary(stats):
     print()
 
 
+def _run_with_translator(cfg, translator):
+    """模型已就绪后才开始扫描和处理媒体文件。"""
+    load_actress_aliases()
+
+    if cfg.other.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
+
+    if getattr(getattr(cfg, "r18dev", None), "enabled", False):
+        cfg._r18dev_db_path = prepare_database(cfg._r18dev_db_path, cfg.crawler.online_enabled)
+    root = get_scan_dir(cfg.scanner.input_directory)
+    error_exit(root, "扫描目录不存在或不是目录，请检查容器挂载和 scanner.input_directory")
+    import_crawlers(cfg)
+    os.chdir(root)
+    setup_filemove_log(cfg, log_dir=root)
+
+    print("扫描影片文件...")
+    scan_result = Pipeline(cfg, translator=translator).scan(root)
+    recognized = scan_result.movies
+    error_exit(len(recognized), "未找到影片文件")
+    logger.info(f"扫描影片文件：共找到 {len(recognized)} 部影片")
+    _, stats = RunNormalMode(recognized, cfg, translator)
+    print_summary(stats)
+    return 1 if stats["failed"] or stats.get("aborted") else 0
+
+
 def entry():
     try:
         cfg = Cfg()
@@ -147,33 +174,20 @@ def entry():
             print(f"配置错误 [{loc}]: {msg}")
         sys.exit(1)
 
-    load_actress_aliases()
+    def stop_on_term(signum, _frame):
+        raise SystemExit(128 + signum)
 
-    # 启用 debug 模式时将根日志级别设为 DEBUG
-    if cfg.other.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
-
-    if getattr(getattr(cfg, "r18dev", None), "enabled", False):
-        cfg._r18dev_db_path = prepare_database(cfg._r18dev_db_path, cfg.crawler.online_enabled)
-    root = get_scan_dir(cfg.scanner.input_directory)
-    error_exit(root, "扫描目录不存在或不是目录，请检查容器挂载和 scanner.input_directory")
-    # 导入抓取器，必须在chdir之前
-    import_crawlers(cfg)
-    os.chdir(root)
-
-    # 配置文件移动日志（显式指定日志目录为扫描根目录，避免依赖全局CWD）
-    setup_filemove_log(cfg, log_dir=root)
-
-    print("扫描影片文件...")
-    scan_result = Pipeline(cfg).scan(root)
-    recognized = scan_result.movies
-    movie_count = len(recognized)
-    error_exit(movie_count, "未找到影片文件")
-    logger.info(f"扫描影片文件：共找到 {movie_count} 部影片")
-    _, stats = RunNormalMode(recognized, cfg)
-
-    print_summary(stats)
-    sys.exit(1 if stats["failed"] or stats.get("aborted") else 0)
+    previous_handler = signal.signal(signal.SIGTERM, stop_on_term)
+    try:
+        try:
+            with LocalTranslator(cfg.translator) as translator:
+                result = _run_with_translator(cfg, translator)
+        except TranslateError as error:
+            logger.error("本地翻译启动失败: %s", error)
+            sys.exit(1)
+    finally:
+        signal.signal(signal.SIGTERM, previous_handler)
+    sys.exit(result)
 
 
 if __name__ == "__main__":

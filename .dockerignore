@@ -8,6 +8,7 @@ tests/
 tools/
 docs/
 .venv/
+*.gguf
 **/.pytest_cache/
 **/.ruff_cache/
 **/*.py[cod]

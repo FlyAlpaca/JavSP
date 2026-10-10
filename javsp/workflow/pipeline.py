@@ -21,8 +21,9 @@ class _CrawlerProgress:
 
 
 class JobRunner:
-    def __init__(self, cfg, on_event=None, *, crawler=None, merger=None, planner=None, executor=None):
+    def __init__(self, cfg, on_event=None, *, translator=None, crawler=None, merger=None, planner=None, executor=None):
         self.cfg, self.on_event = cfg, on_event
+        self.translator = translator
         self.crawler = crawler if crawler is not None else CrawlerExecutor(cfg)
         self.merger = merger if merger is not None else MetadataMerger(cfg)
         self.planner = planner if planner is not None else OutputPlanner(cfg)
@@ -36,6 +37,15 @@ class JobRunner:
                 logger.warning("进度回调失败", exc_info=True)
 
     def run(self, movie) -> JobResult:
+        if self.translator is None:
+            from javsp.translate import LocalTranslator
+
+            with LocalTranslator(self.cfg.translator) as translator:
+                self.translator = translator
+                try:
+                    return self.run(movie)
+                finally:
+                    self.translator = None
         working = copy(movie)
         working.files = list(movie.files)
         stage = Stage.CRAWL
@@ -56,11 +66,10 @@ class JobRunner:
                 logger.info("部分抓取器失败: " + ", ".join(sorted({name for name, _ in result.failures})))
             emit(Stage.MERGE)
             working.info = self.merger.merge(working, result)
-            if self.cfg.translator.engine:
-                from javsp.web.translate import translate_movie_info
+            from javsp.translate import translate_movie_info
 
-                emit(Stage.TRANSLATE)
-                translate_movie_info(working.info, self.cfg)
+            emit(Stage.TRANSLATE)
+            translate_movie_info(working.info, self.translator)
             emit(Stage.PLAN)
             plan = self.planner.plan(working, working.info)
             stage = Stage.PREPARE
@@ -89,13 +98,23 @@ class JobRunner:
             recovered = not isinstance(cause, RecoveryError)
             original = cause.cause if not recovered else cause
             cancelled = isinstance(original, (KeyboardInterrupt, SystemExit, GeneratorExit))
-            error = JobError(working.dvdid or working.cid or "未知番号", stage, cause, recovered,
-                             cause.paths if not recovered else [])
+            error = JobError(
+                working.dvdid or working.cid or "未知番号", stage, cause, recovered, cause.paths if not recovered else []
+            )
             logger.error(f"整理失败: {error}")
             logger.debug("单片任务异常", exc_info=True)
             return JobResult(movie, error=error, cancelled=cancelled)
 
     def run_batch(self, movies, on_result=None) -> BatchResult:
+        if self.translator is None:
+            from javsp.translate import LocalTranslator
+
+            with LocalTranslator(self.cfg.translator) as translator:
+                self.translator = translator
+                try:
+                    return self.run_batch(movies, on_result)
+                finally:
+                    self.translator = None
         movies = list(movies)
         batch = BatchResult(len(movies))
         for index, movie in enumerate(movies):
@@ -108,7 +127,7 @@ class JobRunner:
                     logger.warning("任务结果回调失败", exc_info=True)
             if job.cancelled or (job.error and not job.error.recovered):
                 batch.aborted = True
-                batch.pending = movies[index + 1:]
+                batch.pending = movies[index + 1 :]
                 if job.interruption:
                     batch.error = JobError(movie.dvdid or movie.cid or "未知番号", Stage.DONE, job.interruption)
                 break
@@ -117,15 +136,15 @@ class JobRunner:
                     self.crawler.throttle()
                 except BaseException as cause:
                     batch.aborted = True
-                    batch.pending = movies[index + 1:]
+                    batch.pending = movies[index + 1 :]
                     batch.error = JobError(movie.dvdid or movie.cid or "未知番号", Stage.CRAWL, cause)
                     break
         return batch
 
 
 class Pipeline:
-    def __init__(self, cfg, on_event=None):
-        self.cfg, self.on_event = cfg, on_event
+    def __init__(self, cfg, on_event=None, translator=None):
+        self.cfg, self.on_event, self.translator = cfg, on_event, translator
 
     def scan(self, root):
         if self.on_event:
@@ -133,9 +152,14 @@ class Pipeline:
         return Scanner(self.cfg).scan(root)
 
     def run(self, root, review=None, on_result=None) -> BatchResult:
+        if self.translator is None:
+            from javsp.translate import LocalTranslator
+
+            with LocalTranslator(self.cfg.translator) as translator:
+                return Pipeline(self.cfg, self.on_event, translator).run(root, review, on_result)
         scan = self.scan(root)
         if review:
             review(scan.movies, root)
-        batch = JobRunner(self.cfg, self.on_event).run_batch(scan.movies, on_result)
+        batch = JobRunner(self.cfg, self.on_event, translator=self.translator).run_batch(scan.movies, on_result)
         batch.scan = scan
         return batch
