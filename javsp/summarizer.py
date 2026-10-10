@@ -35,12 +35,12 @@ def resolve_alias(name, aliases=None):
 
 
 def _merge_info(movie: Movie, all_info: dict[str, MovieInfo], cfg, aliases):
-    """汇总多个来源的在线数据生成最终数据"""
+    """按来源优先级汇总数据。"""
     final_info = MovieInfo(movie)
     ########## 部分字段配置了专门的选取逻辑，先处理这些字段 ##########
     # genre
     field_sources = {}
-    if "javdb" in all_info and all_info["javdb"].genre:
+    if not ("r18dev" in all_info and all_info["r18dev"].genre) and "javdb" in all_info and all_info["javdb"].genre:
         final_info.genre = list(all_info["javdb"].genre)
         field_sources["genre"] = "javdb"
 
@@ -91,7 +91,13 @@ def _merge_info(movie: Movie, all_info: dict[str, MovieInfo], cfg, aliases):
                 else:
                     id_weight.setdefault(data.cid, []).append(name)
         # 根据权重选择最终番号
-        if id_weight:
+        if "r18dev" in all_info and all_info["r18dev"].title:
+            final_id = all_info["r18dev"].dvdid if movie.dvdid else all_info["r18dev"].cid
+            if movie.dvdid:
+                final_info.dvdid = final_id or movie.dvdid
+            else:
+                final_info.cid = final_id or movie.cid
+        elif id_weight:
             id_weight = {k: v for k, v in sorted(id_weight.items(), key=lambda x: len(x[1]), reverse=True)}
             final_id = list(id_weight.keys())[0]
             original_id = movie.dvdid or movie.cid
