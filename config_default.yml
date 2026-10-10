@@ -18,17 +18,39 @@ scanner:
   # 大多数情况软件能够自动识别番号，只有当文件名中特定的部分导致番号识别错误时才需要更新此设置
   # 要忽略的正则表达式（如果你不熟悉正则表达式，请不要修改此配置，否则可能严重影响番号识别效果）
   ignored_id_pattern:
-    - '(144|240|360|480|720|1080)[Pp]'
-    - '[24][Kk]'
+    - "(144|240|360|480|720|1080)[Pp]"
+    - "[24][Kk]"
     - '\w+2048\.com'
-    - 'Carib(beancom)?'
+    - "Carib(beancom)?"
     - '[^a-z\d](f?hd|lt)[^a-z\d]'
   # 整理哪个文件夹下的影片？（容器中应指向已挂载的目录）
-  input_directory: '/media'
+  input_directory: "/media"
   # 哪些后缀的文件应当视为影片？
-  filename_extensions: [.3gp, .avi, .f4v, .flv, .iso, .m2ts, .m4v, .mkv, .mov, .mp4, .mpeg, .rm, .rmvb, .ts, .vob, .webm, .wmv, .strm, .mpg]
+  filename_extensions:
+    [
+      .3gp,
+      .avi,
+      .f4v,
+      .flv,
+      .iso,
+      .m2ts,
+      .m4v,
+      .mkv,
+      .mov,
+      .mp4,
+      .mpeg,
+      .rm,
+      .rmvb,
+      .ts,
+      .vob,
+      .webm,
+      .wmv,
+      .strm,
+      .mpg,
+    ]
   # 扫描影片文件时忽略指定的文件夹
-  ignored_folder_name_pattern: ['^\.', '^#recycle$', '^#整理完成$', '^#不要扫描$']
+  ignored_folder_name_pattern:
+    ['^\.', "^#recycle$", "^#整理完成$", "^#不要扫描$"]
   # 匹配番号时忽略小于指定大小的文件
   # 格式要求：https://docs.pydantic.dev/2.0/usage/types/bytesize/
   minimum_size: 232MiB
@@ -41,10 +63,10 @@ network:
   proxy_server: null
   # 各个站点的免代理地址。地址失效时软件会自动尝试获取新地址，你也可以手动设置
   proxy_free:
-    avsox: 'https://avsox.click'
-    javbus: 'https://www.seejav.cyou'
-    javdb: 'https://javdb368.com'
-    javlib: 'https://www.c97k.com'
+    avsox: "https://avsox.click"
+    javbus: "https://www.seejav.cyou"
+    javdb: "https://javdb368.com"
+    javlib: "https://www.c97k.com"
   # 网络问题导致抓取数据失败时的重试次数，通常3次就差不多了
   retry: 3
   # 单次网络请求的超时时间
@@ -54,7 +76,7 @@ network:
 ################################
 crawler:
   # 是否启用在线站点抓取；启用本地库时只在本地未命中或可映射字段为空时抓取
-  online_enabled: true
+  online_enabled: false
   # 要使用的爬虫列表（汇总数据时从前到后进行）
   # avsox avwiki fanza fc2 fc2fan javbus javdb javlib javmenu jav321 mgstage prestige
   selection:
@@ -82,7 +104,7 @@ crawler:
 ################################
 r18dev:
   # 启用 R18.dev 本地数据库；固定保存于启动目录的 config/r18dev.sqlite
-  enabled: false
+  enabled: true
 
 ################################
 # 配置整理时的命名规则
@@ -99,9 +121,9 @@ summarizer:
   # 路径相关的选项
   path:
     # 存放影片、封面等文件的文件夹路径
-    output_folder_pattern: '#整理完成/{actress}/[{num}] {title}'
+    output_folder_pattern: "#整理完成/{actress}/[{num}] {title}"
     # 影片、封面、nfo信息文件等的文件名将基于下面的规则来创建
-    basename_pattern: '{num}'
+    basename_pattern: "{num}"
     # 允许的最长文件路径（路径过长时将据此自动截短标题）
     length_maximum: 250
     # 是否以字节数来计算文件路径长度
@@ -118,27 +140,27 @@ summarizer:
 
   # 下面这些项用来设置对应变量为空时的替代信息
   default:
-    title: '#未知标题'
-    actress: '#未知女优'
-    series: '#未知系列'
-    director: '#未知导演'
-    producer: '#未知制作商'
-    publisher: '#未知发行商'
+    title: "#未知标题"
+    actress: "#未知女优"
+    series: "#未知系列"
+    director: "#未知导演"
+    producer: "#未知制作商"
+    publisher: "#未知发行商"
 
   # NFO文件生成相关的选项
   nfo:
     # nfo文件的名称
     basename_pattern: "movie"
     # nfo文件中的影片标题（即媒体管理工具中显示的标题）
-    title_pattern: '{num} {title}'
+    title_pattern: "{num} {title}"
     # 要添加到自定义分类的字段，空列表表示不添加
     # 网站原始类别默认进入 tag，此处建议只放 {censor} 等少量自定义分类
-    custom_genres_fields: ['{censor}']
+    custom_genres_fields: ["{censor}"]
     # 要添加到自定义标签的字段，空列表表示不添加
     # 网站原始类别已自动进入 tag，无需再在此处添加 {genre}
-    custom_tags_fields: ['{censor}']
+    custom_tags_fields: ["{censor}"]
   # 依次设置 无码/有码/打码情况未知 三种情况下 {censor} 对应的文本（可用于按打码情况整理到不同文件夹）
-  censor_options_representation: ['无码', '有码', '打码情况未知']
+  censor_options_representation: ["无码", "有码", "打码情况未知"]
 
   cover:
     # 封面文件的名称（不含拓展名），可以使用如`{title}`等字段
@@ -151,11 +173,11 @@ summarizer:
       # 要使用图像识别来裁剪的番号系列需要匹配的正则表达式
       on_id_pattern:
         - '^\d{6}[-_]\d{3}$'
-        - '^ARA'
-        - '^SIRO'
-        - '^GANA'
-        - '^MIUM'
-        - '^HHL'
+        - "^ARA"
+        - "^SIRO"
+        - "^GANA"
+        - "^MIUM"
+        - "^HHL"
       # 要使用的图像识别引擎，详细配置见文档 https://github.com/Yuukiy/JavSP/wiki/AI-%7C-%E4%BA%BA%E8%84%B8%E8%AF%86%E5%88%AB
       # NOTE: 此处无法直接对应，请参照注释手动填入
       # 不设置 engine 表示禁用图像剪裁
@@ -177,7 +199,7 @@ summarizer:
 ################################
 translator:
   # 启动时校验并准备模型；只翻译含日文的标题和简介
-  model: hy_mt2_7b_q4_k_m  # 可选 hy_mt2_1_8b_q4_k_m
+  model: hy_mt2_7b_q4_k_m # 可选 hy_mt2_1_8b_q4_k_m
   model_dir: /app/models
   auto_download: true
   runtime:
@@ -188,14 +210,14 @@ translator:
     ubatch_size: 128
     parallel: 1
     n_gpu_layers: 0
-    startup_timeout: 300  # 秒
+    startup_timeout: 300 # 秒
   generation:
     temperature: 0.7
     top_p: 0.6
     top_k: 20
     repeat_penalty: 1.05
     max_tokens: 4096
-    timeout: 1800  # 单次翻译最长等待秒数
+    timeout: 1800 # 单次翻译最长等待秒数
 
 ################################
 other:

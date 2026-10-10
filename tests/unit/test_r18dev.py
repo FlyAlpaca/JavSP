@@ -191,7 +191,7 @@ def test_local_priority_online_gap_and_source_tracking(tmp_path, monkeypatch):
     cfg = cfg.model_copy(
         update={
             "r18dev": cfg.r18dev.model_copy(update={"enabled": True}),
-            "crawler": cfg.crawler.model_copy(update={"normalize_actress_name": False}),
+            "crawler": cfg.crawler.model_copy(update={"normalize_actress_name": False, "online_enabled": True}),
         }
     )
     calls = []
@@ -227,7 +227,12 @@ def test_complete_local_hit_skips_online_and_miss_uses_online(tmp_path, monkeypa
     prepare_database(path, True, session=Session(url("2026-10-06"), dump()))
     cfg = Cfg().model_copy(deep=True)
     cfg._r18dev_db_path = path
-    cfg = cfg.model_copy(update={"r18dev": cfg.r18dev.model_copy(update={"enabled": True})})
+    cfg = cfg.model_copy(
+        update={
+            "r18dev": cfg.r18dev.model_copy(update={"enabled": True}),
+            "crawler": cfg.crawler.model_copy(update={"online_enabled": True}),
+        }
+    )
     calls = []
 
     def online(movie, config, progress):
