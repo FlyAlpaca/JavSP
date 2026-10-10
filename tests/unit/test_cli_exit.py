@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from javsp import __main__ as cli
+from javsp import func
 from javsp.config import Cfg
 from javsp.datatype import MovieInfo
 from javsp.workflow.models import JobError, JobResult, OutputResult, ScanResult, Stage
@@ -22,11 +23,25 @@ def test_entry_returns_failure_status(tmp_path, monkeypatch, failed, code):
     monkeypatch.setattr(cli, "get_scan_dir", lambda *a: str(tmp_path))
     monkeypatch.setattr(cli, "Pipeline", lambda cfg: SimpleNamespace(scan=lambda root: ScanResult([object()] * 3)))
     monkeypatch.setattr(cli, "RunNormalMode", lambda *a: ([], {"failed": failed}))
-    monkeypatch.setattr(cli.time, "sleep", lambda *a: None)
+    monkeypatch.setattr(cli.time, "sleep", lambda *a: pytest.fail("非交互模式不应等待退出"))
     monkeypatch.chdir(tmp_path)
     with pytest.raises(SystemExit) as exc:
         cli.entry()
     assert exc.value.code == code
+
+
+def test_entry_with_missing_noninteractive_directory_exits_without_prompt(tmp_path, monkeypatch):
+    cfg = SimpleNamespace(
+        other=SimpleNamespace(debug=False, check_update=False, auto_update=False, interactive=False),
+        scanner=SimpleNamespace(input_directory=tmp_path / "missing"),
+    )
+    monkeypatch.setattr(cli, "Cfg", lambda: cfg)
+    monkeypatch.setattr(cli, "load_actress_aliases", lambda: None)
+    monkeypatch.setattr(cli, "check_update", lambda *args: None)
+    monkeypatch.setattr(func, "prompt", lambda *args: pytest.fail("非交互模式不应提示选目录"))
+    with pytest.raises(SystemExit) as exc:
+        cli.entry()
+    assert exc.value.code == 1
 
 
 def test_batch_continues_and_counts_failure(monkeypatch):
