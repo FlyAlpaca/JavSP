@@ -27,7 +27,10 @@ def scene(tmp_path, monkeypatch):
     cfg = cfg.model_copy(
         update={
             "scanner": cfg.scanner.model_copy(update={"minimum_size": 0, "skip_nfo_dir": False}),
-            "crawler": cfg.crawler.model_copy(update={"selection": {"normal": ["testlocal"]}, "normalize_actress_name": False}),
+            "crawler": cfg.crawler.model_copy(
+                update={"selection": {"normal": ["testlocal"]}, "normalize_actress_name": False, "online_enabled": True}
+            ),
+            "r18dev": cfg.r18dev.model_copy(update={"enabled": False}),
             "summarizer": cfg.summarizer.model_copy(
                 update={
                     "path": cfg.summarizer.path.model_copy(update={"output_folder_pattern": str(tmp_path / "out" / "{num}")}),
