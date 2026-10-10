@@ -38,7 +38,7 @@ def _scan_movies(root: str, cfg, result: ScanResult) -> list[Movie]:
     dic = {}  # avid: [abspath1, abspath2...]
     small_videos = {}
     ignore_folder_name_pattern = re.compile("|".join(cfg.scanner.ignored_folder_name_pattern))
-    skip_nfo = cfg.scanner.skip_nfo_dir
+    skip_nfo = cfg.scanner.skip_nfo_dir and not cfg.scanner.force_scan
 
     for dirpath, dirnames, filenames in os.walk(root):
         filtered_dirs = []

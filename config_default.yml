@@ -56,6 +56,8 @@ scanner:
   minimum_size: 232MiB
   # 扫描时是否跳过已存在NFO文件的文件夹（yes/true: 跳过）
   skip_nfo_dir: yes
+  # 强制扫描已有NFO的文件夹；启用时优先于 skip_nfo_dir（yes/true: 扫描）
+  force_scan: no
 ################################
 network:
   # 设置代理服务器地址，支持 http, socks5/socks5h 代理，比如'http://127.0.0.1:1080'
