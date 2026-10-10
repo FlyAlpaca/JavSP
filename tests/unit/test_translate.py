@@ -162,7 +162,7 @@ def test_failed_download_preserves_existing_file(tmp_path, small_model):
 
 def test_resume_partial_segment(tmp_path, small_model, model_server, monkeypatch):
     spec, content = small_model
-    monkeypatch.setattr("javsp.translate._DOWNLOAD_CHUNK", 32)
+    monkeypatch.setattr("javsp.download.CHUNK_SIZE", 32)
     model_server.fail_once = True
     with pytest.raises(TranslateError, match="模型下载失败"):
         ensure_model(Translator(model_dir=tmp_path))
@@ -189,7 +189,7 @@ def test_range_fallback(tmp_path, small_model, model_server, mode):
 
 def test_single_connection_resume(tmp_path, small_model, model_server, monkeypatch):
     _, content = small_model
-    monkeypatch.setattr("javsp.translate._DOWNLOAD_CHUNK", 32)
+    monkeypatch.setattr("javsp.download.CHUNK_SIZE", 32)
     model_server.probe_ignored = True
     model_server.fail_once = True
     with pytest.raises(TranslateError, match="模型下载失败"):
@@ -221,13 +221,15 @@ def test_oversized_segment_is_discarded(tmp_path, small_model, model_server):
 
 
 def test_terminal_progress_uses_single_tqdm_bar(monkeypatch):
-    from javsp.translate import _DownloadProgress
+    import logging
+
+    from javsp.download import DownloadProgress
 
     bar = MagicMock()
     constructor = MagicMock(return_value=bar)
-    monkeypatch.setattr("javsp.translate.tqdm", constructor)
-    monkeypatch.setattr("javsp.translate.sys.stderr.isatty", lambda: True)
-    with _DownloadProgress(100, 25) as progress:
+    monkeypatch.setattr("javsp.download.tqdm", constructor)
+    monkeypatch.setattr("javsp.download.sys.stderr.isatty", lambda: True)
+    with DownloadProgress(100, 25, "下载翻译模型", logging.getLogger("javsp.translate")) as progress:
         progress.update(20)
     assert constructor.call_args.kwargs["initial"] == 25
     assert constructor.call_args.kwargs["disable"] is False
