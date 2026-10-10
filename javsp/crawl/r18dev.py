@@ -382,7 +382,7 @@ def _name(db, table, relation, entity, content_id, fields):
 
 
 def lookup(path: Path, movie):
-    """精确匹配 CID 或规范化番号；歧义记录交由在线站点处理。"""
+    """优先匹配 DVD 番号；缺失时依次尝试未补零和补零的 CID。"""
     with closing(_connect(Path(path))) as db:
         db.row_factory = sqlite3.Row
         if movie.cid and (movie.data_src == "cid" or not movie.dvdid):
@@ -392,6 +392,20 @@ def lookup(path: Path, movie):
             rows = db.execute(
                 "SELECT * FROM derived_video WHERE UPPER(REPLACE(REPLACE(dvd_id, '-', ''), ' ', '')) = ? LIMIT 2", (normalized,)
             ).fetchall()
+            if not rows:
+                match = re.fullmatch(r"([A-Za-z]+)[-\s]*(\d+)", movie.dvdid)
+                if match:
+                    prefix, number = match.groups()
+                    number = number.lstrip("0") or "0"
+                    for candidate in dict.fromkeys((prefix.lower() + number, prefix.lower() + number.zfill(5))):
+                        rows = db.execute(
+                            "SELECT * FROM derived_video WHERE content_id = ? AND "
+                            "(dvd_id IS NULL OR dvd_id = '' OR "
+                            "UPPER(REPLACE(REPLACE(dvd_id, '-', ''), ' ', '')) = ?) LIMIT 2",
+                            (candidate, normalized),
+                        ).fetchall()
+                        if rows:
+                            break
         else:
             return None
         if len(rows) != 1:
