@@ -2,6 +2,7 @@
 
 import json
 import logging
+from functools import lru_cache
 
 from javsp.config import Cfg, UseJavDBCover
 from javsp.datatype import GenreMap, Movie, MovieInfo
@@ -161,14 +162,22 @@ def _merge_info(movie: Movie, all_info: dict[str, MovieInfo], cfg, aliases):
     return final_info
 
 
+@lru_cache(maxsize=16)
+def _genre_map_for_source(name: str) -> GenreMap | None:
+    """分类表随安装包发布，批量处理时只需读取一次。"""
+    try:
+        return GenreMap(f"data/genre_{name}.csv")
+    except FileNotFoundError:
+        return None
+
+
 def normalize_genres(all_info: dict[str, MovieInfo]):
     """对成功来源归一化分类，已有归一化结果优先。"""
     for name, info in all_info.items():
         if info.genre_norm or not (info.genre_id or info.genre):
             continue
-        try:
-            genre_map = GenreMap(f"data/genre_{name}.csv")
-        except FileNotFoundError:
+        genre_map = _genre_map_for_source(name)
+        if genre_map is None:
             logger.debug(f"'{name}' 缺少 genre 映射表，跳过归一化")
             continue
         info.genre_norm = genre_map.map(info.genre_id or info.genre)
