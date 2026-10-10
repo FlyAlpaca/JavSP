@@ -233,6 +233,34 @@ def test_download_update_and_keep_old_on_failure(tmp_path):
     assert not path.with_name(path.name + ".tmp").exists()
 
 
+def test_dvd_id_falls_back_to_unpadded_then_padded_cid(tmp_path):
+    path = tmp_path / "r18dev.sqlite"
+    prepare_database(path, False, session=Session(url("2026-10-06"), dump()))
+    with sqlite3.connect(path) as db:
+        db.executemany(
+            "INSERT INTO derived_video (content_id, dvd_id, title_ja) VALUES (?, ?, ?)",
+            [
+                ("ipzz798", None, "未补零版"),
+                ("ipzz00798", None, "补零版"),
+                ("snos00355", None, "只有补零版"),
+                ("guard123", "OTHER-123", "其他番号"),
+            ],
+        )
+
+    ipzz = lookup(path, Movie("IPZZ-798"))
+    assert ipzz.cid == "ipzz798" and ipzz.dvdid == "IPZZ-798" and ipzz.title == "未补零版"
+    snos = lookup(path, Movie("SNOS-355"))
+    assert snos.cid == "snos00355" and snos.dvdid == "SNOS-355" and snos.title == "只有补零版"
+    assert lookup(path, Movie("GUARD-123")) is None
+
+    with sqlite3.connect(path) as db:
+        db.execute(
+            "INSERT INTO derived_video (content_id, dvd_id, title_ja) VALUES (?, ?, ?)",
+            ("ipzz-other", "IPZZ-798", "番号匹配版"),
+        )
+    assert lookup(path, Movie("IPZZ-798")).title == "番号匹配版"
+
+
 def test_list_pagination_and_newest_valid_date(tmp_path, wasabi_server):
     path = tmp_path / "r18dev.sqlite"
     session = Session(url("2026-10-06"), dump("最新标题"))
