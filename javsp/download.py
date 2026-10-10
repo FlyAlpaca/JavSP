@@ -87,7 +87,8 @@ class DownloadProgress:
         self.label = label
         self.logger = logger
         self.lock = threading.Lock()
-        self.terminal = sys.stderr.isatty()
+        # 控制台日志经 tqdm.write 输出到 stdout；进度条也使用同一输出流。
+        self.terminal = sys.stdout.isatty()
         self.last_percent = initial * 100 // size
         self.last_report_at = time.monotonic()
         self.bar = tqdm(
@@ -97,6 +98,7 @@ class DownloadProgress:
             unit="B",
             unit_scale=True,
             unit_divisor=1024,
+            file=sys.stdout,
             disable=not self.terminal,
         )
         if not self.terminal:
