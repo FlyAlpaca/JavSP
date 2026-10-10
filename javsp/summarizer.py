@@ -141,6 +141,10 @@ def _merge_info(movie: Movie, all_info: dict[str, MovieInfo], cfg, aliases):
         logger.error(f"所有抓取器均未获取到字段: {missing_keys}，抓取失败")
         return missing_keys
     final_info.field_sources = field_sources
+    for name, data in all_info.items():
+        for url in (data.cover, data.big_cover):
+            if url:
+                final_info._cover_sources.setdefault(url, name)
     # cover 的优先级可能由 javdb 策略调整。
     for field in ("cover", "big_cover"):
         value = getattr(final_info, field)

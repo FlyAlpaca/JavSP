@@ -1,7 +1,6 @@
 """验证上游合并后的配置兼容性、分类过滤和目录异常处理。"""
 
 import os
-from types import SimpleNamespace
 
 from lxml import etree
 
@@ -62,9 +61,9 @@ def test_scan_unreadable_child_continues(tmp_path, monkeypatch):
 
 
 def test_nfo_site_categories_are_tags(tmp_path, monkeypatch):
-    cfg = SimpleNamespace(summarizer=SimpleNamespace(nfo=SimpleNamespace(
-        custom_genres_fields=["自定义"], custom_tags_fields=["附加"],
-    )))
+    base = config.Cfg()
+    nfo_cfg = base.summarizer.nfo.model_copy(update={"custom_genres_fields": ["自定义"], "custom_tags_fields": ["附加"]})
+    cfg = base.model_copy(update={"summarizer": base.summarizer.model_copy(update={"nfo": nfo_cfg})})
     monkeypatch.setattr(nfo, "Cfg", lambda: cfg)
     info = MovieInfo("ABC-123", title="测试", genre=["原始"], genre_norm=["归一化", "归一化"])
     target = tmp_path / "movie.nfo"

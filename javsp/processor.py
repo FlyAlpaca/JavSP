@@ -27,23 +27,24 @@ SUBTITLE_MARK_FILE = Image.open(os.path.abspath(resource_path("image/sub_mark.pn
 UNCENSORED_MARK_FILE = Image.open(os.path.abspath(resource_path("image/unc_mark.png")))
 
 
-def generate_names(movie: Movie):
+def generate_names(movie: Movie, cfg=None):
     """按照模板生成相关文件的文件名"""
 
     def legalize_path(path: str):
         """Windows下文件名中不能包含换行 #467"""
         return "".join(c for c in path if c not in {"\n"})
 
+    cfg = cfg if cfg is not None else Cfg()
     info = movie.info
     # 准备用来填充命名模板的字典
-    d = info.get_info_dic()
+    d = info.get_info_dic(cfg)
 
-    if info.actress and len(info.actress) > Cfg().summarizer.path.max_actress_count:
+    if info.actress and len(info.actress) > cfg.summarizer.path.max_actress_count:
         logging.debug("女优人数过多，按配置保留了其中的前n个: " + ",".join(info.actress))
-        actress = info.actress[: Cfg().summarizer.path.max_actress_count] + ["…"]
+        actress = info.actress[: cfg.summarizer.path.max_actress_count] + ["…"]
     else:
         actress = info.actress
-    d["actress"] = ",".join(actress) if actress else Cfg().summarizer.default.actress
+    d["actress"] = ",".join(actress) if actress else cfg.summarizer.default.actress
 
     # 保存label供后面判断裁剪图片的方式使用
     info.label = d["label"].upper()
@@ -52,7 +53,7 @@ def generate_names(movie: Movie):
         d[k] = replace_illegal_chars(v.strip())
 
     # 生成nfo文件中的影片标题
-    nfo_title = Cfg().summarizer.nfo.title_pattern.format(**d)
+    nfo_title = cfg.summarizer.nfo.title_pattern.format(**d)
     info.nfo_title = nfo_title
 
     # 使用字典填充模板，生成相关文件的路径（多分片影片要考虑CD-x部分）
@@ -87,9 +88,9 @@ def generate_names(movie: Movie):
         copyd["rawtitle"] = replace_illegal_chars("".join(ori_title_break[:end]).strip())
         for sub_end in range(len(title_break), 0, -1):
             copyd["title"] = replace_illegal_chars("".join(title_break[:sub_end]).strip())
-            if Cfg().summarizer.move_files:
-                save_dir = os.path.normpath(Cfg().summarizer.path.output_folder_pattern.format(**copyd)).strip()
-                basename = os.path.normpath(Cfg().summarizer.path.basename_pattern.format(**copyd)).strip()
+            if cfg.summarizer.move_files:
+                save_dir = os.path.normpath(cfg.summarizer.path.output_folder_pattern.format(**copyd)).strip()
+                basename = os.path.normpath(cfg.summarizer.path.basename_pattern.format(**copyd)).strip()
             else:
                 # 如果不整理文件，则保存抓取的数据到当前目录
                 save_dir = os.path.dirname(movie.files[0])
@@ -97,21 +98,21 @@ def generate_names(movie: Movie):
                 ext = os.path.splitext(filebasename)[1]
                 basename = filebasename.replace(ext, "")
             long_path = os.path.join(save_dir, basename + longest_ext)
-            remaining = get_remaining_path_len(os.path.abspath(long_path))
+            remaining = get_remaining_path_len(os.path.abspath(long_path), cfg)
             if remaining > 0:
                 movie.save_dir = save_dir
                 movie.basename = basename
                 movie.nfo_file = os.path.join(
                     save_dir,
-                    Cfg().summarizer.nfo.basename_pattern.format(**copyd) + ".nfo",
+                    cfg.summarizer.nfo.basename_pattern.format(**copyd) + ".nfo",
                 )
                 movie.fanart_file = os.path.join(
                     save_dir,
-                    Cfg().summarizer.fanart.basename_pattern.format(**copyd) + ".jpg",
+                    cfg.summarizer.fanart.basename_pattern.format(**copyd) + ".jpg",
                 )
                 movie.poster_file = os.path.join(
                     save_dir,
-                    Cfg().summarizer.cover.basename_pattern.format(**copyd) + ".jpg",
+                    cfg.summarizer.cover.basename_pattern.format(**copyd) + ".jpg",
                 )
                 return legalize_info()
     else:
@@ -120,33 +121,34 @@ def generate_names(movie: Movie):
         copyd["title"] = copyd["title"][: max(0, len(copyd["title"]) + remaining)]
         copyd["rawtitle"] = copyd["rawtitle"][: max(0, len(copyd["rawtitle"]) + remaining)]
         # 如果不整理文件，则保存抓取的数据到当前目录
-        if not Cfg().summarizer.move_files:
+        if not cfg.summarizer.move_files:
             save_dir = os.path.dirname(movie.files[0])
             filebasename = os.path.basename(movie.files[0])
             ext = os.path.splitext(filebasename)[1]
             basename = filebasename.replace(ext, "")
         else:
-            save_dir = os.path.normpath(Cfg().summarizer.path.output_folder_pattern.format(**copyd)).strip()
-            basename = os.path.normpath(Cfg().summarizer.path.basename_pattern.format(**copyd)).strip()
+            save_dir = os.path.normpath(cfg.summarizer.path.output_folder_pattern.format(**copyd)).strip()
+            basename = os.path.normpath(cfg.summarizer.path.basename_pattern.format(**copyd)).strip()
         movie.save_dir = save_dir
         movie.basename = basename
 
-        movie.nfo_file = os.path.join(save_dir, Cfg().summarizer.nfo.basename_pattern.format(**copyd) + ".nfo")
-        movie.fanart_file = os.path.join(save_dir, Cfg().summarizer.fanart.basename_pattern.format(**copyd) + ".jpg")
-        movie.poster_file = os.path.join(save_dir, Cfg().summarizer.cover.basename_pattern.format(**copyd) + ".jpg")
+        movie.nfo_file = os.path.join(save_dir, cfg.summarizer.nfo.basename_pattern.format(**copyd) + ".nfo")
+        movie.fanart_file = os.path.join(save_dir, cfg.summarizer.fanart.basename_pattern.format(**copyd) + ".jpg")
+        movie.poster_file = os.path.join(save_dir, cfg.summarizer.cover.basename_pattern.format(**copyd) + ".jpg")
 
         # 截断后仍超长则给出明确警告，后续文件操作会暴露实际问题
         long_path = os.path.join(save_dir, basename + longest_ext)
-        if get_remaining_path_len(os.path.abspath(long_path)) <= 0:
+        if get_remaining_path_len(os.path.abspath(long_path), cfg) <= 0:
             logger.warning(f"生成的整理路径仍超过长度限制，请检查命名模板或输出目录: {long_path}")
 
         return legalize_info()
 
 
-def download_cover(covers, fanart_path, big_covers=None, movie_id=""):
+def download_cover(covers, fanart_path, big_covers=None, movie_id="", cfg=None):
     """每组最多并发下载三张封面，高清全部失败后才尝试普通封面。"""
     failed_reasons = []
-    retry = Cfg().network.retry
+    cfg = cfg if cfg is not None else Cfg()
+    retry = cfg.network.retry
     temp_dir = os.path.dirname(os.path.abspath(fanart_path))
 
     def download_group(urls, highres):
@@ -238,11 +240,11 @@ def download_cover(covers, fanart_path, big_covers=None, movie_id=""):
     return None, reason_detail
 
 
-def download_extra_fanarts(movie: Movie, scrape_interval: float, tqdm_bar=None):
+def download_extra_fanarts(movie: Movie, scrape_interval: float, tqdm_bar=None, destination_dir=None):
     """并发保存全部剧照，按统一的启动间隔限速，等待所有任务结束。"""
     if not movie.info.preview_pics:
         return
-    destination_dir = os.path.join(movie.save_dir, "extrafanart")
+    destination_dir = destination_dir or os.path.join(movie.save_dir, "extrafanart")
     os.makedirs(destination_dir, exist_ok=True)
     start_lock = threading.Lock()
     next_start = 0.0
@@ -300,32 +302,35 @@ def get_pic_path(fanart_path, image_path):
     return fanart_base + extension
 
 
-def process_poster(movie: Movie):
+def process_poster(movie: Movie, cfg=None, folder_cover_path=None, generate_folder_cover=True):
     """处理封面图片：裁剪、添加标签，并生成文件夹封面缩略图"""
 
+    cfg = cfg if cfg is not None else Cfg()
+
     def should_use_ai_crop_match(label):
-        for r in Cfg().summarizer.cover.crop.on_id_pattern:
+        for r in cfg.summarizer.cover.crop.on_id_pattern:
             if re.match(r, label):
                 return True
         return False
 
     crop_engine = None
     if movie.info.uncensored or movie.data_src == "fc2" or should_use_ai_crop_match(movie.info.label.upper()):
-        crop_engine = Cfg().summarizer.cover.crop.engine
+        crop_engine = cfg.summarizer.cover.crop.engine
     cropper = get_cropper(crop_engine)
     with Image.open(movie.fanart_file) as fanart_image:
         fanart_cropped = cropper.crop(fanart_image)
 
-    if Cfg().summarizer.cover.add_label:
+    if cfg.summarizer.cover.add_label:
         if movie.hard_sub:
             fanart_cropped = add_label_to_poster(fanart_cropped, SUBTITLE_MARK_FILE, LabelPosition.BOTTOM_RIGHT)
         if movie.uncensored:
             fanart_cropped = add_label_to_poster(fanart_cropped, UNCENSORED_MARK_FILE, LabelPosition.BOTTOM_LEFT)
     fanart_cropped.save(movie.poster_file)
 
-    folder_cover = os.path.join(movie.save_dir, "folder.jpg")
+    folder_cover = folder_cover_path or os.path.join(movie.save_dir, "folder.jpg")
     # 自定义命名已使用 folder.jpg 时保留原图，避免缩略图覆盖海报或横版封面。
-    if os.path.abspath(folder_cover) not in {os.path.abspath(movie.poster_file), os.path.abspath(movie.fanart_file)}:
+    image_paths = {os.path.abspath(movie.poster_file), os.path.abspath(movie.fanart_file)}
+    if generate_folder_cover and os.path.abspath(folder_cover) not in image_paths:
         with fanart_cropped.convert("RGB") as thumbnail:
             thumbnail.thumbnail((300, 450), Image.Resampling.LANCZOS)
             thumbnail.save(folder_cover, format="JPEG")

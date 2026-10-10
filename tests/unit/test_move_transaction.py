@@ -1,11 +1,12 @@
 """文件移动失败时整组回滚，保留原始内容。"""
 
+import errno
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from javsp import datatype
+from javsp import datatype, output
 from javsp.datatype import Movie
 
 
@@ -37,28 +38,26 @@ def test_conflict_checked_before_first_part(scene, hardlink):
 @pytest.mark.parametrize("hardlink", [False, True])
 def test_partial_copy_failure_rolls_back(scene, monkeypatch, hardlink):
     movie, src, dst = scene
-    real_move = datatype.shutil.move
+    real_rename = output.os.rename
+    real_copy = output.shutil.copy2
 
-    def fail_second(source, target):
+    def rename(source, target):
+        if str(source) in movie.files:
+            raise OSError(errno.EXDEV, "cross device")
+        return real_rename(source, target)
+
+    def copy(source, target):
         if str(source) == movie.files[1]:
             Path(target).write_bytes(b"partial")
             raise OSError("disk full")
-        return real_move(source, target)
+        return real_copy(source, target)
 
+    monkeypatch.setattr(output.os, "rename", rename)
+    monkeypatch.setattr(output.shutil, "copy2", copy)
     if hardlink:
-
         def no_links(*args):
             raise OSError("unsupported")
-
-        monkeypatch.setattr(datatype.os, "link", no_links)
-        real_copy = datatype.shutil.copy2
-
-        def copy(source, target):
-            return fail_second(source, target) if str(source) == movie.files[1] else real_copy(source, target)
-
-        monkeypatch.setattr(datatype.shutil, "copy2", copy)
-    else:
-        monkeypatch.setattr(datatype.shutil, "move", fail_second)
+        monkeypatch.setattr(output.os, "link", no_links)
     with pytest.raises(OSError, match="disk full"):
         movie.rename_files(hardlink)
     assert (src / "ABC-123-CD1.mp4").read_bytes() == b"\x00"
@@ -69,14 +68,14 @@ def test_partial_copy_failure_rolls_back(scene, monkeypatch, hardlink):
 def test_subtitle_failure_rolls_back_video(scene, monkeypatch):
     movie, src, dst = scene
     (src / "ABC-123.srt").write_bytes(b"subtitle")
-    real_move = datatype.shutil.move
+    real_move = output.os.rename
 
     def move(source, target):
         if str(source).endswith(".srt"):
             raise OSError("subtitle failure")
         return real_move(source, target)
 
-    monkeypatch.setattr(datatype.shutil, "move", move)
+    monkeypatch.setattr(output.os, "rename", move)
     with pytest.raises(OSError, match="subtitle failure"):
         movie.rename_files()
     assert list(dst.iterdir()) == []
@@ -85,14 +84,14 @@ def test_subtitle_failure_rolls_back_video(scene, monkeypatch):
 
 def test_rollback_failure_reports_paths_and_keeps_recoverable_file(scene, monkeypatch):
     movie, src, dst = scene
-    real_move = datatype.shutil.move
+    real_move = output.os.rename
 
     def move(source, target):
         if str(source) == movie.files[1] or str(source) == str(dst / "renamed-CD1.mp4"):
             raise OSError("permission denied")
         return real_move(source, target)
 
-    monkeypatch.setattr(datatype.shutil, "move", move)
+    monkeypatch.setattr(output.os, "rename", move)
     with pytest.raises(RuntimeError, match="回滚不完整") as exc:
         movie.rename_files()
     assert str(dst / "renamed-CD1.mp4") in str(exc.value)
