@@ -9,7 +9,7 @@ import sqlite3
 import xml.etree.ElementTree as ET
 from contextlib import closing
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
@@ -124,16 +124,26 @@ def _latest_dump(session, options: dict) -> DumpObject:
     return latest
 
 
-def _local_version(path: Path) -> tuple[date | None, str | None, int | None]:
+def _local_version(path: Path) -> tuple[date | None, str | None, int | None, datetime | None]:
     with closing(_connect(path)) as db:
         columns = {row[1] for row in db.execute("PRAGMA table_info(dump_meta)")}
-        fields = [field for field in ("source_url", "dump_date", "etag", "size") if field in columns]
+        fields = [field for field in ("source_url", "dump_date", "etag", "size", "imported_at") if field in columns]
         row = dict(zip(fields, db.execute(f"SELECT {', '.join(fields)} FROM dump_meta").fetchone(), strict=True))
     try:
         local_date = date.fromisoformat(row["dump_date"]) if row.get("dump_date") else _date_from_url(row["source_url"])
     except ValueError:
         local_date = None
-    return local_date, row.get("etag"), row.get("size")
+    if "imported_at" in columns:
+        try:
+            imported_at = datetime.fromisoformat(row["imported_at"])
+            if imported_at.tzinfo is None:
+                imported_at = None
+        except (TypeError, ValueError):
+            imported_at = None
+    else:
+        # 旧库没有导入时间，以数据库文件时间作为升级时的近似值。
+        imported_at = datetime.fromtimestamp(path.stat().st_mtime, UTC)
+    return local_date, row.get("etag"), row.get("size"), imported_at
 
 
 def _decode(value):
@@ -172,7 +182,7 @@ def _import_dump(stream, path, source: DumpObject):
         db.execute("PRAGMA synchronous=OFF")
         db.execute(
             "CREATE TABLE dump_meta (source_url TEXT NOT NULL, dump_date TEXT NOT NULL, "
-            "etag TEXT NOT NULL, size INTEGER NOT NULL)"
+            "etag TEXT NOT NULL, size INTEGER NOT NULL, imported_at TEXT NOT NULL)"
         )
         current = None
         columns = []
@@ -258,8 +268,8 @@ def _import_dump(stream, path, source: DumpObject):
         for table in ENTITY_TABLES:
             db.execute(f"CREATE INDEX {table}_id ON {table} (id)")
         db.execute(
-            "INSERT INTO dump_meta VALUES (?, ?, ?, ?)",
-            (source.url, source.dump_date.isoformat(), source.etag, source.size),
+            "INSERT INTO dump_meta VALUES (?, ?, ?, ?, ?)",
+            (source.url, source.dump_date.isoformat(), source.etag, source.size, datetime.now(UTC).isoformat()),
         )
         db.commit()
     finally:
@@ -283,13 +293,22 @@ def _ensure_entity_indexes(path):
 
 
 def prepare_database(path: Path, online_enabled: bool, *, session=None):
-    """启动时检查最新版本；失败时只允许使用有效旧库或在线抓取。"""
+    """本地库导入未满七天时跳过远端检查；失败时使用有效旧库或在线抓取。"""
     path = Path(path)
     usable = _valid(path)
     if path.exists() and not usable:
         logger.warning("R18.dev 本地数据库无效，将重新下载: %s", path)
     if usable:
+        try:
+            old_date, old_etag, old_size, imported_at = _local_version(path)
+        except (OSError, sqlite3.Error, TypeError, ValueError) as error:
+            logger.warning("R18.dev 本地数据库版本信息读取失败，将检查远端: %s", error)
+            old_date, old_etag, old_size, imported_at = None, None, None, None
         _ensure_entity_indexes(path)
+        age = datetime.now(UTC) - imported_at if imported_at is not None else None
+        if old_etag and old_size and age is not None and timedelta(0) <= age < timedelta(days=7):
+            logger.info("R18.dev 本地数据库七天内已更新，跳过远端检查: %s", path)
+            return path
     client = session or requests.Session()
     proxy = Cfg().network.proxy_server
     options = {"proxies": {"http": str(proxy), "https": str(proxy)}} if proxy is not None else {}
@@ -299,7 +318,6 @@ def prepare_database(path: Path, online_enabled: bool, *, session=None):
     try:
         source = _latest_dump(client, options)
         if usable:
-            old_date, old_etag, old_size = _local_version(path)
             if old_date and (
                 old_date > source.dump_date
                 or (old_date == source.dump_date and old_etag == source.etag and old_size == source.size)

@@ -2,10 +2,12 @@
 
 import gzip
 import hashlib
+import os
 import re
 import sqlite3
 import threading
 import xml.etree.ElementTree as ET
+from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse
@@ -216,6 +218,43 @@ def url(date):
     return f"{_server_state.base}dumps/r18dotdev_dump_{date}.sql.gz"
 
 
+def expire_database(path):
+    with sqlite3.connect(path) as db:
+        db.execute(
+            "UPDATE dump_meta SET imported_at = ?",
+            ((datetime.now(UTC) - timedelta(days=8)).isoformat(),),
+        )
+
+
+def test_recent_database_skips_remote_check(tmp_path):
+    path = tmp_path / "r18dev.sqlite"
+    prepare_database(path, False, session=Session(url("2026-10-06"), dump("旧版")))
+    newer = Session(url("2026-10-13"), dump("新版"))
+    assert prepare_database(path, False, session=newer) == path
+    assert newer.calls == 0
+    assert lookup(path, Movie("ABC-123")).title == "旧版"
+
+    expire_database(path)
+    assert prepare_database(path, False, session=newer) == path
+    assert newer.calls > 0
+    assert lookup(path, Movie("ABC-123")).title == "新版"
+
+
+def test_existing_database_uses_file_time_for_first_seven_day_check(tmp_path):
+    path = tmp_path / "r18dev.sqlite"
+    prepare_database(path, False, session=Session(url("2026-10-06"), dump("旧版")))
+    with sqlite3.connect(path) as db:
+        db.execute("ALTER TABLE dump_meta DROP COLUMN imported_at")
+    newer = Session(url("2026-10-13"), dump("新版"))
+    assert prepare_database(path, False, session=newer) == path
+    assert newer.calls == 0
+    old_time = (datetime.now(UTC) - timedelta(days=8)).timestamp()
+    os.utime(path, (old_time, old_time))
+    assert prepare_database(path, False, session=newer) == path
+    assert newer.calls > 0
+    assert lookup(path, Movie("ABC-123")).title == "新版"
+
+
 def test_download_update_and_keep_old_on_failure(tmp_path):
     path = tmp_path / "config/r18dev.sqlite"
     first = Session(url("2026-10-06"), dump())
@@ -223,11 +262,13 @@ def test_download_update_and_keep_old_on_failure(tmp_path):
     assert lookup(path, Movie("abc123")).title == "本地标题"
     assert lookup(path, Movie(cid="abc00123")).title == "本地标题"
     assert lookup(path, Movie("ABC-123")).actress_pics["女優"] == "https://example.test/actor.jpg"
+    expire_database(path)
     assert prepare_database(path, False, session=Session(first.url, b"invalid")) == path
     assert lookup(path, Movie("ABC-123")).title == "本地标题"
     second = Session(url("2026-10-13"), dump("更新标题"))
     assert prepare_database(path, False, session=second) == path
     assert lookup(path, Movie("ABC-123")).title == "更新标题"
+    expire_database(path)
     assert prepare_database(path, False, session=Session(url("2026-10-20"), dump(broken=True))) == path
     assert lookup(path, Movie("ABC-123")).title == "更新标题"
     assert not path.with_name(path.name + ".tmp").exists()
@@ -278,6 +319,7 @@ def test_same_date_etag_change_and_no_downgrade(tmp_path, wasabi_server):
     source_url = url("2026-10-06")
     first = Session(source_url, dump("初版"))
     prepare_database(path, False, session=first)
+    expire_database(path)
     with sqlite3.connect(path) as db:
         assert db.execute("SELECT dump_date, etag, size FROM dump_meta").fetchone()[0] == "2026-10-06"
     unchanged = Session(source_url, dump("初版"))
@@ -288,6 +330,7 @@ def test_same_date_etag_change_and_no_downgrade(tmp_path, wasabi_server):
     changed = Session(source_url, dump("修订版"))
     prepare_database(path, False, session=changed)
     assert lookup(path, Movie("ABC-123")).title == "修订版"
+    expire_database(path)
     older = Session(url("2026-09-29"), dump("旧日期"))
     prepare_database(path, False, session=older)
     assert older.calls == 1
@@ -357,6 +400,7 @@ def test_object_changes_during_download_preserves_old(tmp_path, wasabi_server):
     prepare_database(path, False, session=Session(url("2026-10-06"), dump("旧版")))
     session = Session(url("2026-10-13"), dump("新版"))
     wasabi_server.change_after_probe = True
+    expire_database(path)
     assert prepare_database(path, False, session=session) == path
     assert lookup(path, Movie("ABC-123")).title == "旧版"
     assert not list(tmp_path.glob("*.part*"))
@@ -367,6 +411,7 @@ def test_listing_failure_preserves_old(tmp_path, wasabi_server):
     prepare_database(path, False, session=Session(url("2026-10-06"), dump()))
     session = Session(url("2026-10-13"), dump("新版"))
     wasabi_server.list_error = True
+    expire_database(path)
     assert prepare_database(path, False, session=session) == path
     assert lookup(path, Movie("ABC-123")).title == "本地标题"
 
