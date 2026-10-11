@@ -62,6 +62,9 @@ db.sqlite3
 db.sqlite3-journal
 config/r18dev.sqlite
 config/r18dev.sqlite-*
+config/actor-mapping.xml
+config/actor-mapping.json
+config/.actor-mapping-*
 
 # Flask stuff:
 instance/

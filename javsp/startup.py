@@ -10,6 +10,7 @@ from javsp.__version__ import get_version
 from javsp.crawl.dispatcher import import_crawlers
 from javsp.crawl.r18dev import prepare_database
 from javsp.func import get_scan_dir
+from javsp.metadata.actors import ActorMappingError
 from javsp.metadata.summarizer import load_actress_aliases
 from javsp.translate import LocalTranslator
 
@@ -59,7 +60,10 @@ def prepare_startup(cfg):
         raise StartupError("扫描目录不存在或不是目录，请检查容器挂载和 scanner.input_directory")
 
     check_for_updates()
-    load_actress_aliases(cfg)
+    try:
+        load_actress_aliases(cfg)
+    except ActorMappingError as error:
+        raise StartupError(str(error)) from error
     if cfg.r18dev.enabled:
         cfg._r18dev_db_path = prepare_database(cfg._r18dev_db_path, cfg.crawler.online_enabled)
     import_crawlers(cfg)

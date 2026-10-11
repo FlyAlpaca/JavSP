@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Changed
+- 女优映射改用 GitHub Jav Actors Mapping，每次启动检查更新并保留有效缓存；名称统一使用原名（中文译名），别名归一继续由 `crawler.normalize_actress_name` 控制。
 - 数据库与翻译模型改用固定 4 MiB 小片下载，最多同时使用四个连接；旧版四等分分片不会被当作新分片续传。
 
 ## 2.0.2 (2026-10-10)
