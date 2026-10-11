@@ -39,12 +39,14 @@ class DownloadSpec:
     size: int
     prefix: Path
     etag: str | None = None
+    part_size: int | None = None
 
 
 def parts(spec: DownloadSpec) -> list[tuple[int, int, Path]]:
+    part_size = spec.part_size if spec.part_size is not None else PART_SIZE
     return [
-        (start, min(start + PART_SIZE, spec.size) - 1, Path(f"{spec.prefix}.part-v2-{start // PART_SIZE}"))
-        for start in range(0, spec.size, PART_SIZE)
+        (start, min(start + part_size, spec.size) - 1, Path(f"{spec.prefix}.part-v2-{start // part_size}"))
+        for start in range(0, spec.size, part_size)
     ]
 
 

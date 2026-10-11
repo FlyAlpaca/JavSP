@@ -1,5 +1,7 @@
 """演员名称格式、别名开关与 GitHub 缓存更新。"""
 
+import json
+
 import pytest
 import requests
 from lxml import etree
@@ -265,3 +267,152 @@ def test_component_requires_explicit_mapping_for_names(tmp_path):
     path.write_bytes(XML)
     merger = MetadataMerger(cfg, aliases=ActorMapping.from_file(path))
     assert merger.merge(movie, result).actress == ["新ありな（新有菜）"]
+
+
+@pytest.fixture
+def mapping_server(monkeypatch):
+    """本地真实 HTTP 范围响应，验证分片线程与中断续传。"""
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    from javsp import download
+
+    state = {"body": XML, "etag": '"test-v1"', "ranges": [], "fail": False, "ignore_range": False}
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *_args):
+            pass
+
+        def do_GET(self):
+            body = state["body"]
+            if self.headers.get("If-None-Match") == state["etag"]:
+                self.send_response(304)
+                self.end_headers()
+                return
+            if state.get("change_during_download") and self.headers.get("If-Match"):
+                state["etag"] = '"test-v2"'
+                state["change_during_download"] = False
+            if self.headers.get("If-Match") and self.headers["If-Match"] != state["etag"]:
+                self.send_response(412)
+                self.end_headers()
+                return
+            requested = self.headers.get("Range")
+            state["ranges"].append(requested)
+            start, end = 0, len(body) - 1
+            ranged = requested and not state["ignore_range"]
+            if ranged:
+                start, end = map(int, requested.removeprefix("bytes=").split("-"))
+            self.send_response(206 if ranged else 200)
+            self.send_header("ETag", state["etag"])
+            self.send_header("Content-Length", str(end - start + 1))
+            if ranged:
+                self.send_header("Content-Range", f"bytes {start}-{end}/{len(body)}")
+            self.end_headers()
+            content = body[start:end + 1]
+            if state["fail"] and end > start:
+                self.wfile.write(content[:64])
+                self.wfile.flush()
+                self.close_connection = True
+            else:
+                self.wfile.write(content)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    monkeypatch.setattr(actors, "MAPPING_URL", f"http://127.0.0.1:{server.server_port}/mapping.xml")
+    monkeypatch.setattr(actors, "MAPPING_PART_SIZE", 128)
+    monkeypatch.setattr(download, "CHUNK_SIZE", 64)
+    try:
+        yield state
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+def test_mapping_parallel_download_and_conditional_cache(tmp_path, mapping_server):
+    path = tmp_path / "actor-mapping.xml"
+    assert prepare_actor_mapping(path).row_count == 4
+    assert path.read_bytes() == XML
+    assert "bytes=128-255" in mapping_server["ranges"]
+    assert not list(tmp_path.glob(".*-download-*"))
+    before = path.stat().st_mtime_ns
+    assert prepare_actor_mapping(path).row_count == 4
+    assert path.stat().st_mtime_ns == before
+
+
+def test_mapping_interruption_keeps_cache_and_resumes_next_start(tmp_path, mapping_server, monkeypatch):
+    path = tmp_path / "actor-mapping.xml"
+    path.write_bytes(XML)
+    mapping_server["fail"] = True
+    monkeypatch.setattr(actors, "DOWNLOAD_ATTEMPTS", 1)
+    assert prepare_actor_mapping(path).row_count == 4
+    assert path.read_bytes() == XML
+    partials = list(tmp_path.glob(".*.part-v2-*"))
+    assert partials and all(part.stat().st_size == 64 for part in partials)
+    mapping_server["fail"] = False
+    assert prepare_actor_mapping(path).row_count == 4
+    assert "bytes=64-127" in mapping_server["ranges"]
+    assert not list(tmp_path.glob(".*-download-*"))
+
+
+def test_mapping_changed_version_discards_stale_parts(tmp_path, mapping_server, monkeypatch):
+    path = tmp_path / "actor-mapping.xml"
+    mapping_server["fail"] = True
+    monkeypatch.setattr(actors, "DOWNLOAD_ATTEMPTS", 1)
+    with pytest.raises(ActorMappingError, match="无有效缓存"):
+        prepare_actor_mapping(path)
+    stale = list(tmp_path.glob(".*.part-v2-*"))
+    assert stale
+    mapping_server.update(fail=False, etag='"test-v2"', body=XML.replace("新有菜".encode(), "新译名".encode()))
+    assert prepare_actor_mapping(path).resolve("新ありな") == "新ありな（新译名）"
+    assert all(not part.exists() for part in stale)
+
+
+def test_mapping_range_unsupported_uses_single_response(tmp_path, mapping_server):
+    mapping_server["ignore_range"] = True
+    path = tmp_path / "actor-mapping.xml"
+    assert prepare_actor_mapping(path).row_count == 4
+    assert path.read_bytes() == XML
+    assert mapping_server["ranges"] == ["bytes=0-0"]
+
+
+def test_mapping_invalid_ranged_xml_preserves_cache(tmp_path, mapping_server):
+    path = tmp_path / "actor-mapping.xml"
+    path.write_bytes(XML)
+    mapping_server["body"] = b"<html/>"
+    assert prepare_actor_mapping(path).row_count == 4
+    assert path.read_bytes() == XML
+    assert not list(tmp_path.glob(".*-download-*"))
+
+
+def test_mapping_probe_network_failure_retries(tmp_path):
+    session = Session()
+    real_get = session.get
+    attempts = []
+
+    def flaky_get(*args, **kwargs):
+        attempts.append(1)
+        if len(attempts) < 3:
+            raise requests.ReadTimeout("temporary timeout")
+        return real_get(*args, **kwargs)
+
+    session.get = flaky_get
+    assert prepare_actor_mapping(tmp_path / "mapping.xml", session=session).row_count == 4
+    assert len(attempts) == 3
+
+
+def test_mapping_weak_etag_requires_full_download(tmp_path, mapping_server):
+    mapping_server["etag"] = 'W/"test-v1"'
+    path = tmp_path / "actor-mapping.xml"
+    assert prepare_actor_mapping(path).row_count == 4
+    assert mapping_server["ranges"] == ["bytes=0-0", None]
+
+
+def test_mapping_version_change_during_download_reprobes(tmp_path, mapping_server):
+    mapping_server["change_during_download"] = True
+    path = tmp_path / "actor-mapping.xml"
+    assert prepare_actor_mapping(path).row_count == 4
+    assert path.read_bytes() == XML
+    assert json.loads(path.with_suffix(".json").read_text())["etag"] == '"test-v2"'
+    assert not list(tmp_path.glob(".*-download-*"))
