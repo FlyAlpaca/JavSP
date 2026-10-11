@@ -18,8 +18,9 @@ logger = logging.getLogger(__name__)
 
 
 class OutputExecutor:
-    def __init__(self, cfg, on_event=None):
+    def __init__(self, cfg, on_event=None, *, cleanup_empty_dirs=True):
         self.cfg, self.on_event = cfg, on_event
+        self.cleanup_empty_dirs = cleanup_empty_dirs
         self.stage = Stage.PREPARE
         self.committed_result = None
 
@@ -120,7 +121,10 @@ class OutputExecutor:
                     tx.move(operation)
             for staged, target, stamp in artifacts:
                 tx.publish(staged, target, stamp)
-            self.committed_result = OutputResult(movie, moved, [target for _, target, _ in artifacts], warnings)
+            self.committed_result = OutputResult(
+                movie, moved, [target for _, target, _ in artifacts], warnings,
+                [op.source for op in plan.operations if op.skip],
+            )
         except BaseException as cause:
             failed_stage = self.stage
             self._emit(movie, Stage.ROLLBACK)
@@ -140,7 +144,8 @@ class OutputExecutor:
         for source, target in moved:
             logger.info(f"重命名文件: '{source}' -> '{target}'")
             filemove_logger.debug(f'移动（重命名）文件: \n  原路径: "{source}"\n  新路径: "{target}"')
-        for parent in {str(Path(source).parent) for source, _ in moved}:
+        parents = {str(Path(source).parent) for source, _ in moved} if self.cleanup_empty_dirs else set()
+        for parent in parents:
             try:
                 os.rmdir(parent)
             except OSError:
