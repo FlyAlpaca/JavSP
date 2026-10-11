@@ -3,11 +3,8 @@
 import logging
 
 from javsp.datatype import MovieInfo
-from javsp.logging_config import configure_logging
-from javsp.web.base import Request, resp2html, xpath_first
-from javsp.web.exceptions import CrawlerError, MovieNotFoundError
-
-request = Request()
+from javsp.web.base import resp2html, xpath_first
+from javsp.web.exceptions import MovieNotFoundError
 
 logger = logging.getLogger(__name__)
 base_url = "https://javmenu.com/zh"
@@ -30,14 +27,14 @@ XP = {
 }
 
 
-def parse_data(movie: MovieInfo):
+def parse_data(movie: MovieInfo, *, context):
     """从网页抓取并解析指定番号的数据
     Args:
         movie (MovieInfo): 要解析的影片信息，解析后的信息直接更新到此变量内
     """
     # JavMenu网页做得很不走心，将就了
     url = f"{base_url}/{movie.dvdid}"
-    r = request.get(url)
+    r = context.request.get(url)
     if r.history:
         # 被重定向到主页说明找不到影片资源
         raise MovieNotFoundError(__name__, movie.dvdid)
@@ -90,15 +87,3 @@ def parse_data(movie: MovieInfo):
     movie.genre = genre
     movie.genre_id = genre_id
     movie.actress = actress
-
-
-if __name__ == "__main__":
-
-    configure_logging(debug=True)
-
-    movie = MovieInfo("FC2-718323")
-    try:
-        parse_data(movie)
-        print(movie)
-    except CrawlerError as e:
-        logger.error(e, exc_info=True)

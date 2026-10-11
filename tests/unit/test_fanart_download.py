@@ -1,3 +1,5 @@
+from javsp.config import load_config
+
 """离线验证剧照并发、统一限速、编号及失败处理。"""
 
 import threading
@@ -32,7 +34,7 @@ def test_all_images_keep_original_numbers_with_at_most_three_downloads(tmp_path,
     progress = []
     errors = []
 
-    def download(url, path):
+    def download(url, path, **kwargs):
         nonlocal active, max_active
         with lock:
             active += 1
@@ -54,7 +56,7 @@ def test_all_images_keep_original_numbers_with_at_most_three_downloads(tmp_path,
 
     def run():
         try:
-            processor.download_extra_fanarts(movie, 0, bar)
+            processor.download_extra_fanarts(movie, 0, bar, cfg=load_config())
         except Exception as error:
             errors.append(error)
 
@@ -85,7 +87,7 @@ def test_start_interval_is_shared_and_downloads_overlap(tmp_path, monkeypatch):
     active = 0
     max_active = 0
 
-    def download(url, path):
+    def download(url, path, **kwargs):
         nonlocal active, max_active
         with lock:
             starts.append(time.monotonic())
@@ -99,7 +101,7 @@ def test_start_interval_is_shared_and_downloads_overlap(tmp_path, monkeypatch):
                 active -= 1
 
     monkeypatch.setattr(processor, "download", download)
-    processor.download_extra_fanarts(movie_for(tmp_path, ["a", "b", "c", "d"]), 0.04)
+    processor.download_extra_fanarts(movie_for(tmp_path, ["a", "b", "c", "d"]), 0.04, cfg=load_config())
     starts.sort()
     assert len(starts) == 4
     assert all(after - before >= 0.035 for before, after in zip(starts, starts[1:]))
@@ -112,8 +114,8 @@ def test_single_image_has_no_trailing_sleep(tmp_path, monkeypatch):
 
     clock = SimpleNamespace(monotonic=time.monotonic, sleep=sleep, strftime=time.strftime, gmtime=time.gmtime)
     monkeypatch.setattr(processor, "time", clock)
-    monkeypatch.setattr(processor, "download", lambda url, path: save_image(path, 1))
-    processor.download_extra_fanarts(movie_for(tmp_path, ["one"]), 1.5)
+    monkeypatch.setattr(processor, "download", lambda url, path, **kw: save_image(path, 1))
+    processor.download_extra_fanarts(movie_for(tmp_path, ["one"]), 1.5, cfg=load_config())
     assert (tmp_path / "extrafanart" / "0.png").exists()
 
 
@@ -122,7 +124,7 @@ def test_failed_and_invalid_images_do_not_block_others_or_replace_existing_files
     destination.mkdir()
     (destination / "0.png").write_bytes(b"existing")
 
-    def download(url, path):
+    def download(url, path, **kwargs):
         if url == "failed":
             Path(path).write_bytes(b"partial")
             raise requests.Timeout("timeout")
@@ -132,7 +134,7 @@ def test_failed_and_invalid_images_do_not_block_others_or_replace_existing_files
         return save_image(path, 2)
 
     monkeypatch.setattr(processor, "download", download)
-    processor.download_extra_fanarts(movie_for(tmp_path, ["failed", "invalid", "good"]), 0)
+    processor.download_extra_fanarts(movie_for(tmp_path, ["failed", "invalid", "good"]), 0, cfg=load_config())
     assert (destination / "0.png").read_bytes() == b"existing"
     assert not (destination / "1.png").exists()
     assert (destination / "2.png").exists()
@@ -142,7 +144,7 @@ def test_failed_and_invalid_images_do_not_block_others_or_replace_existing_files
 
 
 def test_no_images_creates_no_directory(tmp_path):
-    processor.download_extra_fanarts(movie_for(tmp_path, []), 1.5)
+    processor.download_extra_fanarts(movie_for(tmp_path, []), 1.5, cfg=load_config())
     assert list(tmp_path.iterdir()) == []
 
 
@@ -150,13 +152,13 @@ def test_no_images_creates_no_directory(tmp_path):
 def test_fanart_extension_matches_content(tmp_path, monkeypatch, image_format, extension):
     original = []
 
-    def download(url, path):
+    def download(url, path, **kwargs):
         Image.new("RGB", (12, 8), "blue").save(path, format=image_format)
         original.append(Path(path).read_bytes())
         return {"elapsed": 1, "rate": 100}
 
     monkeypatch.setattr(processor, "download", download)
-    processor.download_extra_fanarts(movie_for(tmp_path, ["https://example.test/wrong.png"]), 0)
+    processor.download_extra_fanarts(movie_for(tmp_path, ["https://example.test/wrong.png"]), 0, cfg=load_config())
     target = tmp_path / "extrafanart" / ("0" + extension)
     assert target.read_bytes() == original[0]
     with Image.open(target) as image:

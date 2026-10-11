@@ -6,7 +6,9 @@ from urllib.parse import urlsplit
 import pytest
 import requests
 
+from javsp.config import load_config
 from javsp.datatype import MovieInfo
+from javsp.web.context import SiteContext
 from javsp.web.exceptions import CrawlerError, SiteBlocked
 
 logger = logging.getLogger(__name__)
@@ -45,7 +47,8 @@ def compare(avid, scraper, file):
         parse_data = getattr(mod, "parse_data")
 
     try:
-        parse_data(online)
+        with SiteContext(load_config(), scraper) as context:
+            parse_data(online, context=context)
     except SiteBlocked as e:
         pytest.skip(f"站点被屏蔽: {e}")
     except (CrawlerError, requests.exceptions.ReadTimeout) as e:

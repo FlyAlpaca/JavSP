@@ -3,18 +3,16 @@
 import logging
 from urllib.parse import urlsplit
 
-from javsp.config import Cfg, CrawlerID
+from javsp.config import CrawlerID
 from javsp.datatype import MovieInfo
-from javsp.web.base import Request, is_cloudflare_challenge, read_proxy, resp2html, xpath_first
-from javsp.web.exceptions import CrawlerError, MovieDuplicateError, MovieNotFoundError, SiteBlocked
+from javsp.web.base import is_cloudflare_challenge, read_proxy, resp2html, xpath_first
+from javsp.web.exceptions import MovieDuplicateError, MovieNotFoundError, SiteBlocked
 from javsp.web.proxyfree import get_proxy_free_url
 
 # 初始化Request实例
-request = Request(use_scraper=True)
 
 logger = logging.getLogger(__name__)
 permanent_url = "https://www.javlibrary.com"
-base_url = ""
 
 _SITE = "javlib"
 
@@ -38,33 +36,32 @@ XP = {
 }
 
 
-def _try_search(dvdid: str, preferred_url: str = None):
+def _try_search(dvdid: str, preferred_url: str = None, *, context):
     """尝试搜索，返回 (resp, html) 或在所有地址被拦截时抛出异常
 
     地址优先级：preferred_url(重定向发现的新地址) > 免代理地址 > 代理访问永久域名
     """
-    global base_url
-    request.timeout = Cfg().network.timeout.total_seconds()
+    context.request.timeout = context.cfg.network.timeout.total_seconds()
     # 候选地址列表：优先使用重定向发现的新地址，然后是免代理地址
     candidates = []
     if preferred_url:
         candidates.append((preferred_url, {}))
-    proxy_free_url = get_proxy_free_url("javlib", str(Cfg().network.proxy_free[CrawlerID.javlib]))
+    proxy_free_url = get_proxy_free_url("javlib", str(context.cfg.network.proxy_free[CrawlerID.javlib]), context=context)
     if proxy_free_url:
         candidates.append((proxy_free_url, {}))
-    if Cfg().network.proxy_server:
-        candidates.append((permanent_url, read_proxy()))
+    if context.cfg.network.proxy_server:
+        candidates.append((permanent_url, read_proxy(context.cfg.network)))
     else:
         # 无代理配置时直接尝试永久域名（直连）
         candidates.append((permanent_url, {}))
 
     failures = []
     for url, proxies in candidates:
-        base_url = url
-        request.proxies = proxies
+        context.base_url = url
+        context.request.proxies = proxies
         search_url = f"{url}/cn/vl_searchbyid.php?keyword={dvdid}"
         try:
-            resp = request.get(search_url, delay_raise=True)
+            resp = context.request.get(search_url, delay_raise=True)
             if is_cloudflare_challenge(resp):
                 failures.append(f"{url}: Cloudflare拦截")
                 logger.debug(f"JavLib地址被拦截: {url}")
@@ -85,25 +82,24 @@ def _try_search(dvdid: str, preferred_url: str = None):
 
 
 # TODO: 发现JavLibrary支持使用cid搜索，会直接跳转到对应的影片页面，也许可以利用这个功能来做cid到dvdid的转换
-def parse_data(movie: MovieInfo):
+def parse_data(movie: MovieInfo, *, context):
     """解析指定番号的影片数据"""
-    global base_url
     # 直接使用_try_search，按优先级尝试所有地址（免代理优先）
     # 如果base_url已被重定向更新过，作为preferred_url传入避免被重置
-    resp, html = _try_search(movie.dvdid, preferred_url=base_url if base_url else None)
-    url = new_url = f"{base_url}/cn/vl_searchbyid.php?keyword={movie.dvdid}"
+    resp, html = _try_search(movie.dvdid, preferred_url=context.base_url if context.base_url else None, context=context)
+    url = new_url = f"{context.base_url}/cn/vl_searchbyid.php?keyword={movie.dvdid}"
     # 判断是否发生了重定向：resp.history 非空（标准行为）或 resp.url 与请求 URL 不同（部分镜像的行为）
     is_redirected = bool(resp.history) or resp.url != url
     if is_redirected:
-        if urlsplit(resp.url).netloc == urlsplit(base_url).netloc:
+        if urlsplit(resp.url).netloc == urlsplit(context.base_url).netloc:
             # 重定向到同域名，说明搜索到了影片且只有一个结果
             new_url = resp.url
         else:
             # 重定向到了不同的netloc时，新地址并不是影片地址。这种情况下新地址中丢失了path字段，
             # 为无效地址（应该是JavBus重定向配置有问题），需要使用新的base_url抓取数据
-            base_url = "https://" + urlsplit(resp.url).netloc
-            logger.warning(f"请将配置文件中的JavLib免代理地址更新为: {base_url}")
-            return parse_data(movie)
+            context.base_url = "https://" + urlsplit(resp.url).netloc
+            logger.warning(f"请将配置文件中的JavLib免代理地址更新为: {context.base_url}")
+            return parse_data(movie, context=context)
     else:  # 如果有多个搜索结果则不会自动跳转，此时需要程序介入选择搜索结果
         video_tags = html.xpath(XP["search_video"])
         # 通常第一部影片就是我们要找的，但是以免万一还是遍历所有搜索结果
@@ -134,7 +130,7 @@ def parse_data(movie: MovieInfo):
             # 存在不同影片但是番号相同的情况，如MIDV-010
             raise MovieDuplicateError(__name__, movie.dvdid, match_count, pre_choose_urls)
         # 重新抓取网页
-        html = request.get_html(new_url)
+        html = context.request.get_html(new_url)
     container = xpath_first(html, XP["rightcolumn"], label=_SITE)
     title_tag = container.xpath(XP["title"])
     title = title_tag[0]
@@ -157,7 +153,7 @@ def parse_data(movie: MovieInfo):
     actress = info.xpath(XP["actress"])
 
     movie.dvdid = dvdid
-    movie.url = new_url.replace(base_url, permanent_url)
+    movie.url = new_url.replace(context.base_url, permanent_url)
     movie.title = title.replace(dvdid, "").strip()
     if cover.startswith("//"):  # 补全URL中缺少的协议段
         cover = "https:" + cover
@@ -167,13 +163,3 @@ def parse_data(movie: MovieInfo):
     movie.producer = producer
     movie.genre = genre
     movie.actress = actress
-
-
-if __name__ == "__main__":
-    base_url = permanent_url
-    movie = MovieInfo("IPX-177")
-    try:
-        parse_data(movie)
-        print(movie)
-    except CrawlerError as e:
-        print(e)

@@ -9,7 +9,7 @@ from javsp.web.base import get_html, get_resp_text, is_connectable, request_get
 logger = logging.getLogger(__name__)
 
 
-def get_proxy_free_url(site_name: str, prefer_url=None) -> str:
+def get_proxy_free_url(site_name: str, prefer_url=None, *, context) -> str:
     """获取指定网站的免代理地址
     Args:
         site_name (str): 站点名称
@@ -17,7 +17,7 @@ def get_proxy_free_url(site_name: str, prefer_url=None) -> str:
     Returns:
         str: 指定站点的免代理地址（失败时为空字符串）
     """
-    if prefer_url and is_connectable(prefer_url, timeout=5):
+    if prefer_url and is_connectable(prefer_url, timeout=5, context=context):
         return prefer_url
     # 当prefer_url不可用时，尝试自动获取指定网站的免代理地址
     site_name = site_name.lower()
@@ -26,40 +26,40 @@ def get_proxy_free_url(site_name: str, prefer_url=None) -> str:
     if func_name in get_funcs:
         get_urls = getattr(sys.modules[__name__], func_name)
         try:
-            urls = get_urls()
-            return _choose_one(urls)
+            urls = get_urls(context=context)
+            return _choose_one(urls, context=context)
         except Exception:
             return ""
     else:
         raise Exception("Dont't know how to get proxy-free url for " + site_name)
 
 
-def _choose_one(urls) -> str:
+def _choose_one(urls, *, context) -> str:
     for url in urls:
-        if is_connectable(url, timeout=5):
+        if is_connectable(url, timeout=5, context=context):
             return url
     # 全部不可连接时返回第一个作为最佳猜测，避免调用方拿到空字符串
     return urls[0] if urls else ""
 
 
-def _get_avsox_urls() -> list:
-    html = get_html("https://tellme.pw/avsox")
+def _get_avsox_urls(*, context) -> list:
+    html = get_html("https://tellme.pw/avsox", context=context)
     urls = html.xpath("//h4/strong/a/@href")
     return urls
 
 
-def _get_javbus_urls() -> list:
-    html = get_html("https://www.javbus.one/")
+def _get_javbus_urls(*, context) -> list:
+    html = get_html("https://www.javbus.one/", context=context)
     text = html.text_content()
     urls = re.findall(r"防屏蔽地址：(https://(?:[\d\w][-\d\w]{1,61}[\d\w]\.){1,2}[a-z]{2,})", text, re.I | re.A)
     return urls
 
 
-def _get_javlib_urls() -> list:
+def _get_javlib_urls(*, context) -> list:
     # 固定的官方/备用域名，作为 bio 解析失败时的兜底
     fallback_urls = ["https://www.javlibrary.com"]
     try:
-        html = get_html("https://github.com/javlibcom")
+        html = get_html("https://github.com/javlibcom", context=context)
     except Exception:
         logger.debug("获取 javlib GitHub 页面失败，使用备用地址", exc_info=True)
         return fallback_urls
@@ -81,10 +81,10 @@ def _get_javlib_urls() -> list:
     return fallback_urls
 
 
-def _get_javdb_urls() -> list:
+def _get_javdb_urls(*, context) -> list:
     fallback_urls = ["https://javdb.com"]
     try:
-        html = get_html("https://jav524.app")
+        html = get_html("https://jav524.app", context=context)
     except Exception:
         logger.debug("获取 javdb 免代理地址失败，使用备用地址", exc_info=True)
         return fallback_urls
@@ -92,7 +92,7 @@ def _get_javdb_urls() -> list:
     for link in js_links:
         if "/js/index" in link:
             try:
-                text = get_resp_text(request_get(link))
+                text = get_resp_text(request_get(link, context=context))
             except Exception:
                 continue
             match = re.search(
@@ -103,8 +103,3 @@ def _get_javdb_urls() -> list:
             if match:
                 return [match.group(1)]
     return fallback_urls
-
-
-if __name__ == "__main__":
-    print("javdb:\t", _get_javdb_urls())
-    print("javlib:\t", _get_javlib_urls())

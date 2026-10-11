@@ -9,7 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from javsp import __main__ as cli
-from javsp.config import Cfg
+from javsp.config import Cfg, load_config
 from javsp.datatype import Movie, MovieInfo
 from javsp.workflow.models import JobError, JobResult, OutputResult, ScanResult, Stage
 
@@ -21,12 +21,12 @@ def test_entry_returns_failure_status(tmp_path, monkeypatch, failed, code):
         scanner=SimpleNamespace(input_directory=str(tmp_path)),
         translator=object(),
     )
-    monkeypatch.setattr(cli, "Cfg", lambda: cfg)
+    monkeypatch.setattr(cli, "load_config", lambda: cfg)
     for name in ("setup_filemove_log", "print_summary"):
         monkeypatch.setattr(cli, name, lambda *a, **kw: None)
-    monkeypatch.setattr(cli, "startup_context", lambda cfg: nullcontext((str(tmp_path), object())))
+    monkeypatch.setattr(cli, "startup_context", lambda cfg: nullcontext(SimpleNamespace(root=tmp_path, translator=object())))
     monkeypatch.setattr(cli, "Pipeline", lambda cfg, **kw: SimpleNamespace(scan=lambda root: ScanResult([object()] * 3)))
-    monkeypatch.setattr(cli, "RunNormalMode", lambda *a: ([], {"failed": failed}))
+    monkeypatch.setattr(cli, "RunNormalMode", lambda *a, **kw: ([], {"failed": failed}))
     monkeypatch.chdir(tmp_path)
     with pytest.raises(SystemExit) as exc:
         cli.entry()
@@ -39,7 +39,7 @@ def test_entry_with_missing_directory_exits_without_prompt(tmp_path, monkeypatch
         scanner=SimpleNamespace(input_directory=tmp_path / "missing"),
         translator=object(),
     )
-    monkeypatch.setattr(cli, "Cfg", lambda: cfg)
+    monkeypatch.setattr(cli, "load_config", lambda: cfg)
     monkeypatch.setattr(cli, "startup_context", lambda cfg: (_ for _ in ()).throw(cli.StartupError("扫描目录不存在")))
     monkeypatch.setattr("builtins.input", lambda *args: pytest.fail("容器批处理不应提示选目录"))
     with pytest.raises(SystemExit) as exc:
@@ -48,8 +48,8 @@ def test_entry_with_missing_directory_exits_without_prompt(tmp_path, monkeypatch
 
 
 def test_model_startup_failure_precedes_media_scan(monkeypatch):
-    cfg = SimpleNamespace(translator=object(), other=SimpleNamespace(debug=False))
-    monkeypatch.setattr(cli, "Cfg", lambda: cfg)
+    cfg = load_config()
+    monkeypatch.setattr(cli, "load_config", lambda: cfg)
 
     class FailedTranslator:
         def __enter__(self):
@@ -58,8 +58,8 @@ def test_model_startup_failure_precedes_media_scan(monkeypatch):
         def __exit__(self, *_):
             pass
 
-    monkeypatch.setattr("javsp.startup.prepare_startup", lambda _: "/media")
-    monkeypatch.setattr("javsp.startup.LocalTranslator", lambda _: FailedTranslator())
+    monkeypatch.setattr("javsp.startup.prepare_startup", lambda _: SimpleNamespace(root="/media", translator=None))
+    monkeypatch.setattr("javsp.startup.LocalTranslator", lambda _, **kw: FailedTranslator())
     monkeypatch.setattr(cli, "Pipeline", lambda *_args, **_kwargs: pytest.fail("不应扫描媒体目录"))
     with pytest.raises(RuntimeError, match="model unavailable"):
         cli.entry()
@@ -73,7 +73,7 @@ def test_invalid_config_exits_without_prompt(monkeypatch):
     def invalid_config():
         raise error
 
-    monkeypatch.setattr(cli, "Cfg", invalid_config)
+    monkeypatch.setattr(cli, "load_config", invalid_config)
     monkeypatch.setattr("builtins.input", lambda *args: pytest.fail("配置错误时不应等待输入"))
     with pytest.raises(SystemExit) as exit_result:
         cli.entry()
@@ -95,7 +95,7 @@ def test_invalid_config_is_reported_after_cli_startup():
 
 
 def test_batch_continues_and_counts_failure(monkeypatch):
-    cfg = Cfg()
+    cfg = load_config()
     movies = [Movie("ABC-123"), Movie("ABC-124")]
     visited = []
 

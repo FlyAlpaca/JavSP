@@ -7,15 +7,15 @@ from types import SimpleNamespace
 import pytest
 
 from javsp import datatype
-from javsp.config import Cfg
+from javsp.config import load_config
 from javsp.datatype import Movie
 from javsp.publish import output
 
 
 @pytest.fixture
 def scene(tmp_path, monkeypatch):
-    cfg = SimpleNamespace(scanner=Cfg().scanner, summarizer=SimpleNamespace(match_subtitles=True))
-    monkeypatch.setattr(datatype, "Cfg", lambda: cfg)
+    cfg = SimpleNamespace(scanner=load_config().scanner, summarizer=SimpleNamespace(match_subtitles=True))
+    monkeypatch.setattr(datatype, "load_config", lambda: cfg)
     src, dst = tmp_path / "src", tmp_path / "dst"
     src.mkdir()
     dst.mkdir()

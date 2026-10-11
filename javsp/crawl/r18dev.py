@@ -15,7 +15,6 @@ from urllib.parse import quote, urlparse
 
 import requests
 
-from javsp.config import Cfg
 from javsp.datatype import MovieInfo
 from javsp.download import DownloadError, DownloadSpec, clear_parts, download_file
 
@@ -292,7 +291,7 @@ def _ensure_entity_indexes(path):
         logger.warning("R18.dev 本地数据库查询索引更新失败，继续使用原数据库: %s", error)
 
 
-def prepare_database(path: Path, online_enabled: bool, *, session=None):
+def prepare_database(path: Path, online_enabled: bool, *, session=None, proxy=None):
     """本地库导入未满七天时跳过远端检查；失败时使用有效旧库或在线抓取。"""
     path = Path(path)
     usable = _valid(path)
@@ -310,7 +309,6 @@ def prepare_database(path: Path, online_enabled: bool, *, session=None):
             logger.info("R18.dev 本地数据库七天内已更新，跳过远端检查: %s", path)
             return path
     client = session or requests.Session()
-    proxy = Cfg().network.proxy_server
     options = {"proxies": {"http": str(proxy), "https": str(proxy)}} if proxy is not None else {}
     temporary = path.with_name(path.name + ".tmp")
     archive = None

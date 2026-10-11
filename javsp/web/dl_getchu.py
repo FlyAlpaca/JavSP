@@ -4,9 +4,8 @@ import logging
 import re
 
 from javsp.datatype import MovieInfo
-from javsp.logging_config import configure_logging
 from javsp.web.base import request_get, resp2html, xpath_first
-from javsp.web.exceptions import CrawlerError, MovieNotFoundError
+from javsp.web.exceptions import MovieNotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +58,7 @@ def get_movie_preview(html, getchu_id):
     return preview_pics
 
 
-def parse_data(movie: MovieInfo):
+def parse_data(movie: MovieInfo, *, context):
     """解析指定番号的影片数据"""
     # 去除番号中的'GETCHU'字样
     id_uc = movie.dvdid.upper()
@@ -68,7 +67,7 @@ def parse_data(movie: MovieInfo):
     getchu_id = id_uc.replace("GETCHU-", "")
     # 抓取网页
     url = f"{base_url}/i/item{getchu_id}"
-    r = request_get(url, delay_raise=True)
+    r = request_get(url, delay_raise=True, context=context)
     if r.status_code == 404:
         raise MovieNotFoundError(__name__, movie.dvdid)
     html = resp2html(r, base_encode)
@@ -117,15 +116,3 @@ def parse_data(movie: MovieInfo):
     movie.preview_pics = get_movie_preview(html, getchu_id)
     movie.dvdid = id_uc
     movie.url = url
-
-
-if __name__ == "__main__":
-
-    configure_logging(debug=True)
-
-    movie = MovieInfo("getchu-4041026")
-    try:
-        parse_data(movie)
-        print(movie)
-    except CrawlerError as e:
-        logger.error(e, exc_info=True)

@@ -3,8 +3,10 @@
 import pytest
 from lxml import html
 
+from javsp.config import load_config
 from javsp.datatype import MovieInfo
 from javsp.web import javbus, javdb
+from javsp.web.context import SiteContext
 from tests.unit.test_javbus_redirect import MOVIE_PAGE, response
 
 
@@ -22,7 +24,8 @@ def test_javbus_classification(monkeypatch, links, expected):
     body = MOVIE_PAGE.replace("<p><span>識別碼:", tags + "<p><span>識別碼:")
     monkeypatch.setattr(javbus, "request_get", lambda *a, **kw: response(body))
     movie = MovieInfo("ABC-123")
-    javbus.parse_data(movie)
+    with SiteContext(load_config(), "javbus") as context:
+        javbus.parse_data(movie, context=context)
     assert movie.uncensored is expected
 
 
@@ -49,7 +52,8 @@ def test_javdb_classification(monkeypatch, links, expected):
     <div><strong>類別:</strong><span>{tags}</span></div>
     <div><strong>演員:</strong><span><a>Actress</a><strong>♀</strong></span></div>
     </nav></div></div></section></body></html>""")
-    monkeypatch.setattr(javdb, "get_html_wrapper", lambda url: search if "/search?" in url else detail)
+    monkeypatch.setattr(javdb, "get_html_wrapper", lambda url, **kw: search if "/search?" in url else detail)
     movie = MovieInfo("ABC-123")
-    javdb.parse_data(movie)
+    with SiteContext(load_config(), "javdb") as context:
+        javdb.parse_data(movie, context=context)
     assert movie.uncensored is expected

@@ -8,7 +8,7 @@ import pytest
 from lxml import etree
 from PIL import Image
 
-from javsp.config import Cfg
+from javsp.config import load_config
 from javsp.datatype import Movie
 from javsp.publish import output
 from javsp.web.exceptions import MovieNotFoundError
@@ -23,7 +23,7 @@ def run_in_id_order(pipeline, source):
 
 @pytest.fixture
 def scene(tmp_path, monkeypatch):
-    cfg = Cfg()
+    cfg = load_config()
     cfg = cfg.model_copy(
         update={
             "scanner": cfg.scanner.model_copy(update={"minimum_size": 0, "skip_nfo_dir": False}),
@@ -46,7 +46,7 @@ def scene(tmp_path, monkeypatch):
     cover = tmp_path / "cover.jpg"
     Image.new("RGB", (800, 600), "blue").save(cover)
 
-    def parse(info):
+    def parse(info, *, context):
         info.title, info.cover = "local title", str(cover)
         info.uncensored = False
 
@@ -90,8 +90,8 @@ def test_local_translation_updates_nfo_and_directory_name(scene, tmp_path, monke
     cfg = cfg.model_copy(update={"summarizer": cfg.summarizer.model_copy(update={"path": path_cfg})})
     original = sys.modules["javsp.web.testlocal"].parse_data
 
-    def parse(info):
-        original(info)
+    def parse(info, *, context):
+        original(info, context=context)
         info.title = "日本語タイトル"
         info.plot = "日本語の紹介。"
 
@@ -113,10 +113,10 @@ def test_batch_continues_after_crawl_failure(scene, monkeypatch):
     cfg, source, throttle = scene
     parser = sys.modules["javsp.web.testlocal"].parse_data
 
-    def parse(info):
+    def parse(info, *, context):
         if info.dvdid == "ABC-123":
             raise MovieNotFoundError("testlocal", info.dvdid)
-        parser(info)
+        parser(info, context=context)
 
     monkeypatch.setattr(sys.modules["javsp.web.testlocal"], "parse_data", parse)
     result = run_in_id_order(Pipeline(cfg), source)

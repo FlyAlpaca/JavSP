@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 import pytest
 import requests
 
-from javsp.config import Cfg, Translator
+from javsp.config import Translator, load_config
 from javsp.datatype import MovieInfo
 from javsp.translate import (
     MODELS,
@@ -25,7 +25,7 @@ from javsp.translate import (
 
 
 def test_default_and_removed_config():
-    cfg = Cfg()
+    cfg = load_config()
     assert cfg.translator.model == "hy_mt2_7b_q4_k_m"
     assert cfg.translator.runtime.ctx_size == 8192
     assert cfg.translator.generation.top_p == 0.6
@@ -122,9 +122,8 @@ def test_model_download_uses_configured_proxy(tmp_path, small_model, monkeypatch
     session = MagicMock()
     session.get.return_value.__enter__.return_value = response
     network = SimpleNamespace(proxy_server="http://proxy:7890")
-    monkeypatch.setattr("javsp.translate.Cfg", lambda: SimpleNamespace(network=network))
 
-    ensure_model(Translator(model_dir=tmp_path), session)
+    ensure_model(Translator(model_dir=tmp_path), session, proxy=network.proxy_server)
 
     assert session.get.call_args_list[0].kwargs["proxies"] == {
         "http": "http://proxy:7890",
@@ -137,7 +136,6 @@ def test_segment_connections_receive_proxy(tmp_path, small_model, model_server, 
 
     _, content = small_model
     network = SimpleNamespace(proxy_server="http://proxy:7890")
-    monkeypatch.setattr("javsp.translate.Cfg", lambda: SimpleNamespace(network=network))
     original_get = requests.sessions.Session.get
     seen = []
 
@@ -146,7 +144,7 @@ def test_segment_connections_receive_proxy(tmp_path, small_model, model_server, 
         return original_get(client, url, **kwargs)
 
     monkeypatch.setattr(requests.sessions.Session, "get", get_without_proxy)
-    ensure_model(Translator(model_dir=tmp_path))
+    ensure_model(Translator(model_dir=tmp_path), proxy=network.proxy_server)
     assert len(seen) == 1 + (len(content) + 255) // 256  # 范围探测和固定大小的小片
     assert all(item == {"http": "http://proxy:7890", "https": "http://proxy:7890"} for item in seen)
 

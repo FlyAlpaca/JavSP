@@ -11,7 +11,9 @@ from tqdm import tqdm
 proj_root = Path(__file__).resolve().parent.parent
 data_dir = proj_root / "tests" / "data"
 sys.path.insert(0, str(proj_root))
+from javsp.config import load_config
 from javsp.datatype import MovieInfo
+from javsp.web.context import SiteContext
 
 # 搜索抓取器并导入它们
 all_crawler = {}
@@ -51,7 +53,8 @@ def call_crawlers(dvdid_list: list, used_crawlers=None):
             else:
                 movie = MovieInfo(cid=avid)
             try:
-                parser(movie)
+                with SiteContext(load_config(), name) as context:
+                    parser(movie, context=context)
                 path = f"{data_dir}{os.sep}{avid} ({name}).json"
                 movie.dump(path)
                 success.append(name)

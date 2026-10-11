@@ -4,9 +4,8 @@ import logging
 import re
 
 from javsp.datatype import MovieInfo
-from javsp.logging_config import configure_logging
 from javsp.web.base import request_get, resp2html, xpath_first
-from javsp.web.exceptions import CrawlerError, MovieNotFoundError, SiteBlocked
+from javsp.web.exceptions import MovieNotFoundError, SiteBlocked
 
 logger = logging.getLogger(__name__)
 base_url = "https://www.prestige-av.com"
@@ -33,13 +32,13 @@ XP = {
 }
 
 
-def parse_data(movie: MovieInfo):
+def parse_data(movie: MovieInfo, *, context):
     """从网页抓取并解析指定番号的数据
     Args:
         movie (MovieInfo): 要解析的影片信息，解析后的信息直接更新到此变量内
     """
     url = f"{base_url}/goods/goods_detail.php?sku={movie.dvdid}"
-    resp = request_get(url, cookies=cookies, delay_raise=True)
+    resp = request_get(url, cookies=cookies, delay_raise=True, context=context)
     if resp.status_code == 500:
         # 500错误表明prestige没有这部影片的数据，不是网络问题，因此不再重试
         raise MovieNotFoundError(__name__, movie.dvdid)
@@ -86,15 +85,3 @@ def parse_data(movie: MovieInfo):
     movie.plot = plot
     movie.preview_pics = preview_pics
     movie.uncensored = False  # prestige服务器在日本且面向日本国内公开发售，不会包含无码片
-
-
-if __name__ == "__main__":
-
-    configure_logging(debug=True)
-
-    movie = MovieInfo("ABP-647")
-    try:
-        parse_data(movie)
-        print(movie)
-    except CrawlerError as e:
-        logger.error(e, exc_info=True)

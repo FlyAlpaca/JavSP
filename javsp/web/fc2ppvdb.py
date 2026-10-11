@@ -4,9 +4,8 @@ import logging
 
 from javsp.datatype import MovieInfo
 from javsp.lib import strftime_to_minutes
-from javsp.logging_config import configure_logging
 from javsp.web.base import get_html, get_list_first, select_fc2_cover, xpath_first
-from javsp.web.exceptions import CrawlerError, MovieNotFoundError
+from javsp.web.exceptions import MovieNotFoundError
 
 logger = logging.getLogger(__name__)
 base_url = "https://fc2ppvdb.com"
@@ -27,7 +26,7 @@ XP = {
 }
 
 
-def parse_data(movie: MovieInfo):
+def parse_data(movie: MovieInfo, *, context):
     """解析指定番号的影片数据"""
     # 去除番号中的'FC2'字样
     id_uc = movie.dvdid.upper()
@@ -36,7 +35,7 @@ def parse_data(movie: MovieInfo):
     fc2_id = id_uc.replace("FC2-", "")
     # 抓取网页
     url = f"{base_url}/articles/{fc2_id}"
-    html = get_html(url)
+    html = get_html(url, context=context)
     container = xpath_first(html, XP["container"], required=False, label=_SITE)
     if not container:
         raise MovieNotFoundError(__name__, movie.dvdid)
@@ -72,14 +71,3 @@ def parse_data(movie: MovieInfo):
     select_fc2_cover(movie)
     if not movie.cover:
         movie.cover = get_list_first(thumb_pic)
-
-
-if __name__ == "__main__":
-    configure_logging(debug=True)
-
-    movie = MovieInfo("FC2-4497837")
-    try:
-        parse_data(movie)
-        print(movie)
-    except CrawlerError as e:
-        logger.error(e, exc_info=True)

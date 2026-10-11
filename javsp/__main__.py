@@ -18,7 +18,7 @@ from javsp.logging_config import configure_logging
 
 logger = logging.getLogger("main")
 
-from javsp.config import Cfg
+from javsp.config import ConfigLoadError, load_config
 from javsp.datatype import setup_filemove_log
 from javsp.startup import StartupError, startup_context
 from javsp.translate import TranslateError
@@ -34,7 +34,7 @@ def _process_single_movie(movie, total_step, stats, cfg, translator=None):
     return job.output
 
 
-def RunNormalMode(all_movies, cfg, translator=None):
+def RunNormalMode(all_movies, cfg, translator=None, *, runtime=None):
     """CLI 进度适配，保留 (successful_movies, stats) 返回格式。"""
     total_step = 6
     outer_bar = tqdm(total=len(all_movies), desc="整理影片", ascii=True, leave=False)
@@ -59,7 +59,7 @@ def RunNormalMode(all_movies, cfg, translator=None):
         outer_bar.update()
 
     try:
-        batch = JobRunner(cfg, on_event, translator=translator).run_batch(all_movies, on_result)
+        batch = JobRunner(cfg, on_event, translator=translator, runtime=runtime).run_batch(all_movies, on_result)
         return batch.legacy(cfg.summarizer.filemove_log)
     finally:
         if inner_bar:
@@ -117,7 +117,7 @@ def print_summary(stats):
     print()
 
 
-def _run_with_translator(cfg, root, translator):
+def _run_with_translator(cfg, root, translator, *, runtime=None):
     """全部启动资源就绪后扫描和处理媒体文件。"""
     os.chdir(root)
     setup_filemove_log(cfg, log_dir=root)
@@ -127,7 +127,7 @@ def _run_with_translator(cfg, root, translator):
     recognized = scan_result.movies
     error_exit(len(recognized), "未找到影片文件")
     logger.info(f"扫描影片文件：共找到 {len(recognized)} 部影片")
-    _, stats = RunNormalMode(recognized, cfg, translator)
+    _, stats = RunNormalMode(recognized, cfg, translator, runtime=runtime)
     print_summary(stats)
     return 1 if stats["failed"] or stats.get("aborted") else 0
 
@@ -135,7 +135,10 @@ def _run_with_translator(cfg, root, translator):
 def entry():
     configure_logging()
     try:
-        cfg = Cfg()
+        cfg = load_config()
+    except ConfigLoadError as error:
+        logger.error("配置加载失败: %s", error)
+        sys.exit(1)
     except ValidationError as e:
         for err in e.errors():
             loc = " → ".join(str(part) for part in err["loc"])
@@ -151,8 +154,8 @@ def entry():
     previous_handler = signal.signal(signal.SIGTERM, stop_on_term)
     try:
         try:
-            with startup_context(cfg) as (root, translator):
-                result = _run_with_translator(cfg, root, translator)
+            with startup_context(cfg) as runtime:
+                result = _run_with_translator(cfg, str(runtime.root), runtime.translator, runtime=runtime)
         except StartupError as error:
             logger.error("启动检查失败: %s", error)
             sys.exit(1)

@@ -26,10 +26,9 @@ def test_partial_user_config_keeps_defaults(tmp_path, monkeypatch):
     user_config = tmp_path / "config.yml"
     user_config.write_text("scanner:\n  minimum_size: 100MiB\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(config, "_config_sources", None)
     sources = config.get_config_source()
     with config.Cfg.change_config_sources(sources):
-        cfg = config.Cfg()
+        cfg = config.load_config()
         assert cfg.scanner.minimum_size == 100 * 2**20
         assert cfg.scanner.input_directory.as_posix() == "/media"
 
@@ -89,13 +88,12 @@ def test_scan_unreadable_child_continues(tmp_path, monkeypatch):
 
 
 def test_nfo_site_categories_are_tags(tmp_path, monkeypatch):
-    base = config.Cfg()
+    base = config.load_config()
     nfo_cfg = base.summarizer.nfo.model_copy(update={"custom_genres_fields": ["自定义"], "custom_tags_fields": ["附加"]})
     cfg = base.model_copy(update={"summarizer": base.summarizer.model_copy(update={"nfo": nfo_cfg})})
-    monkeypatch.setattr(nfo, "Cfg", lambda: cfg)
     info = MovieInfo("ABC-123", title="测试", genre=["原始"], genre_norm=["归一化", "归一化"])
     target = tmp_path / "movie.nfo"
-    nfo.write_nfo(info, target)
+    nfo.write_nfo(info, target, cfg=cfg)
     xml = etree.parse(str(target))
     assert xml.xpath("/movie/genre/text()") == ["自定义"]
     assert xml.xpath("/movie/tag/text()") == ["归一化", "附加"]

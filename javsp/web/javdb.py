@@ -4,12 +4,10 @@ import logging
 import re
 
 from javsp.chromium import get_browsers_cookies
-from javsp.config import Cfg, CrawlerID
 from javsp.datatype import GenreMap, MovieInfo
 from javsp.scan.avid import guess_av_type
-from javsp.web.base import Request, is_cloudflare_challenge, resp2html, xpath_first
+from javsp.web.base import is_cloudflare_challenge, resp2html, xpath_first
 from javsp.web.exceptions import (
-    CrawlerError,
     CredentialError,
     MovieDuplicateError,
     MovieNotFoundError,
@@ -19,16 +17,10 @@ from javsp.web.exceptions import (
 )
 
 # 初始化Request实例。使用scraper绕过CloudFlare后，需要指定网页语言，否则可能会返回其他语言网页，影响解析
-request = Request(use_scraper=True)
-request.headers["Accept-Language"] = "zh-CN,zh;q=0.9,zh-TW;q=0.8,en-US;q=0.7,en;q=0.6,ja;q=0.5"
 
 logger = logging.getLogger(__name__)
 genre_map = GenreMap("data/genre_javdb.csv")
 permanent_url = "https://javdb.com"
-if Cfg().network.proxy_server is not None:
-    base_url = permanent_url
-else:
-    base_url = str(Cfg().network.proxy_free[CrawlerID.javdb])
 
 _SITE = "javdb"
 
@@ -70,40 +62,39 @@ XP = {
 }
 
 
-def get_html_wrapper(url):
+def get_html_wrapper(url, *, context):
     """包装外发的request请求并负责转换为可xpath的html，同时处理Cookies无效等问题"""
-    global request, cookies_pool
-    r = request.get(url, delay_raise=True)
+    r = context.request.get(url, delay_raise=True)
     if r.status_code == 200:
         # 发生重定向可能仅仅是域名重定向，因此还要检查url以判断是否被跳转到了登录页
         if r.history and "/login" in r.url:
             # 仅在需要时去读取Cookies
-            if "cookies_pool" not in globals():
+            if context.cookies_pool is None:
                 try:
-                    cookies_pool = get_browsers_cookies()
+                    context.cookies_pool = get_browsers_cookies()
                 except (PermissionError, OSError) as e:
                     logger.warning(
                         f"无法从浏览器Cookies文件获取JavDB的登录凭据({e})，可能是安全软件在保护浏览器Cookies文件",
                         exc_info=True,
                     )
-                    cookies_pool = []
+                    context.cookies_pool = []
                 except Exception as e:
                     logger.warning(
                         f"获取JavDB的登录凭据时出错({e})，你可能使用的是国内定制版等非官方Chrome系浏览器",
                         exc_info=True,
                     )
-                    cookies_pool = []
-            if len(cookies_pool) > 0:
-                item = cookies_pool.pop()
-                request = Request(use_scraper=True)
-                request.cookies = item["cookies"]
-                if request.scraper:
-                    request.scraper.cookies.clear()
+                    context.cookies_pool = []
+            if len(context.cookies_pool) > 0:
+                item = context.cookies_pool.pop()
+                context.reset_request()
+                context.request.cookies = item["cookies"]
+                if context.request.scraper:
+                    context.request.scraper.cookies.clear()
                     for k, v in item["cookies"].items():
-                        request.scraper.cookies.set(k, v)
+                        context.request.scraper.cookies.set(k, v)
                 cookies_source = (item["profile"], item["site"])
                 logger.debug(f"未携带有效Cookies而发生重定向，尝试更换Cookies为: {cookies_source}")
-                return get_html_wrapper(url)
+                return get_html_wrapper(url, context=context)
             else:
                 raise CredentialError("JavDB: 所有浏览器Cookies均已过期")
         elif r.history and "pay" in r.url.split("/")[-1]:
@@ -131,11 +122,11 @@ def get_html_wrapper(url):
         raise WebsiteError(f"JavDB: {r.status_code} 非预期状态码: {url}")
 
 
-def get_user_info(site, cookies):
+def get_user_info(site, cookies, *, context):
     """获取cookies对应的JavDB用户信息"""
     try:
-        request.cookies = cookies
-        html = request.get_html(f"https://{site}/users/profile")
+        context.request.cookies = cookies
+        html = context.request.get_html(f"https://{site}/users/profile")
     except Exception as e:
         logger.warning("JavDB: 获取用户信息时出错")
         logger.debug(e, exc_info=True)
@@ -149,24 +140,24 @@ def get_user_info(site, cookies):
         logger.debug("JavDB: 域名已过期: " + site)
 
 
-def get_valid_cookies():
+def get_valid_cookies(*, context):
     """扫描浏览器，获取一个可用的Cookies"""
     # 经测试，Cookies所发往的域名不需要和登录时的域名保持一致，只要Cookies有效即可在多个域名间使用
-    for d in cookies_pool:
-        info = get_user_info(d["site"], d["cookies"])
+    for d in context.cookies_pool:
+        info = get_user_info(d["site"], d["cookies"], context=context)
         if info:
             return d["cookies"]
         else:
             logger.debug(f"{d['profile']}, {d['site']}: Cookies无效")
 
 
-def parse_data(movie: MovieInfo):
+def parse_data(movie: MovieInfo, *, context):
     """从网页抓取并解析指定番号的数据
     Args:
         movie (MovieInfo): 要解析的影片信息，解析后的信息直接更新到此变量内
     """
     # JavDB搜索番号时会有多个搜索结果，从中查找匹配番号的那个
-    html = get_html_wrapper(f"{base_url}/search?q={movie.dvdid}")
+    html = get_html_wrapper(f"{context.base_url}/search?q={movie.dvdid}", context=context)
     ids = list(map(str.lower, html.xpath(XP["search_title"])))
     movie_urls = html.xpath(XP["search_url"])
     match_count = len([i for i in ids if i == movie.dvdid.lower()])
@@ -176,7 +167,7 @@ def parse_data(movie: MovieInfo):
         index = ids.index(movie.dvdid.lower())
         new_url = movie_urls[index]
         try:
-            html2 = get_html_wrapper(new_url)
+            html2 = get_html_wrapper(new_url, context=context)
         except (SitePermissionError, CredentialError):
             # 不开VIP不让看，过分。决定榨出能获得的信息，毕竟有时候只有这里能找到标题和封面
             box = html.xpath(XP["search_box"])[index]
@@ -255,7 +246,7 @@ def parse_data(movie: MovieInfo):
     magnet = container.xpath(XP["magnet"])
 
     movie.dvdid = dvdid
-    movie.url = new_url.replace(base_url, permanent_url)
+    movie.url = new_url.replace(context.base_url, permanent_url)
     movie.title = title.replace(dvdid, "").strip()
     movie.cover = cover
     movie.preview_pics = preview_pics
@@ -267,13 +258,13 @@ def parse_data(movie: MovieInfo):
     movie.magnet = [i.replace("[javdb.com]", "") for i in magnet]
 
 
-def parse_clean_data(movie: MovieInfo):
+def parse_clean_data(movie: MovieInfo, *, context):
     """解析指定番号的影片数据并进行清洗"""
     try:
-        parse_data(movie)
+        parse_data(movie, context=context)
         # 检查封面URL是否真的存在对应图片
         if movie.cover is not None:
-            r = request.head(movie.cover)
+            r = context.request.head(movie.cover)
             if r.status_code != 200:
                 movie.cover = None
     except SiteBlocked:
@@ -282,13 +273,3 @@ def parse_clean_data(movie: MovieInfo):
     if movie.genre_id and (not movie.genre_id[0].startswith("fc2?")):
         movie.genre_norm = genre_map.map(movie.genre_id)
         movie.genre_id = None  # 没有别的地方需要再用到，清空genre id（表明已经完成转换）
-
-
-
-if __name__ == "__main__":
-    movie = MovieInfo("FC2-2735981")
-    try:
-        parse_clean_data(movie)
-        print(movie)
-    except CrawlerError as e:
-        print(repr(e))

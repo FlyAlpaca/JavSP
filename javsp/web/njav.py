@@ -5,9 +5,8 @@ import re
 
 from javsp.datatype import MovieInfo
 from javsp.lib import strftime_to_minutes
-from javsp.logging_config import configure_logging
 from javsp.web.base import get_html, get_list_first, select_fc2_cover, xpath_first
-from javsp.web.exceptions import CrawlerError, MovieNotFoundError
+from javsp.web.exceptions import MovieNotFoundError
 
 logger = logging.getLogger(__name__)
 base_url = "https://njav.tv/ja"
@@ -26,11 +25,11 @@ XP = {
 }
 
 
-def search_video(movie: MovieInfo):
+def search_video(movie: MovieInfo, *, context):
     id_uc = movie.dvdid
     # 抓取网页
     url = f"{base_url}/search?keyword={id_uc}"
-    html = get_html(url)
+    html = get_html(url, context=context)
     list = html.xpath(XP["search_list"])
     video_url = None
     for item in list:
@@ -47,13 +46,13 @@ def search_video(movie: MovieInfo):
     return get_list_first(video_url)
 
 
-def parse_data(movie: MovieInfo):
+def parse_data(movie: MovieInfo, *, context):
     """解析指定番号的影片数据"""
     # 抓取网页
-    url = search_video(movie)
+    url = search_video(movie, context=context)
     if not url:
         raise MovieNotFoundError(__name__, movie.dvdid)
-    html = get_html(url)
+    html = get_html(url, context=context)
     container = xpath_first(html, XP["container"], required=False, label=_SITE)
     if not container:
         raise MovieNotFoundError(__name__, movie.dvdid)
@@ -128,15 +127,3 @@ def parse_data(movie: MovieInfo):
     select_fc2_cover(movie)
     if not movie.cover:
         movie.cover = get_list_first(thumb_pic)
-
-
-if __name__ == "__main__":
-
-    configure_logging(debug=True)
-
-    movie = MovieInfo("012023_002")
-    try:
-        parse_data(movie)
-        print(movie)
-    except CrawlerError as e:
-        logger.error(e, exc_info=True)

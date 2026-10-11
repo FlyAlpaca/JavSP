@@ -9,8 +9,7 @@ import logging
 import re
 
 from javsp.datatype import MovieInfo
-from javsp.logging_config import configure_logging
-from javsp.web.base import Request, resp2html, xpath_first
+from javsp.web.base import resp2html, xpath_first
 from javsp.web.exceptions import CrawlerError, MovieNotFoundError, SiteBlocked
 
 logger = logging.getLogger(__name__)
@@ -19,9 +18,6 @@ base_url = "https://www.dmm.co.jp"
 gql_url = "https://api.video.dmm.co.jp/graphql"
 
 # 初始化Request实例（要求携带已通过R18认证的cookies，否则会被重定向到认证页面）
-request = Request()
-request.cookies = {"age_check_done": "1"}
-request.headers["Accept-Language"] = "ja,en-US;q=0.9"
 
 _SITE = "fanza"
 
@@ -96,16 +92,16 @@ _TYPE_PRIORITY = {
 _DIGITAL_TYPES = {"videoa", "anime", "nikkatsu", "doujin", "paradisetv"}
 
 
-def _gql_request(query, variables):
+def _gql_request(query, variables, *, context):
     """发送GraphQL请求，走统一的 Request 出口"""
     payload = {"query": query, "variables": variables}
     # 临时设置 GraphQL 所需的 headers
-    saved_headers = request.headers.copy()
-    request.headers.update(_GQL_HEADERS)
+    saved_headers = context.request.headers.copy()
+    context.request.headers.update(_GQL_HEADERS)
     try:
-        r = request.post_json(gql_url, json_data=payload, delay_raise=True)
+        r = context.request.post_json(gql_url, json_data=payload, delay_raise=True)
     finally:
-        request.headers = saved_headers
+        context.request.headers = saved_headers
     if r.status_code == 403:
         raise SiteBlocked("FANZA不允许从当前IP所在地区访问，请检查你的网络和代理服务器设置")
     r.raise_for_status()
@@ -190,10 +186,10 @@ def sort_search_result(result: list[dict]):
     return sorted_result
 
 
-def _search_cid_via_html(cid):
+def _search_cid_via_html(cid, *, context):
     """通过旧搜索页面查找cid对应的影片URL"""
     search_url = f"https://www.dmm.co.jp/search/=/searchstr={cid}/limit=30/sort=rankprofile"
-    r = request.get(search_url)
+    r = context.request.get(search_url)
     if r.status_code == 404:
         raise MovieNotFoundError(__name__, cid)
     html = resp2html(r)
@@ -299,11 +295,11 @@ def _parse_mono_page(movie, html):
     movie.uncensored = False
 
 
-def parse_data(movie: MovieInfo):
+def parse_data(movie: MovieInfo, *, context):
     """解析指定番号的影片数据"""
     # 策略1: 先尝试用GraphQL API直接查询（适用于digital/monthly类型）
     try:
-        data = _gql_request(GQL_CONTENT_DETAIL, {"id": movie.cid})
+        data = _gql_request(GQL_CONTENT_DETAIL, {"id": movie.cid}, context=context)
         content = data.get("ppvContent")
         if content is not None:
             _parse_gql_content(content, movie)
@@ -314,7 +310,7 @@ def parse_data(movie: MovieInfo):
 
     # 策略2: 通过搜索页面查找影片URL
     try:
-        urls = _search_cid_via_html(movie.cid)
+        urls = _search_cid_via_html(movie.cid, context=context)
     except MovieNotFoundError:
         raise MovieNotFoundError(__name__, movie.cid)
 
@@ -323,7 +319,7 @@ def parse_data(movie: MovieInfo):
         # digital/monthly类型优先用GraphQL API
         if d["type"] in _DIGITAL_TYPES or d["product"] == "monthly":
             try:
-                data = _gql_request(GQL_CONTENT_DETAIL, {"id": movie.cid})
+                data = _gql_request(GQL_CONTENT_DETAIL, {"id": movie.cid}, context=context)
                 content = data.get("ppvContent")
                 if content is not None:
                     _parse_gql_content(content, movie)
@@ -334,7 +330,7 @@ def parse_data(movie: MovieInfo):
 
         # mono/rental类型使用HTML解析
         try:
-            r = request.get(d["url"])
+            r = context.request.get(d["url"])
             html = resp2html(r)
             if "not available in your region" in html.text_content():
                 raise SiteBlocked("FANZA不允许从当前IP所在地区访问，请检查你的网络和代理服务器设置")
@@ -346,14 +342,3 @@ def parse_data(movie: MovieInfo):
 
     logger.warning(f"在fanza查找到的cid={movie.cid}的影片页面均解析失败")
     raise MovieNotFoundError(__name__, movie.cid)
-
-
-if __name__ == "__main__":
-    configure_logging(debug=True)
-
-    movie = MovieInfo(cid="ipx00177")
-    try:
-        parse_data(movie)
-        print(movie)
-    except CrawlerError as e:
-        logger.error(e, exc_info=True)

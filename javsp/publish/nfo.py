@@ -3,14 +3,12 @@
 from lxml.builder import E
 from lxml.etree import tostring
 
-from javsp.config import Cfg
 from javsp.datatype import MovieInfo
 
 
-def write_nfo(info: MovieInfo, nfo_file, cfg=None):
+def write_nfo(info: MovieInfo, nfo_file, cfg):
     """将存储了影片信息的'info'写入到nfo文件中"""
     # NFO spec: https://kodi.wiki/view/NFO_files/Movies
-    cfg = cfg if cfg is not None else Cfg()
     nfo = E.movie()
     dic = info.get_info_dic(cfg)
 

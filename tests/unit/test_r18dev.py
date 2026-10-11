@@ -15,13 +15,14 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 import requests
 
-from javsp.config import Cfg
+from javsp.config import Cfg, load_config
 from javsp.crawl import r18dev
 from javsp.crawl.dispatcher import CrawlerExecutor
 from javsp.crawl.r18dev import TABLES, lookup, prepare_database
 from javsp.datatype import Movie, MovieInfo
 from javsp.metadata.actors import ActorMapping
 from javsp.metadata.summarizer import MetadataMerger
+from javsp.runtime import RuntimeContext
 from javsp.workflow.models import CrawlResult
 
 SCHEMA = {
@@ -461,8 +462,9 @@ def test_first_download_failure_and_ambiguous_id(tmp_path):
 def test_local_priority_online_gap_and_source_tracking(tmp_path, monkeypatch):
     path = tmp_path / "config/r18dev.sqlite"
     prepare_database(path, True, session=Session(url("2026-10-06"), dump(blank_preview=True)))
-    cfg = Cfg().model_copy(deep=True)
-    cfg._r18dev_db_path = path
+    cfg = load_config().model_copy(deep=True)
+    runtime = RuntimeContext.create(cfg)
+    runtime.database_path = path
     cfg = cfg.model_copy(
         update={
             "r18dev": cfg.r18dev.model_copy(update={"enabled": True}),
@@ -483,7 +485,7 @@ def test_local_priority_online_gap_and_source_tracking(tmp_path, monkeypatch):
 
     monkeypatch.setattr("javsp.crawl.dispatcher._crawl", online)
     movie = Movie("ABC-123")
-    result = CrawlerExecutor(cfg).crawl(movie)
+    result = CrawlerExecutor(cfg, runtime=runtime).crawl(movie)
     merged = MetadataMerger(cfg, aliases=ActorMapping()).merge(movie, result)
     assert calls == ["ABC-123"]
     assert list(result.data) == ["r18dev", "javdb"]
@@ -493,15 +495,16 @@ def test_local_priority_online_gap_and_source_tracking(tmp_path, monkeypatch):
     assert merged.field_sources["genre"] == "r18dev"
     assert merged.cover != "https://example.test/online.jpg"
     cfg = cfg.model_copy(update={"crawler": cfg.crawler.model_copy(update={"online_enabled": False})})
-    assert list(CrawlerExecutor(cfg).crawl(movie).data) == ["r18dev"]
+    assert list(CrawlerExecutor(cfg, runtime=runtime).crawl(movie).data) == ["r18dev"]
     assert calls == ["ABC-123"]
 
 
 def test_complete_local_hit_skips_online_and_miss_uses_online(tmp_path, monkeypatch):
     path = tmp_path / "config/r18dev.sqlite"
     prepare_database(path, True, session=Session(url("2026-10-06"), dump()))
-    cfg = Cfg().model_copy(deep=True)
-    cfg._r18dev_db_path = path
+    cfg = load_config().model_copy(deep=True)
+    runtime = RuntimeContext.create(cfg)
+    runtime.database_path = path
     cfg = cfg.model_copy(
         update={
             "r18dev": cfg.r18dev.model_copy(update={"enabled": True}),
@@ -515,16 +518,17 @@ def test_complete_local_hit_skips_online_and_miss_uses_online(tmp_path, monkeypa
         return CrawlResult({"javbus": MovieInfo(movie, title="在线标题")}, [], movie.dvdid, movie.cid, movie.data_src)
 
     monkeypatch.setattr("javsp.crawl.dispatcher._crawl", online)
-    assert list(CrawlerExecutor(cfg).crawl(Movie("ABC-123")).data) == ["r18dev"]
-    assert list(CrawlerExecutor(cfg).crawl(Movie("ABC-999")).data) == ["javbus"]
+    assert list(CrawlerExecutor(cfg, runtime=runtime).crawl(Movie("ABC-123")).data) == ["r18dev"]
+    assert list(CrawlerExecutor(cfg, runtime=runtime).crawl(Movie("ABC-999")).data) == ["javbus"]
     assert calls == ["ABC-999"]
 
 
 def test_offline_local_miss_reports_reason(tmp_path, monkeypatch):
     path = tmp_path / "config/r18dev.sqlite"
     prepare_database(path, False, session=Session(url("2026-10-06"), dump()))
-    cfg = Cfg().model_copy(deep=True)
-    cfg._r18dev_db_path = path
+    cfg = load_config().model_copy(deep=True)
+    runtime = RuntimeContext.create(cfg)
+    runtime.database_path = path
     cfg = cfg.model_copy(
         update={
             "r18dev": cfg.r18dev.model_copy(update={"enabled": True}),
@@ -533,7 +537,7 @@ def test_offline_local_miss_reports_reason(tmp_path, monkeypatch):
     )
     monkeypatch.setattr("javsp.crawl.dispatcher._crawl", lambda *args: pytest.fail("不应访问在线抓取器"))
 
-    result = CrawlerExecutor(cfg).crawl(Movie("ABC-999"))
+    result = CrawlerExecutor(cfg, runtime=runtime).crawl(Movie("ABC-999"))
     with pytest.raises(ValueError, match="未获取到影片数据.*ABC-999") as error:
         result.require_data()
     assert "r18dev: 本地数据库未找到唯一匹配的影片记录" in str(error.value)
@@ -541,19 +545,19 @@ def test_offline_local_miss_reports_reason(tmp_path, monkeypatch):
 
 
 def test_fixed_database_path_survives_working_directory_change(tmp_path, monkeypatch):
-    cfg = Cfg()
-    expected = cfg._r18dev_db_path
+    runtime = RuntimeContext.create(load_config())
+    expected = runtime.database_cache_path
     assert expected.name == "r18dev.sqlite" and expected.parent.name == "config"
     assert expected.is_absolute()
     other = tmp_path / "media"
     other.mkdir()
     monkeypatch.chdir(other)
-    assert cfg._r18dev_db_path == expected
-    assert "path" not in type(cfg.r18dev).model_fields
+    assert runtime.database_cache_path == expected
+    assert "path" not in type(runtime.cfg.r18dev).model_fields
 
 
 def test_disabled_sources_are_rejected():
-    cfg = Cfg()
+    cfg = load_config()
     data = cfg.model_dump()
     data["r18dev"]["enabled"] = False
     data["crawler"]["online_enabled"] = False

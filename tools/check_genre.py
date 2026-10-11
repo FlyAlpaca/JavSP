@@ -17,23 +17,25 @@ from pathlib import Path
 
 proj_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(proj_root))
+from javsp.config import load_config
 from javsp.web.base import get_html
+from javsp.web.context import SiteContext
 from javsp.web.proxyfree import get_proxy_free_url
 
 
-def get_javbus_genre():
+def get_javbus_genre(*, context):
     """获取JavBus的genre各语言对照列表"""
     record = {}  # {id: [cn_url, zh_tw, ja, en]}
-    base_url = get_proxy_free_url("javbus")
+    base_url = get_proxy_free_url("javbus", context=context)
     subsite_urls = {
         "normal": ["/genre", "/ja/genre", "/en/genre"],
         "uncensored": ["/uncensored/genre", "/ja/uncensored/genre", "/en/uncensored/genre"],
     }
     for subsite, urls in subsite_urls.items():
         id_prefix = "uncensored-" if subsite == "uncensored" else ""
-        zh_tw = get_html(base_url + urls[0])
-        ja = get_html(base_url + urls[1])
-        en = get_html(base_url + urls[2])
+        zh_tw = get_html(base_url + urls[0], context=context)
+        ja = get_html(base_url + urls[1], context=context)
+        en = get_html(base_url + urls[2], context=context)
         for html in [zh_tw, ja, en]:
             genre_tags = html.xpath("//div[@class='row genre-box']/a")
             # 提取各个genre的信息
@@ -50,20 +52,20 @@ def get_javbus_genre():
     return data
 
 
-def get_javdb_genre():
+def get_javdb_genre(*, context):
     """获取JavDB的genre各语言对照列表"""
     # JavDB的genre id有重复且各子站内的含义不同，但是'tags?c2=1'的形式不重复，所以可以合并成一个数据文件
     # FC2 部分的数据需要登录，待实现FC2的解析功能时一并添加
     record = {}
-    base_url = get_proxy_free_url("javdb")
+    base_url = get_proxy_free_url("javdb", context=context)
     subsite_urls = {
         "normal": ["/tags?locale=zh", "/tags?locale=en"],
         "uncensored": ["/tags/uncensored?locale=zh", "/tags/uncensored?locale=en"],
         "western": ["/tags/western?locale=zh", "/tags/western?locale=en"],
     }
     for subsite, urls in subsite_urls.items():
-        zh_tw = get_html(base_url + urls[0])
-        en = get_html(base_url + urls[1])
+        zh_tw = get_html(base_url + urls[0], context=context)
+        en = get_html(base_url + urls[1], context=context)
         for html in [zh_tw, en]:
             genre_tags = html.xpath("//span[@class='tag_labels']/a")
             # 提取各个genre的信息
@@ -85,13 +87,13 @@ def get_javdb_genre():
     return data
 
 
-def get_avsox_genre():
+def get_avsox_genre(*, context):
     """获取AVSOX的genre各语言对照列表"""
     record = {}
-    base_url = get_proxy_free_url("avsox")
+    base_url = get_proxy_free_url("avsox", context=context)
     languages = ["cn", "tw", "en", "ja"]
     for lang in languages:
-        html = get_html(f"{base_url}/{lang}/genre")
+        html = get_html(f"{base_url}/{lang}/genre", context=context)
         genre_tags = html.xpath("//div[@class='row genre-box']/a")
         for tag in genre_tags:
             url = tag.get("href")
@@ -105,13 +107,13 @@ def get_avsox_genre():
     return data
 
 
-def get_javlib_genre():
+def get_javlib_genre(*, context):
     """获取JavLibrary的genre各语言对照列表"""
     record = {}
-    base_url = get_proxy_free_url("javlib")
+    base_url = get_proxy_free_url("javlib", context=context)
     languages = ["cn", "tw", "en", "ja"]
     for lang in languages:
-        html = get_html(f"{base_url}/{lang}/genres.php")
+        html = get_html(f"{base_url}/{lang}/genres.php", context=context)
         genre_tags = html.xpath("//div[@class='genreitem']/a")
         for tag in genre_tags:
             url = tag.get("href")
@@ -141,4 +143,5 @@ def write_csv(data):
 
 
 if __name__ == "__main__":
-    write_csv(get_javlib_genre())
+    with SiteContext(load_config(), "javlib") as context:
+        write_csv(get_javlib_genre(context=context))
