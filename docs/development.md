@@ -27,7 +27,7 @@
 
 ## 2.0 流水线
 
-`javsp/workflow/models.py` 定义扫描、抓取、阶段事件、输出及单片/批次结果；`javsp/workflow/pipeline.py` 负责逐部影片编排。
+`javsp/workflow/models.py` 定义扫描、抓取、阶段事件、输出及单片/批次结果；`javsp/workflow/pipeline.py` 负责单片编排，`javsp/workflow/batch.py` 负责有界并发批次调度。
 核心组件显式接收配置，CLI 将事件转成进度条。
 
 代码从上述职责目录导入模块；分层前的根目录模块路径不再提供。
@@ -38,11 +38,37 @@
 | CrawlerExecutor | `crawl(movie, progress=None) -> CrawlResult` | 站点并发、重试、软截止、线程回收；返回最终数据源身份 |
 | MetadataMerger | `merge(movie, result) -> MovieInfo` | 分类归一化、字段优先级、必需字段、演员别名及来源；不修改输入来源 |
 | OutputPlanner | `plan(movie, info) -> OutputPlan` | 在影片副本上只读规划路径与影片/字幕操作 |
-| OutputExecutor | `execute(plan) -> OutputResult` | 暂存、校验、提交、备份与逆序回滚 |
+| OutputExecutor | `prepare(plan)` / `commit(prepared)` / `discard(prepared)`；`execute(plan)` 组合入口 | 暂存、校验、提交、备份与逆序回滚 |
 | JobRunner / Pipeline | `run(movie)` / `run(root)` | 任务状态、阶段错误、批次停止及未处理列表 |
 
 翻译位于合并与规划之间。CLI 通过 `Pipeline.run()` 调用核心处理，进度和统计展示位于 `javsp/cli.py`。
 运行上下文统一管理翻译器，流水线和单片任务只使用已准备的翻译器，不启动或关闭模型服务。
+
+### 批次并发与资源生命周期
+
+`concurrency.movies/crawlers/images` 默认分别为 3/6/3，模型并发沿用 `translator.runtime.parallel`。
+`BatchResources` 显式传入单片组件，持有批次共享抓取池、图片池、停止信号、站点冷却与剧照启动节流。
+影片线程池与子任务池独立，最多保持影片额度内的任务；准备完成但尚未提交的影片也占用额度。
+剧照按有界窗口派发，完成任务的 Future 从资源登记中移除，避免整批任务历史持续累积。
+
+每部影片独立创建抓取器、合并器、规划器和输出执行器；R18.dev 查询各自打开只读连接，启动构建的演员索引只读共享。
+站点身份显式传入任务，不依赖线程池工作线程名称；同一站点串行执行并在任务完成后冷却。
+抓取截止从获得站点额度并实际开始任务时计算，超时仍等待请求结束并舍弃晚到结果。
+`movies: 1` 使用串行编排与成功影片之间的节流，子任务池仍共享并限制线程数。
+独立 `JobRunner` 注入自定义处理组件时沿用串行批次行为，避免复制或跨线程共享外部组件的可变状态。
+
+`PreparedOutput` 持有规划副本、文件事务、暂存产物与目标状态；准备阶段不移动影片、不替换正式产物。
+主调度线程按输入顺序调用提交，提交前复查文件状态，并记录已提交目标以拒绝批次内的目标重叠。
+直接调用 `execute()` 保留原有组合行为；已提交或放弃的准备结果不能再次提交。
+
+工作线程将 `StageEvent` 放入队列；批次主线程调用事件与结果回调。新增的可选 `task_id` 标识单片任务，
+`JobResult.task_id` 与事件对应；最终 `BatchResult.jobs` 按输入顺序排列。
+普通准备或提交失败形成失败结果，恢复完整时继续；停止信号引起的未提交任务进入 `pending`。
+任何影片取消或恢复不完整都会通知调度器停止，已开始的提交允许完成或按原事务规则回滚，不再启动后续提交。
+先等待影片线程及其子任务结束，再关闭共享池、清理准备结果，最后退出启动上下文并关闭模型服务。
+
+本地翻译请求按模型槽位限流，每个请求使用独立 HTTP 会话并在请求结束后关闭；传入外部测试会话时串行保护。
+默认共享一个模型进程，Slimeface 调用通过锁串行执行，水印图在启动时完成像素加载后只读使用。
 
 ### 输出事务与恢复边界
 

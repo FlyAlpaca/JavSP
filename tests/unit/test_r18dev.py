@@ -473,7 +473,7 @@ def test_local_priority_online_gap_and_source_tracking(tmp_path, monkeypatch):
     )
     calls = []
 
-    def online(movie, config, progress):
+    def online(movie, config, progress, *, resources=None):
         calls.append(movie.dvdid)
         return CrawlResult(
             {"javdb": MovieInfo(movie, title="在线标题", score=8.0, genre=["在线分类"], cover="https://example.test/online.jpg")},
@@ -513,7 +513,7 @@ def test_complete_local_hit_skips_online_and_miss_uses_online(tmp_path, monkeypa
     )
     calls = []
 
-    def online(movie, config, progress):
+    def online(movie, config, progress, *, resources=None):
         calls.append(movie.dvdid)
         return CrawlResult({"javbus": MovieInfo(movie, title="在线标题")}, [], movie.dvdid, movie.cid, movie.data_src)
 

@@ -1,6 +1,10 @@
+import threading
+
 from PIL import Image
 
 from javsp.cropper.interface import DefaultCropper, get_bound_box_by_face
+
+_INFERENCE_LOCK = threading.Lock()
 
 
 class SlimefaceCropper:
@@ -11,7 +15,8 @@ class SlimefaceCropper:
             # defer the libary import so we don't break if missing dependencies
             from slimeface import detectRGB
 
-            bbox_confs = detectRGB(fanart.width, fanart.height, fanart.convert("RGB").tobytes())
+            with _INFERENCE_LOCK:
+                bbox_confs = detectRGB(fanart.width, fanart.height, fanart.convert("RGB").tobytes())
             bbox_confs.sort(key=lambda conf_bbox: -conf_bbox[4])  # last arg stores confidence
             face = bbox_confs[0][:-1]
             poster_box = get_bound_box_by_face(face, fanart.size, ratio)

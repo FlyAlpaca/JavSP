@@ -46,6 +46,7 @@ class StageEvent:
     movie_id: str
     stage: Stage
     detail: str = ""
+    task_id: str = ""
 
 
 @dataclass
@@ -76,6 +77,7 @@ class JobResult:
     error: JobError | None = None
     cancelled: bool = False
     interruption: BaseException | None = None
+    task_id: str = ""
 
     @property
     def success(self) -> bool:

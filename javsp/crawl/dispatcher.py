@@ -16,7 +16,7 @@ except ImportError:
 
 from copy import copy
 
-from javsp.concurrency import drain_threads
+from javsp.concurrency import await_futures, drain_threads
 from javsp.crawl.r18dev import SOURCE, lookup, needs_online
 from javsp.datatype import Movie, MovieInfo
 from javsp.web.context import SiteContext
@@ -47,22 +47,24 @@ def import_crawlers(cfg):
         logger.warning("配置的抓取器无效: " + ", ".join(unknown_mods))
 
 
-def _crawl(movie: Movie, cfg, tqdm_bar=None) -> CrawlResult:
+def _crawl(movie: Movie, cfg, tqdm_bar=None, *, resources=None) -> CrawlResult:
     """使用多线程抓取不同网站的数据"""
     movie = copy(movie)
     failed_crawlers = []  # (crawler_name, error_reason)
     stopped = threading.Event()
 
-    def worker(parser, info: MovieInfo, retry, context):
-        crawler_name = threading.current_thread().name
-        short_name = crawler_name.replace("javsp.web.", "")
+    def worker(parser, info: MovieInfo, retry, context, short_name, stop):
         last_error = "未执行抓取（重试次数为 0）"
         for cnt in range(retry):
-            if stopped.is_set():
+            if resources:
+                resources.check()
+            if stop.is_set():
                 return
             try:
                 parser(info, context=context)
-                if stopped.is_set():
+                if resources:
+                    resources.check()
+                if stop.is_set():
                     return
                 movie_id = info.dvdid or info.cid
                 logger.debug(f"{short_name}: 抓取成功: '{movie_id}': '{info.url}'")
@@ -104,7 +106,7 @@ def _crawl(movie: Movie, cfg, tqdm_bar=None) -> CrawlResult:
     def wrapper(parser, info, retry, done):
         try:
             with SiteContext(cfg, threading.current_thread().name.replace("javsp.web.", "")) as context:
-                worker(parser, info, retry, context)
+                worker(parser, info, retry, context, context.site, stopped)
         finally:
             done.set()
 
@@ -119,35 +121,76 @@ def _crawl(movie: Movie, cfg, tqdm_bar=None) -> CrawlResult:
             i.dvdid = None
         for i in cfg.crawler.selection["normal"]:
             all_info[i] = MovieInfo(movie.dvdid)
-    thread_pool = []
-    completions = []
-    timeout = cfg.network.retry * cfg.network.timeout.total_seconds()
-    deadline = time.monotonic() + timeout
-    try:
-        for mod_partial, info in all_info.items():
-            mod = f"javsp.web.{mod_partial}"
-            # 优先使用带数据清洗的 parse_clean_data（如 javdb/javbus 会进行 genre 归一化）
-            if hasattr(sys.modules[mod], "parse_clean_data"):
-                parser = getattr(sys.modules[mod], "parse_clean_data")
-            else:
-                parser = getattr(sys.modules[mod], "parse_data")
-            # 将all_info中的info实例传递给parser，parser抓取完成后，info实例的值已经完成更新
-            done = threading.Event()
-            th = threading.Thread(target=wrapper, name=mod, args=(parser, info, cfg.network.retry, done))
-            th.start()
-            thread_pool.append(th)
-            completions.append(done)
-        for th in thread_pool:
-            th.join(timeout=max(0, deadline - time.monotonic()))
-    finally:
-        stopped.set()
-        # Python 线程不能强制终止：停止重试并回收在途请求后再读取结果。
-        timed_out = [th for th, done in zip(thread_pool, completions) if not done.is_set()]
+    if resources:
+        tasks = []
+        try:
+            for site, info in all_info.items():
+                module = sys.modules[f"javsp.web.{site}"]
+                parser = getattr(module, "parse_clean_data", None) or module.parse_data
+                started, stop = [None, None], threading.Event()
+
+                def execute(parser=parser, info=info, site=site, stop=stop):
+                    with SiteContext(cfg, site) as context:
+                        worker(parser, info, cfg.network.retry, context, site, stop)
+
+                future = resources.submit(resources.crawlers, resources.site_task, site, execute, started)
+                tasks.append((site, future, started, stop))
+            timeout = cfg.network.retry * cfg.network.timeout.total_seconds()
+            remaining = list(tasks)
+            while remaining:
+                resources.check()
+                now = time.monotonic()
+                for site, future, started, stop in list(remaining):
+                    if started[0] is not None and (started[1] or now) - started[0] >= timeout:
+                        stop.set()
+                        failed_crawlers.append((site, "抓取超时"))
+                        remaining.remove((site, future, started, stop))
+                    elif future.done():
+                        future.result()
+                        remaining.remove((site, future, started, stop))
+                if remaining:
+                    resources.pause(0.01)
+        finally:
+            for _, future, _, stop in tasks:
+                stop.set()
+                future.cancel()
+            await_futures([future for _, future, _, _ in tasks])
+        for _, future, _, _ in tasks:
+            if not future.cancelled():
+                future.result()
+        for site, reason in failed_crawlers:
+            if reason == "抓取超时":
+                all_info[site]._success = False
+    else:
+        thread_pool = []
+        completions = []
+        timeout = cfg.network.retry * cfg.network.timeout.total_seconds()
+        deadline = time.monotonic() + timeout
+        try:
+            for mod_partial, info in all_info.items():
+                mod = f"javsp.web.{mod_partial}"
+                # 优先使用带数据清洗的 parse_clean_data（如 javdb/javbus 会进行 genre 归一化）
+                if hasattr(sys.modules[mod], "parse_clean_data"):
+                    parser = getattr(sys.modules[mod], "parse_clean_data")
+                else:
+                    parser = getattr(sys.modules[mod], "parse_data")
+                # 将all_info中的info实例传递给parser，parser抓取完成后，info实例的值已经完成更新
+                done = threading.Event()
+                th = threading.Thread(target=wrapper, name=mod, args=(parser, info, cfg.network.retry, done))
+                th.start()
+                thread_pool.append(th)
+                completions.append(done)
+            for th in thread_pool:
+                th.join(timeout=max(0, deadline - time.monotonic()))
+        finally:
+            stopped.set()
+            # Python 线程不能强制终止：停止重试并回收在途请求后再读取结果。
+            timed_out = [th for th, done in zip(thread_pool, completions) if not done.is_set()]
+            for th in timed_out:
+                failed_crawlers.append((th.name.replace("javsp.web.", ""), "抓取超时"))
+            drain_threads(zip(thread_pool, completions))
         for th in timed_out:
-            failed_crawlers.append((th.name.replace("javsp.web.", ""), "抓取超时"))
-        drain_threads(zip(thread_pool, completions))
-    for th in timed_out:
-        all_info[th.name.replace("javsp.web.", "")]._success = False
+            all_info[th.name.replace("javsp.web.", "")]._success = False
     # 根据抓取结果更新影片类型判定
     if movie.data_src == "cid" and movie.dvdid:
         titles = [all_info[i].title for i in cfg.crawler.selection[movie.data_src] if all_info[i]._success]
@@ -170,8 +213,9 @@ def _crawl(movie: Movie, cfg, tqdm_bar=None) -> CrawlResult:
 class CrawlerExecutor:
     """逐部任务共用的站点调度器；超时为软截止，返回前回收工作线程。"""
 
-    def __init__(self, cfg, *, runtime=None):
+    def __init__(self, cfg, *, runtime=None, resources=None):
         self.cfg = cfg
+        self.resources = resources
         self.local_enabled = getattr(getattr(cfg, "r18dev", None), "enabled", False)
         self.online_enabled = getattr(cfg.crawler, "online_enabled", True)
         self.local_path = runtime.database_path if runtime is not None else None
@@ -189,7 +233,7 @@ class CrawlerExecutor:
                 failures.append((SOURCE, str(error)))
         if self.online_enabled and (not self.local_enabled or needs_online(local)):
             self._last_online = True
-            result = _crawl(movie, self.cfg, progress)
+            result = _crawl(movie, self.cfg, progress, resources=self.resources)
             if local:
                 return CrawlResult(
                     {SOURCE: local, **result.data}, failures + result.failures, movie.dvdid, movie.cid, movie.data_src

@@ -2,10 +2,13 @@
 
 import logging
 from copy import copy
+from dataclasses import dataclass, replace
 
+from javsp.concurrency import BatchCancelled, BatchResources
 from javsp.crawl.dispatcher import CrawlerExecutor
+from javsp.datatype import Movie
 from javsp.metadata.summarizer import MetadataMerger
-from javsp.publish.output import OutputExecutor
+from javsp.publish.output import OutputExecutor, PreparedOutput
 from javsp.publish.planner import OutputPlanner
 from javsp.publish.source_cleanup import SourceCleanup
 from javsp.publish.transaction import RecoveryError
@@ -23,25 +26,42 @@ class _CrawlerProgress:
         self.emit(Stage.CRAWL, detail)
 
 
+@dataclass
+class PreparedJob:
+    movie: Movie
+    output: PreparedOutput
+
+
 class JobRunner:
     def __init__(self, cfg, on_event=None, *, translator=None, crawler=None, merger=None, planner=None,
-                 executor=None, runtime=None, root=None):
+                 executor=None, runtime=None, root=None, resources=None, task_id=""):
         self.cfg, self.on_event = cfg, on_event
         self.runtime = runtime
+        self.root = root
+        self.resources, self.task_id = resources, task_id
+        self._custom_components = any(component is not None for component in (crawler, merger, planner)) or (
+            executor is not None and type(executor) is not OutputExecutor
+        )
         self.translator = translator if translator is not None else (runtime.translator if runtime else None)
-        self.crawler = crawler if crawler is not None else CrawlerExecutor(cfg, runtime=runtime)
+        self.crawler = crawler if crawler is not None else CrawlerExecutor(cfg, runtime=runtime, resources=resources)
         self.merger = merger if merger is not None else MetadataMerger(cfg, runtime=runtime)
         self.planner = planner if planner is not None else OutputPlanner(cfg, root=root or (runtime.root if runtime else None))
-        self.executor = executor if executor is not None else OutputExecutor(cfg)
+        self.executor = executor if executor is not None else OutputExecutor(cfg, resources=resources)
 
     def _event(self, event):
         if self.on_event:
             try:
-                self.on_event(event)
+                self.on_event(replace(event, task_id=self.task_id))
             except Exception:
                 logger.warning("进度回调失败", exc_info=True)
 
     def run(self, movie) -> JobResult:
+        return self._process(movie, prepare_only=False)
+
+    def prepare(self, movie) -> PreparedJob | JobResult:
+        return self._process(movie, prepare_only=True)
+
+    def _process(self, movie, *, prepare_only):
         if self.translator is None:
             raise ValueError("翻译器未初始化，请传入翻译器或已准备的运行上下文")
         working = copy(movie)
@@ -51,6 +71,8 @@ class JobRunner:
 
         def emit(next_stage, detail=""):
             nonlocal stage
+            if self.resources:
+                self.resources.check()
             stage = next_stage
             self._event(StageEvent(working.dvdid or working.cid or "未知番号", stage, detail))
 
@@ -72,6 +94,8 @@ class JobRunner:
             plan = self.planner.plan(working, working.info)
             stage = Stage.PREPARE
             executing = True
+            if prepare_only:
+                return PreparedJob(movie, self.executor.prepare(plan))
             output = self.executor.execute(plan)
             # 只有提交成功，才对外发布影片的新路径和最终元数据。
             movie.__dict__.update(output.movie.__dict__)
@@ -80,30 +104,68 @@ class JobRunner:
             logger.info(f"整理完成，相关文件已保存到: {movie.save_dir}\n")
             return JobResult(movie, output)
         except BaseException as cause:
-            committed = getattr(self.executor, "committed_result", None) if executing else None
-            if committed is not None:
-                # 提交点之后的取消或清理错误不能把已经完成的影片计为失败。
-                movie.__dict__.update(committed.movie.__dict__)
-                committed.movie = movie
-                cancelled = isinstance(cause, (KeyboardInterrupt, SystemExit, GeneratorExit))
-                if not cancelled:
-                    warning = f"产物已提交，后续清理或通知异常: {cause}"
-                    committed.warnings.append(warning)
-                    logger.warning(warning)
-                return JobResult(movie, committed, cancelled=cancelled, interruption=cause if cancelled else None)
-            if executing:
-                stage = self.executor.stage
-            recovered = not isinstance(cause, RecoveryError)
-            original = cause.cause if not recovered else cause
-            cancelled = isinstance(original, (KeyboardInterrupt, SystemExit, GeneratorExit))
-            error = JobError(
-                working.dvdid or working.cid or "未知番号", stage, cause, recovered, cause.paths if not recovered else []
-            )
+            return self._failure(movie, cause, stage, executing, working.dvdid or working.cid)
+
+    def commit(self, prepared: PreparedJob) -> JobResult:
+        try:
+            output = self.executor.commit(prepared.output)
+            prepared.movie.__dict__.update(output.movie.__dict__)
+            output.movie = prepared.movie
+            self._event(StageEvent(output.movie.dvdid or output.movie.cid or "未知番号", Stage.DONE))
+            logger.info("整理完成，相关文件已保存到: %s", output.movie.save_dir)
+            return JobResult(prepared.movie, output)
+        except BaseException as cause:
+            return self._failure(prepared.movie, cause, Stage.COMMIT, True)
+
+    def _failure(self, movie, cause, stage, executing, identity=None):
+        committed = getattr(self.executor, "committed_result", None) if executing else None
+        if committed is not None:
+            # 提交点之后的取消或清理错误不能把已经完成的影片计为失败。
+            movie.__dict__.update(committed.movie.__dict__)
+            committed.movie = movie
+            cancelled = isinstance(cause, (KeyboardInterrupt, SystemExit, GeneratorExit))
+            if not cancelled:
+                warning = f"产物已提交，后续清理或通知异常: {cause}"
+                committed.warnings.append(warning)
+                logger.warning(warning)
+            return JobResult(movie, committed, cancelled=cancelled, interruption=cause if cancelled else None)
+        if executing:
+            stage = self.executor.stage
+        recovered = not isinstance(cause, RecoveryError)
+        original = cause.cause if not recovered else cause
+        cancelled = isinstance(original, (KeyboardInterrupt, SystemExit, GeneratorExit))
+        error = JobError(
+            identity or movie.dvdid or movie.cid or "未知番号", stage, cause, recovered, cause.paths if not recovered else []
+        )
+        if isinstance(cause, BatchCancelled):
+            logger.debug("任务未提交，随批次停止: %s", error)
+        else:
             logger.error(f"整理失败: {error}")
-            logger.debug("单片任务异常", exc_info=True)
-            return JobResult(movie, error=error, cancelled=cancelled)
+        logger.debug("单片任务异常", exc_info=True)
+        return JobResult(movie, error=error, cancelled=cancelled)
 
     def run_batch(self, movies, on_result=None) -> BatchResult:
+        if self.cfg.concurrency.movies > 1 and not self._custom_components:
+            from javsp.workflow.batch import ConcurrentBatch
+
+            return ConcurrentBatch(self).run(movies, on_result)
+        if self._custom_components:
+            return self._run_serial(movies, on_result)
+        # 串行模式沿用成功影片之间的节流，子任务仍受批次线程额度限制。
+        resources = BatchResources(self.cfg)
+        resources.site_interval = 0
+        previous = self.resources, self.crawler.resources, self.executor.resources
+        self.resources = self.crawler.resources = self.executor.resources = resources
+        try:
+            return self._run_serial(movies, on_result)
+        finally:
+            resources.stopped.set()
+            try:
+                resources.close()
+            finally:
+                self.resources, self.crawler.resources, self.executor.resources = previous
+
+    def _run_serial(self, movies, on_result):
         movies = list(movies)
         batch = BatchResult(len(movies))
         for index, movie in enumerate(movies):
