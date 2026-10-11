@@ -8,24 +8,21 @@ import re
 from sys import platform
 
 __all__ = [
-    "scan_movies",
+    "Scanner",
     "get_fmt_size",
     "get_remaining_path_len",
     "replace_illegal_chars",
-    "get_failed_when_scan",
     "find_subtitle_in_dir",
     "find_matching_subtitles",
 ]
 
 
-from javsp.config import load_config
 from javsp.datatype import Movie
 from javsp.lib import re_escape
 from javsp.scan.avid import get_cid, get_id, guess_av_type, normalize_id
 from javsp.workflow.models import ScanResult
 
 logger = logging.getLogger(__name__)
-failed_items = []
 
 
 def _scan_movies(root: str, cfg, result: ScanResult) -> list[Movie]:
@@ -195,18 +192,6 @@ class Scanner:
         return result
 
 
-def scan_movies(root: str) -> list[Movie]:
-    """兼容列表接口；只有兼容接口更新历史失败列表。"""
-    result = Scanner(load_config()).scan(root)
-    failed_items[:] = result.unrecognized
-    return result.movies
-
-
-def get_failed_when_scan():
-    """获取扫描影片过程中无法自动识别番号的条目"""
-    return failed_items
-
-
 _PARDIR_REPLACE = re.compile(r"\.{2,}")
 
 
@@ -281,7 +266,6 @@ def get_fmt_size(file_or_size) -> str:
         size /= 1024.0
 
 
-_sub_files = {}
 SUB_EXTENSIONS = (".srt", ".ass")
 
 
@@ -290,21 +274,14 @@ def find_subtitle_in_dir(folder: str, dvdid: str, *, cfg):
     norm_target = normalize_id(dvdid)
     if not norm_target:
         return None
-    folder_data = _sub_files.get(folder)
-    if folder_data is None:
-        # 此文件夹从未检查过时
-        folder_data = {}
-        for dirpath, dirnames, filenames in os.walk(folder):
-            for file in filenames:
-                basename, ext = os.path.splitext(file)
-                if ext in SUB_EXTENSIONS:
-                    match_id = get_id(basename, cfg)
-                    if match_id:
-                        # 使用归一化番号作为 key，支持模糊匹配
-                        folder_data[normalize_id(match_id)] = os.path.join(dirpath, file)
-        _sub_files[folder] = folder_data
-    sub_file = folder_data.get(norm_target)
-    return sub_file
+    for dirpath, _, filenames in os.walk(folder):
+        for file in filenames:
+            basename, ext = os.path.splitext(file)
+            if ext in SUB_EXTENSIONS:
+                match_id = get_id(basename, cfg)
+                if match_id and normalize_id(match_id) == norm_target:
+                    return os.path.join(dirpath, file)
+    return None
 
 
 def find_matching_subtitles(video_path: str) -> list[str]:

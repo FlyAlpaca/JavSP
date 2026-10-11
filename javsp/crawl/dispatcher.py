@@ -17,7 +17,6 @@ except ImportError:
 from copy import copy
 
 from javsp.concurrency import drain_threads
-from javsp.config import load_config
 from javsp.crawl.r18dev import SOURCE, lookup, needs_online
 from javsp.datatype import Movie, MovieInfo
 from javsp.web.context import SiteContext
@@ -209,15 +208,3 @@ class CrawlerExecutor:
         interval = self.cfg.crawler.sleep_after_scraping.total_seconds()
         if interval > 0:
             time.sleep(interval)
-
-
-def parallel_crawler(movie: Movie, tqdm_bar=None):
-    """兼容旧字典接口，包括身份更新和分类归一化。"""
-    from javsp.metadata.summarizer import normalize_genres
-
-    cfg = load_config()
-    result = CrawlerExecutor(cfg).crawl(movie, tqdm_bar)
-    movie.dvdid, movie.cid, movie.data_src = result.dvdid, result.cid, result.data_src
-    result.require_data()
-    normalize_genres(result.data)
-    return result.data

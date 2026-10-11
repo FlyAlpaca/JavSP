@@ -5,7 +5,9 @@ from copy import copy
 
 from javsp.crawl.dispatcher import CrawlerExecutor
 from javsp.metadata.summarizer import MetadataMerger
-from javsp.publish.output import OutputExecutor, OutputPlanner, RecoveryError
+from javsp.publish.output import OutputExecutor
+from javsp.publish.planner import OutputPlanner
+from javsp.publish.transaction import RecoveryError
 from javsp.scan.file import Scanner
 from javsp.workflow.models import BatchResult, JobError, JobResult, Stage, StageEvent
 
@@ -22,13 +24,13 @@ class _CrawlerProgress:
 
 class JobRunner:
     def __init__(self, cfg, on_event=None, *, translator=None, crawler=None, merger=None, planner=None,
-                 executor=None, runtime=None):
+                 executor=None, runtime=None, root=None):
         self.cfg, self.on_event = cfg, on_event
         self.runtime = runtime
         self.translator = translator if translator is not None else (runtime.translator if runtime else None)
         self.crawler = crawler if crawler is not None else CrawlerExecutor(cfg, runtime=runtime)
         self.merger = merger if merger is not None else MetadataMerger(cfg, runtime=runtime)
-        self.planner = planner if planner is not None else OutputPlanner(cfg)
+        self.planner = planner if planner is not None else OutputPlanner(cfg, root=root or (runtime.root if runtime else None))
         self.executor = executor if executor is not None else OutputExecutor(cfg)
 
     def _event(self, event):
@@ -40,14 +42,7 @@ class JobRunner:
 
     def run(self, movie) -> JobResult:
         if self.translator is None:
-            from javsp.translate import LocalTranslator
-
-            with LocalTranslator(self.cfg.translator) as translator:
-                self.translator = translator
-                try:
-                    return self.run(movie)
-                finally:
-                    self.translator = None
+            raise ValueError("翻译器未初始化，请传入翻译器或已准备的运行上下文")
         working = copy(movie)
         working.files = list(movie.files)
         stage = Stage.CRAWL
@@ -108,15 +103,6 @@ class JobRunner:
             return JobResult(movie, error=error, cancelled=cancelled)
 
     def run_batch(self, movies, on_result=None) -> BatchResult:
-        if self.translator is None:
-            from javsp.translate import LocalTranslator
-
-            with LocalTranslator(self.cfg.translator) as translator:
-                self.translator = translator
-                try:
-                    return self.run_batch(movies, on_result)
-                finally:
-                    self.translator = None
         movies = list(movies)
         batch = BatchResult(len(movies))
         for index, movie in enumerate(movies):
@@ -152,19 +138,17 @@ class Pipeline:
 
     def scan(self, root):
         if self.on_event:
-            self.on_event(StageEvent("", Stage.SCAN, str(root)))
+            try:
+                self.on_event(StageEvent("", Stage.SCAN, str(root)))
+            except Exception:
+                logger.warning("进度回调失败", exc_info=True)
         return Scanner(self.cfg).scan(root)
 
     def run(self, root, review=None, on_result=None) -> BatchResult:
-        if self.translator is None:
-            from javsp.translate import LocalTranslator
-
-            with LocalTranslator(self.cfg.translator) as translator:
-                return Pipeline(self.cfg, self.on_event, translator, runtime=self.runtime).run(root, review, on_result)
         scan = self.scan(root)
         if review:
             review(scan.movies, root)
-        runner = JobRunner(self.cfg, self.on_event, translator=self.translator, runtime=self.runtime)
+        runner = JobRunner(self.cfg, self.on_event, translator=self.translator, runtime=self.runtime, root=root)
         batch = runner.run_batch(scan.movies, on_result)
         batch.scan = scan
         return batch

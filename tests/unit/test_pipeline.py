@@ -1,3 +1,6 @@
+from javsp.cli import summarize_batch
+from javsp.publish import transaction
+
 """离线贯通扫描、抓取、合并、规划和输出，验证批次停止边界。"""
 
 import sys
@@ -10,7 +13,6 @@ from PIL import Image
 
 from javsp.config import load_config
 from javsp.datatype import Movie
-from javsp.publish import output
 from javsp.web.exceptions import MovieNotFoundError
 from javsp.workflow.models import Stage
 from javsp.workflow.pipeline import JobRunner, Pipeline
@@ -53,14 +55,13 @@ def scene(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "javsp.web.testlocal", SimpleNamespace(parse_data=parse))
     throttle = []
     monkeypatch.setattr("javsp.crawl.dispatcher.CrawlerExecutor.throttle", lambda self: throttle.append(True))
-    monkeypatch.setattr("javsp.translate.LocalTranslator.start", lambda self: self)
     return cfg, source, throttle
 
 
 def test_offline_pipeline_end_to_end(scene, tmp_path):
     cfg, source, throttle = scene
     events = []
-    result = run_in_id_order(Pipeline(cfg, events.append), source)
+    result = run_in_id_order(Pipeline(cfg, events.append, translator=SimpleNamespace(translate=lambda text, field: text)), source)
     assert result.exit_code == 0 and len(result.jobs) == 2
     assert result.scan.movies == [job.movie for job in result.jobs]
     for job in result.jobs:
@@ -79,7 +80,7 @@ def test_offline_pipeline_end_to_end(scene, tmp_path):
         Stage.COMMIT,
         Stage.DONE,
     ] * 2
-    successful, stats = result.legacy(True)
+    successful, stats = summarize_batch(result, True)
     assert len(successful) == stats["success"] == 2 and stats["failed"] == 0
     assert len(stats["filemove_list"]) == 2
 
@@ -119,7 +120,7 @@ def test_batch_continues_after_crawl_failure(scene, monkeypatch):
         parser(info, context=context)
 
     monkeypatch.setattr(sys.modules["javsp.web.testlocal"], "parse_data", parse)
-    result = run_in_id_order(Pipeline(cfg), source)
+    result = run_in_id_order(Pipeline(cfg, translator=SimpleNamespace(translate=lambda text, field: text)), source)
     assert result.exit_code == 1 and not result.aborted
     assert result.jobs[0].error.stage == Stage.CRAWL
     assert result.jobs[1].success
@@ -130,7 +131,7 @@ def test_batch_continues_after_crawl_failure(scene, monkeypatch):
 @pytest.mark.parametrize("failure", ["publish", "cancel", "recovery"])
 def test_batch_recovery_and_stop_policy(scene, tmp_path, monkeypatch, failure):
     cfg, source, throttle = scene
-    publish = output._Transaction.publish
+    publish = transaction.FileTransaction.publish
 
     def fail(tx, staged, target, stamp):
         publish(tx, staged, target, stamp)
@@ -141,8 +142,8 @@ def test_batch_recovery_and_stop_policy(scene, tmp_path, monkeypatch, failure):
                 Path(target).write_bytes(b"external content")
             raise OSError("output failed")
 
-    monkeypatch.setattr(output._Transaction, "publish", fail)
-    result = run_in_id_order(Pipeline(cfg), source)
+    monkeypatch.setattr(transaction.FileTransaction, "publish", fail)
+    result = run_in_id_order(Pipeline(cfg, translator=SimpleNamespace(translate=lambda text, field: text)), source)
     assert result.exit_code == 1
     assert result.jobs[0].error.stage == Stage.COMMIT
     assert (source / "ABC-123.mp4").read_bytes() == b"ABC-123"
@@ -163,7 +164,7 @@ def test_cancel_between_jobs_keeps_successful_commit(scene, monkeypatch):
         raise KeyboardInterrupt()
 
     monkeypatch.setattr("javsp.crawl.dispatcher.CrawlerExecutor.throttle", cancel)
-    result = run_in_id_order(Pipeline(cfg), source)
+    result = run_in_id_order(Pipeline(cfg, translator=SimpleNamespace(translate=lambda text, field: text)), source)
     assert result.aborted and result.exit_code == 1
     assert result.jobs[0].success and len(result.pending) == 1
     assert result.error.stage == Stage.CRAWL
@@ -175,14 +176,14 @@ def test_runner_does_not_publish_metadata_on_failure(scene):
     movie = Movie("ABC-123")
     movie.files = [str(source / "ABC-123.mp4")]
     cfg = cfg.model_copy(update={"crawler": cfg.crawler.model_copy(update={"required_keys": ["plot"]})})
-    job = JobRunner(cfg).run(movie)
+    job = JobRunner(cfg, translator=SimpleNamespace(translate=lambda text, field: text)).run(movie)
     assert job.error.stage == Stage.MERGE
     assert movie.info is None and movie.save_dir is None
 
 
 def test_cancel_after_commit_keeps_successful_result(scene, tmp_path, monkeypatch):
     cfg, source, _ = scene
-    cleanup = output._Transaction.cleanup
+    cleanup = transaction.FileTransaction.cleanup
     interrupted = False
 
     def cancel(tx, remove_dirs=False):
@@ -193,11 +194,50 @@ def test_cancel_after_commit_keeps_successful_result(scene, tmp_path, monkeypatc
             raise KeyboardInterrupt("cancel after commit")
         return result
 
-    monkeypatch.setattr(output._Transaction, "cleanup", cancel)
-    result = run_in_id_order(Pipeline(cfg), source)
+    monkeypatch.setattr(transaction.FileTransaction, "cleanup", cancel)
+    result = run_in_id_order(Pipeline(cfg, translator=SimpleNamespace(translate=lambda text, field: text)), source)
     assert result.aborted and result.exit_code == 1
     assert result.jobs[0].success and len(result.jobs) == 1
     assert result.jobs[0].movie.files == [str(tmp_path / "out" / "ABC-123" / "ABC-123.mp4")]
     assert (tmp_path / "out" / "ABC-123" / "movie.nfo").exists()
     assert len(result.pending) == 1 and (source / "ABC-124.mp4").exists()
-    assert result.legacy()[1]["success"] == 1
+    assert summarize_batch(result)[1]["success"] == 1
+
+
+def test_relative_output_uses_scan_root_without_chdir(scene, monkeypatch, tmp_path):
+    cfg, source, _ = scene
+    path = cfg.summarizer.path.model_copy(update={'output_folder_pattern': '#整理完成/{num}'})
+    cfg = cfg.model_copy(update={'summarizer': cfg.summarizer.model_copy(update={'path': path})})
+    unrelated = tmp_path / 'unrelated'
+    unrelated.mkdir()
+    monkeypatch.chdir(unrelated)
+    before = Path.cwd()
+    translator = SimpleNamespace(translate=lambda text, field: text)
+    batch = run_in_id_order(Pipeline(cfg, translator=translator), source)
+    assert batch.exit_code == 0
+    assert Path.cwd() == before
+    for job in batch.jobs:
+        target = source / '#整理完成' / job.movie.dvdid
+        assert Path(job.movie.save_dir) == target
+        assert (target / 'movie.nfo').exists()
+    assert list(unrelated.iterdir()) == []
+
+
+def test_pipeline_requires_prepared_translator(scene):
+    cfg, source, _ = scene
+    movie = Movie('ABC-123')
+    movie.files = [str(source / 'ABC-123.mp4')]
+    with pytest.raises(ValueError, match='翻译器未初始化'):
+        JobRunner(cfg).run(movie)
+    assert Path(movie.files[0]).exists()
+    assert movie.info is None
+
+
+def test_scan_progress_callback_failure_does_not_abort(scene):
+    cfg, source, _ = scene
+
+    def failed_callback(event):
+        raise ValueError('display unavailable')
+
+    batch = run_in_id_order(Pipeline(cfg, failed_callback, translator=object()), source)
+    assert batch.exit_code == 0

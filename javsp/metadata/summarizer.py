@@ -3,7 +3,7 @@
 import logging
 from functools import lru_cache
 
-from javsp.config import UseJavDBCover, load_config
+from javsp.config import UseJavDBCover
 from javsp.datatype import GenreMap, Movie, MovieInfo
 from javsp.func import remove_trail_actor_in_title
 from javsp.metadata.actors import ActorMapping
@@ -199,14 +199,3 @@ class MetadataMerger:
         if isinstance(info, list):
             raise ValueError(f"汇总数据失败：必需字段缺失 ({info})")
         return info
-
-
-def info_summary(movie: Movie, all_info: dict[str, MovieInfo]):
-    """兼容旧接口：缺失字段时返回列表，成功时更新 movie.info。"""
-    data = {name: info.model_copy(deep=True) for name, info in all_info.items()}
-    normalize_genres(data)
-    info = _merge_info(movie, data, load_config(), None)
-    if isinstance(info, list):
-        return info
-    movie.info = info
-    return None

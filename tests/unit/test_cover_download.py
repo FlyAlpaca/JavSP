@@ -10,7 +10,7 @@ import pytest
 import requests
 from PIL import Image
 
-from javsp.publish import processor
+from javsp.publish import media
 
 
 @pytest.fixture
@@ -43,13 +43,13 @@ def test_fast_cover_waits_for_slow_request_and_loser_cannot_overwrite(tmp_path, 
         assert slow_started.wait(5)
         return save_image(path, "blue")
 
-    monkeypatch.setattr(processor, "download", download)
+    monkeypatch.setattr(media, "download", download)
     target = tmp_path / "fanart.jpg"
     results = []
     candidates = ["slow.jpg", "fast.png"]
     caller = threading.Thread(
         target=lambda: results.append(
-            processor.download_cover(
+            media.download_cover(
                 ["ordinary.jpg"] if highres else candidates,
                 str(target),
                 candidates if highres else None,
@@ -101,9 +101,9 @@ def test_highres_failures_complete_before_ordinary_fallback(tmp_path, monkeypatc
         assert failures == {"hd404.jpg", "hd-invalid.jpg"}
         return save_image(path, "green")
 
-    monkeypatch.setattr(processor, "download", download)
+    monkeypatch.setattr(media, "download", download)
     target = str(tmp_path / "fanart.jpg")
-    assert processor.download_cover(["ordinary.jpg"], target, ["hd404.jpg", "hd-invalid.jpg"], cfg=cover_config) == (
+    assert media.download_cover(["ordinary.jpg"], target, ["hd404.jpg", "hd-invalid.jpg"], cfg=cover_config) == (
         "ordinary.jpg",
         str(tmp_path / "fanart.png"),
     )
@@ -119,10 +119,10 @@ def test_all_failed_preserves_existing_cover_and_reports_retries(tmp_path, monke
         Path(path).write_bytes(b"partial download")
         raise requests.Timeout("timeout")
 
-    monkeypatch.setattr(processor, "download", download)
+    monkeypatch.setattr(media, "download", download)
     target = tmp_path / "fanart.jpg"
     target.write_bytes(b"existing cover")
-    result, reason = processor.download_cover(["broken.jpg", "broken.jpg"], str(target), movie_id="ABC-123", cfg=cover_config)
+    result, reason = media.download_cover(["broken.jpg", "broken.jpg"], str(target), movie_id="ABC-123", cfg=cover_config)
     assert result is None
     assert "broken.jpg" in reason and "Timeout" in reason and "重试2次" in reason
     assert calls == ["broken.jpg", "broken.jpg"]
@@ -139,9 +139,9 @@ def test_ordinary_http_error_retries(tmp_path, monkeypatch, cover_config):
             raise requests.HTTPError("temporary error")
         return save_image(path, "blue")
 
-    monkeypatch.setattr(processor, "download", download)
+    monkeypatch.setattr(media, "download", download)
     target = str(tmp_path / "fanart.jpg")
-    assert processor.download_cover(["cover.jpg"], target, cfg=cover_config) == ("cover.jpg", str(tmp_path / "fanart.png"))
+    assert media.download_cover(["cover.jpg"], target, cfg=cover_config) == ("cover.jpg", str(tmp_path / "fanart.png"))
     assert len(calls) == 2
     assert not list(tmp_path.glob(".javsp-cover-*"))
 
@@ -170,11 +170,11 @@ def test_parallel_downloads_are_limited_to_three(tmp_path, monkeypatch, cover_co
             with lock:
                 active -= 1
 
-    monkeypatch.setattr(processor, "download", download)
+    monkeypatch.setattr(media, "download", download)
     target = str(tmp_path / "fanart.jpg")
     caller = threading.Thread(
         target=lambda: results.append(
-            processor.download_cover([f"cover-{i}.jpg" for i in range(8)], target, cfg=cover_config),
+            media.download_cover([f"cover-{i}.jpg" for i in range(8)], target, cfg=cover_config),
         )
     )
     caller.start()
@@ -194,7 +194,7 @@ def test_parallel_downloads_are_limited_to_three(tmp_path, monkeypatch, cover_co
 
 
 def test_no_cover_addresses(tmp_path, cover_config):
-    assert processor.download_cover([], str(tmp_path / "fanart.jpg"), cfg=cover_config) == (None, "无可用封面地址")
+    assert media.download_cover([], str(tmp_path / "fanart.jpg"), cfg=cover_config) == (None, "无可用封面地址")
     assert list(tmp_path.iterdir()) == []
 
 
@@ -209,9 +209,9 @@ def test_cover_extension_matches_content(tmp_path, monkeypatch, cover_config, hi
         original.append(Path(path).read_bytes())
         return {"elapsed": 1, "rate": 100}
 
-    monkeypatch.setattr(processor, "download", download)
+    monkeypatch.setattr(media, "download", download)
     target = str(tmp_path / "fanart.jpg")
-    result = processor.download_cover([] if highres else [url], target, [url] if highres else None, cfg=cover_config)
+    result = media.download_cover([] if highres else [url], target, [url] if highres else None, cfg=cover_config)
     expected = tmp_path / ("fanart" + extension)
     assert result == (url, str(expected))
     assert expected.read_bytes() == original[0]
@@ -231,17 +231,17 @@ def test_interrupted_shutdown_drains_inflight_request(tmp_path, monkeypatch, cov
         else:
             assert started.wait(5)
         return save_image(path, "blue")
-    monkeypatch.setattr(processor, "download", download)
-    shutdown = processor.ThreadPoolExecutor.shutdown
+    monkeypatch.setattr(media, "download", download)
+    shutdown = media.ThreadPoolExecutor.shutdown
     def cancel_shutdown(executor, wait=True, *, cancel_futures=False):
         if wait and not interrupted.is_set():
             interrupted.set()
             raise KeyboardInterrupt()
         return shutdown(executor, wait=wait, cancel_futures=cancel_futures)
-    monkeypatch.setattr(processor.ThreadPoolExecutor, "shutdown", cancel_shutdown)
+    monkeypatch.setattr(media.ThreadPoolExecutor, "shutdown", cancel_shutdown)
     def crawl():
         try:
-            processor.download_cover(["slow", "fast"], str(tmp_path / "fanart.jpg"), cfg=load_config())
+            media.download_cover(["slow", "fast"], str(tmp_path / "fanart.jpg"), cfg=load_config())
         except BaseException as error:
             errors.append(error)
     caller = threading.Thread(target=crawl)

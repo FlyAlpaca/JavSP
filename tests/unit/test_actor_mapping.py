@@ -10,8 +10,8 @@ from javsp.datatype import Movie, MovieInfo
 from javsp.metadata import actors, summarizer
 from javsp.metadata.actors import ActorMapping, ActorMappingError, prepare_actor_mapping
 from javsp.metadata.summarizer import MetadataMerger
+from javsp.publish.naming import generate_names
 from javsp.publish.nfo import write_nfo
-from javsp.publish.processor import generate_names
 from javsp.workflow.models import CrawlResult
 
 XML = """<?xml version="1.0" encoding="UTF-8"?>
