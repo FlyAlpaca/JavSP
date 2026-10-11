@@ -1,0 +1,172 @@
+"""GitHub 演员映射缓存、别名匹配与统一展示名称。"""
+
+import hashlib
+import json
+import logging
+import os
+import tempfile
+import time
+from pathlib import Path
+
+import requests
+from lxml import etree
+
+logger = logging.getLogger(__name__)
+MAPPING_URL = "https://raw.githubusercontent.com/li-peifeng/Jav-Actors-Mapping/main/actor-mapping.xml"
+MAX_MAPPING_SIZE = 32 * 1024 * 1024
+DOWNLOAD_DEADLINE = 600
+
+
+class ActorMappingError(Exception):
+    """没有可用的演员映射，或更新数据无效。"""
+
+
+class ActorMapping:
+    """一次构建、整批复用的名称索引；冲突名称不会选取任意条目。"""
+
+    def __init__(self):
+        self._japanese: dict[str, set[tuple[str, str]]] = {}
+        self._primary: dict[str, set[tuple[str, str]]] = {}
+        self._aliases: dict[str, set[tuple[str, str]]] = {}
+        self.row_count = 0
+
+    @classmethod
+    def from_xml(cls, content: bytes):
+        if len(content) > MAX_MAPPING_SIZE:
+            raise ActorMappingError("演员映射文件过大")
+        try:
+            parser = etree.XMLParser(resolve_entities=False, load_dtd=False, no_network=True)
+            root = etree.fromstring(content, parser)
+        except etree.XMLSyntaxError as error:
+            raise ActorMappingError(f"演员映射 XML 无效: {error}") from error
+        if root.tag != "actor-mapping" or root.getroottree().docinfo.doctype:
+            raise ActorMappingError("演员映射根节点无效或含有 DTD")
+        mapping = cls()
+        for row in root.findall(".//a"):
+            jp = (row.get("jp") or "").strip()
+            if not jp:
+                continue
+            cn = (row.get("zh_cn") or "").strip()
+            tw = (row.get("zh_tw") or "").strip()
+            chinese = cn or tw
+            display = f"{jp}（{chinese}）" if chinese and chinese != jp else jp
+            actor = (jp, chinese)
+            mapping._japanese.setdefault(jp, set()).add(actor)
+            for name in (cn, tw, display):
+                if name:
+                    mapping._primary.setdefault(name, set()).add(actor)
+            for name in (row.get("keyword") or "").split(","):
+                if name.strip():
+                    mapping._aliases.setdefault(name.strip(), set()).add(actor)
+            mapping.row_count += 1
+        if not mapping.row_count:
+            raise ActorMappingError("演员映射没有包含原名的有效条目")
+        return mapping
+
+    @classmethod
+    def from_file(cls, path: Path):
+        try:
+            if path.stat().st_size > MAX_MAPPING_SIZE:
+                raise ActorMappingError("演员映射文件过大")
+            return cls.from_xml(path.read_bytes())
+        except OSError as error:
+            raise ActorMappingError(f"无法读取演员映射缓存 {path}: {error}") from error
+
+    def resolve(self, name: str, *, normalize_aliases=True) -> str:
+        key = name.strip()
+        for index in (self._japanese, self._primary, self._aliases):
+            candidates = index.get(key)
+            if candidates:
+                if len(candidates) != 1:
+                    return name
+                jp, chinese = next(iter(candidates))
+                original = key if index is self._aliases and not normalize_aliases else jp
+                return f"{original}（{chinese}）" if chinese and chinese != original else original
+        return name
+
+
+def _atomic_write(path: Path, content: bytes):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".actor-mapping-", delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def prepare_actor_mapping(path: Path, *, session=requests, proxy=None) -> ActorMapping:
+    """每次调用检查更新；只有完整、可解析的新表才能替换缓存。"""
+    cached = None
+    cached_content = b""
+    metadata_path = path.with_suffix(".json")
+    etag = None
+    try:
+        if path.stat().st_size > MAX_MAPPING_SIZE:
+            raise ActorMappingError("演员映射文件过大")
+        cached_content = path.read_bytes()
+        cached = ActorMapping.from_xml(cached_content)
+    except (OSError, ActorMappingError) as error:
+        logger.info("演员映射缓存不可用，将从 GitHub 获取: %s", error)
+    if cached is not None:
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            if metadata.get("source") == MAPPING_URL and metadata.get("sha256") == hashlib.sha256(cached_content).hexdigest():
+                value = metadata.get("etag")
+                etag = value if isinstance(value, str) and value else None
+        except (OSError, ValueError, AttributeError):
+            pass
+
+    logger.info("检查 GitHub 演员映射更新")
+    headers = {"Cache-Control": "no-cache"}
+    if etag:
+        headers["If-None-Match"] = etag
+    options = {"proxies": {"http": str(proxy), "https": str(proxy)}} if proxy is not None else {}
+    try:
+        started = time.monotonic()
+        with session.get(MAPPING_URL, headers=headers, stream=True, timeout=(5, 30), **options) as response:
+            if response.status_code == 304 and cached is not None and etag:
+                logger.info("演员映射没有更新，复用缓存（%s 条）", cached.row_count)
+                return cached
+            response.raise_for_status()
+            if response.status_code != 200:
+                raise ActorMappingError(f"演员映射响应状态异常: {response.status_code}")
+            if int(response.headers.get("Content-Length", "0")) > MAX_MAPPING_SIZE:
+                raise ActorMappingError("演员映射文件过大")
+            logger.info("下载 GitHub 演员映射")
+            content = bytearray()
+            last_report = started
+            for chunk in response.iter_content(64 * 1024):
+                now = time.monotonic()
+                if now - started > DOWNLOAD_DEADLINE:
+                    raise ActorMappingError("演员映射下载超过 10 分钟")
+                content.extend(chunk)
+                if len(content) > MAX_MAPPING_SIZE:
+                    raise ActorMappingError("演员映射文件过大")
+                if now - last_report >= 30:
+                    logger.info("演员映射已下载 %.1f MiB", len(content) / (1024 * 1024))
+                    last_report = now
+            content = bytes(content)
+            updated = ActorMapping.from_xml(content)
+            new_etag = response.headers.get("ETag")
+        if cached is None or content != cached_content:
+            _atomic_write(path, content)
+    except (requests.RequestException, ActorMappingError, OSError, ValueError) as error:
+        if cached is not None:
+            logger.warning("演员映射更新失败，继续使用有效缓存: %s", error)
+            return cached
+        raise ActorMappingError(f"GitHub 演员映射获取失败且无有效缓存: {error}") from error
+
+    # XML 先发布；中断或元数据写入失败只会让下次启动重新下载，不会错误复用 ETag。
+    metadata = {"source": MAPPING_URL, "etag": new_etag, "sha256": hashlib.sha256(content).hexdigest()}
+    try:
+        _atomic_write(metadata_path, json.dumps(metadata, ensure_ascii=False).encode("utf-8"))
+    except OSError as error:
+        logger.warning("演员映射已更新，版本元数据保存失败，下次将重新检查完整文件: %s", error)
+    logger.info("GitHub 演员映射已就绪（%s 条）: %s", updated.row_count, path)
+    return updated

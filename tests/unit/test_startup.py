@@ -32,6 +32,18 @@ def test_missing_scan_directory_stops_before_network(tmp_path, monkeypatch):
         startup.prepare_startup(cfg)
 
 
+def test_mapping_failure_stops_before_data_sources(tmp_path, monkeypatch):
+    cfg = SimpleNamespace(scanner=SimpleNamespace(input_directory=tmp_path))
+    monkeypatch.setattr(startup, "check_for_updates", lambda: None)
+
+    def missing(_cfg):
+        raise startup.ActorMappingError("无有效缓存")
+
+    monkeypatch.setattr(startup, "load_actress_aliases", missing)
+    with pytest.raises(startup.StartupError, match="无有效缓存"):
+        startup.prepare_startup(cfg)
+
+
 def test_model_starts_after_preparation_and_closes(monkeypatch):
     calls = []
     cfg = SimpleNamespace(translator=object())

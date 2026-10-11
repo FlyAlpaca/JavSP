@@ -112,6 +112,14 @@ docker run --rm \
 
 `move_files: false` 时，同一目录多部影片可能依次更新同名的 NFO 和图片，包括 `folder.jpg`；需要每部影片独立元数据时，请为它们使用独立目录。
 
+### 女优名称与别名
+
+女优名称使用 [Jav Actors Mapping](https://github.com/li-peifeng/Jav-Actors-Mapping) 的 `actor-mapping.xml`，不再使用内置 JSON 表。每次启动都会检查 GitHub 更新；有更新时先下载并校验，再开始整理。缓存固定保存在**启动工作目录**的 `config/actor-mapping.xml`，Docker 中为 `/app/config/actor-mapping.xml`；版本信息保存在同目录的 `actor-mapping.json`。请持久化 `/app/config`。下载支持 `network.proxy_server` 和环境代理。更新失败时告警并使用有效旧缓存；首次无法获取映射且没有有效缓存时终止启动。
+
+名称统一展示为 `原名（中文译名）`，例如 `新ありな（新有菜）`；中文优先使用简体，其次使用繁体。没有中文译名或名称相同时只展示原名。该格式始终生效；`crawler.normalize_actress_name` 仅控制是否把 `keyword` 别名归到主名，默认开启。关闭时别名仍查表并格式化，但保留抓取到的别名，例如 `橋本ありな（新有菜）`。上游没有逐个别名的中文译名字段，因此别名采用所属条目的中文名。
+
+上游没有收录的名称、缺少原名的条目及无法唯一匹配的别名保留抓取名。上游别名覆盖与旧表不同，主名也可能变化；不再用本地表补齐。目录、命名模板、NFO 演员和头像引用使用同一份汇总结果，转换后的重复姓名会合并。已整理的影片不会自动批量改名或改写 NFO。
+
 ### 本地翻译模型
 
 翻译始终启用，仅处理含日文假名的标题和简介；无法可靠识别语言的纯汉字文本保持原样。翻译请求只发送给容器内的 `llama.cpp` 服务，首次模型下载需要访问 Hugging Face。可改用约 1.1 GB 的 `hy_mt2_1_8b_q4_k_m` 模型，以减少模型缓存空间。设置 `auto_download: false` 时，需要提前把配置所选的官方 GGUF 放入 `model_dir`；启动会校验文件大小和 SHA-256。

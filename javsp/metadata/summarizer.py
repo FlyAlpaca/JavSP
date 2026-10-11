@@ -1,34 +1,39 @@
 """数据汇总：多源数据合并、女优别名解析"""
 
-import json
 import logging
 from functools import lru_cache
 
 from javsp.config import Cfg, UseJavDBCover
 from javsp.datatype import GenreMap, Movie, MovieInfo
 from javsp.func import remove_trail_actor_in_title
-from javsp.lib import resource_path
+from javsp.metadata.actors import ActorMapping, prepare_actor_mapping
 from javsp.workflow.models import CrawlResult
 
 logger = logging.getLogger(__name__)
 
 # 女优别名映射表（全局状态，由 load_actress_aliases 加载）
-actressAliasMap: dict = {}
+actressAliasMap: ActorMapping | dict | None = None
 
 
 def load_actress_aliases(cfg=None):
-    """加载女优别名映射表"""
+    """启动时更新 GitHub 映射，格式化不受别名开关影响。"""
     global actressAliasMap
     cfg = cfg if cfg is not None else Cfg()
-    if cfg.crawler.normalize_actress_name:
-        actressAliasFilePath = resource_path("data/actress_alias.json")
-        with open(actressAliasFilePath, encoding="utf-8") as file:
-            actressAliasMap = json.load(file)
+    mapping = prepare_actor_mapping(cfg._actor_mapping_path, proxy=cfg.network.proxy_server)
+    cfg._actor_mapping = mapping
+    actressAliasMap = mapping
+    return mapping
 
 
-def resolve_alias(name, aliases=None):
-    """将别名解析为固定的名字"""
+def resolve_alias(name, aliases=None, *, normalize_aliases=True):
+    """统一展示格式，并按开关解析别名；兼容显式传入的旧字典。"""
     mapping = actressAliasMap if aliases is None else aliases
+    if isinstance(mapping, ActorMapping):
+        return mapping.resolve(name, normalize_aliases=normalize_aliases)
+    if mapping is None:
+        raise ValueError("演员映射未初始化，请先完成启动准备")
+    if not normalize_aliases:
+        return name
     for fixedName, names in mapping.items():
         if name in names:
             return fixedName
@@ -136,11 +141,27 @@ def _merge_info(movie: Movie, all_info: dict[str, MovieInfo], cfg, aliases):
     if movie.uncensored:
         final_info.genre.append("无码流出/破解")
 
-    # 女优别名固定
-    if cfg.crawler.normalize_actress_name and final_info.actress:
-        final_info.actress = [resolve_alias(i, aliases) for i in final_info.actress]
+    # 名称格式始终统一；旧开关仅控制是否将 keyword 别名归到主名。
+    if final_info.actress or final_info.actress_pics:
+        if aliases is None:
+            aliases = cfg._actor_mapping
+            if aliases is None:
+                # 独立组件调用可读取缓存；联网更新由启动流程负责。
+                aliases = ActorMapping.from_file(cfg._actor_mapping_path)
+                cfg._actor_mapping = aliases
+
+        def actress_name(name):
+            return resolve_alias(name, aliases, normalize_aliases=cfg.crawler.normalize_actress_name)
+
+        if final_info.actress:
+            final_info.actress = list(dict.fromkeys(actress_name(name) for name in final_info.actress))
         if final_info.actress_pics:
-            final_info.actress_pics = {resolve_alias(key, aliases): value for key, value in final_info.actress_pics.items()}
+            pictures = {}
+            for name, url in final_info.actress_pics.items():
+                key = actress_name(name)
+                if key not in pictures or not pictures[key]:
+                    pictures[key] = url
+            final_info.actress_pics = pictures
 
     # 检查是否所有必需的字段都已经获得了值
     missing_keys = [attr for attr in cfg.crawler.required_keys if not getattr(final_info, attr, None)]
@@ -186,10 +207,7 @@ def normalize_genres(all_info: dict[str, MovieInfo]):
 class MetadataMerger:
     def __init__(self, cfg, aliases=None):
         self.cfg = cfg
-        if aliases is None and cfg.crawler.normalize_actress_name:
-            with open(resource_path("data/actress_alias.json"), encoding="utf-8") as stream:
-                aliases = json.load(stream)
-        self.aliases = aliases or {}
+        self.aliases = aliases if aliases is not None else cfg._actor_mapping
 
     def merge(self, movie: Movie, result: CrawlResult) -> MovieInfo:
         result.require_data()

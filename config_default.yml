@@ -98,7 +98,7 @@ crawler:
   sleep_after_scraping: PT1S
   # 是否使用javdb的封面（fallback/yes/no, 默认fallback: 如果能从别的站点获得封面则不用javdb的以避免水印）
   use_javdb_cover: fallback
-  # 是否统一女优艺名。启用时会尝试将女优的多个艺名统一成一个
+  # 是否将 GitHub 映射中的 keyword 别名归到主名；关闭时保留别名，但仍展示原名（中文译名）
   normalize_actress_name: true
 
 ################################

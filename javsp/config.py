@@ -12,6 +12,7 @@ from pydantic_core import Url
 from pydantic_extra_types.pendulum_dt import Duration
 
 from javsp.lib import resource_path
+from javsp.metadata.actors import ActorMapping
 
 _logger = logging.getLogger(__name__)
 
@@ -348,6 +349,8 @@ class Cfg(BaseConfig):
     other: Other
     CONFIG_SOURCES = get_config_source()
     _r18dev_db_path: Path | None = PrivateAttr(default_factory=lambda: (Path.cwd() / "config/r18dev.sqlite").resolve())
+    _actor_mapping_path: Path = PrivateAttr(default_factory=lambda: (Path.cwd() / "config/actor-mapping.xml").resolve())
+    _actor_mapping: ActorMapping | None = PrivateAttr(default=None)
 
     @model_validator(mode="after")
     def require_data_source(self):

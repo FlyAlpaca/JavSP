@@ -20,6 +20,7 @@ from javsp.crawl import r18dev
 from javsp.crawl.dispatcher import CrawlerExecutor
 from javsp.crawl.r18dev import TABLES, lookup, prepare_database
 from javsp.datatype import Movie, MovieInfo
+from javsp.metadata.actors import ActorMapping
 from javsp.metadata.summarizer import MetadataMerger
 from javsp.workflow.models import CrawlResult
 
@@ -483,7 +484,7 @@ def test_local_priority_online_gap_and_source_tracking(tmp_path, monkeypatch):
     monkeypatch.setattr("javsp.crawl.dispatcher._crawl", online)
     movie = Movie("ABC-123")
     result = CrawlerExecutor(cfg).crawl(movie)
-    merged = MetadataMerger(cfg).merge(movie, result)
+    merged = MetadataMerger(cfg, aliases=ActorMapping()).merge(movie, result)
     assert calls == ["ABC-123"]
     assert list(result.data) == ["r18dev", "javdb"]
     assert merged.title == "本地标题" and merged.genre == ["分類"]
