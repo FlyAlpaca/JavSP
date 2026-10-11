@@ -123,3 +123,13 @@ wheel 保留运行时资源，避免移动 `data/`、`image/` 或默认配置导
 `scanner.ignored_folder_name_pattern: []` 表示不按目录名过滤。
 源码包采用明确文件范围；数据库、模型、日志、分片和 `.javsp-*` 恢复材料不会进入交付产物或 Docker 上下文。
 构建检查同时验证 wheel 与 sdist；请对本次新建的独立输出目录运行 `tools/check_dist.py`，避免旧产物混入验证。
+
+## 显式配置与运行上下文
+
+入口通过 `load_config()` 加载配置；`Cfg` 只定义冻结模型，导入时不读取用户文件、不解析命令行。
+各次加载独立，覆盖顺序为默认模板、用户文件、环境变量、CLI 参数。
+`RuntimeContext` 持有单批次的绝对根路径、数据库位置、演员映射和翻译器，配置对象不再保存运行资源。
+独立组件通过参数接收配置；需要演员信息归一化时，向 `MetadataMerger` 显式传入映射或运行上下文。
+站点解析接口为 `parse_data(info, *, context)`，清洗接口同样接收上下文；调用者使用 `with SiteContext(cfg, site)` 管理会话。
+每个站点任务拥有独立请求头、Cookie、动态域名和登录候选，重试复用会话，任务结束后关闭。
+站点模块不再提供直接执行示例；手动抓取使用 `tools/call_crawler.py`。

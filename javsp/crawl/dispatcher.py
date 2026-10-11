@@ -17,9 +17,10 @@ except ImportError:
 from copy import copy
 
 from javsp.concurrency import drain_threads
-from javsp.config import Cfg
+from javsp.config import load_config
 from javsp.crawl.r18dev import SOURCE, lookup, needs_online
 from javsp.datatype import Movie, MovieInfo
+from javsp.web.context import SiteContext
 from javsp.web.exceptions import (
     CredentialError,
     MovieDuplicateError,
@@ -32,9 +33,8 @@ from javsp.workflow.models import CrawlResult
 logger = logging.getLogger(__name__)
 
 
-def import_crawlers(cfg=None):
+def import_crawlers(cfg):
     """按配置文件的抓取器顺序导入爬虫模块"""
-    cfg = cfg if cfg is not None else Cfg()
     if not cfg.crawler.online_enabled:
         return
     unknown_mods = []
@@ -54,7 +54,7 @@ def _crawl(movie: Movie, cfg, tqdm_bar=None) -> CrawlResult:
     failed_crawlers = []  # (crawler_name, error_reason)
     stopped = threading.Event()
 
-    def worker(parser, info: MovieInfo, retry):
+    def worker(parser, info: MovieInfo, retry, context):
         crawler_name = threading.current_thread().name
         short_name = crawler_name.replace("javsp.web.", "")
         last_error = "未执行抓取（重试次数为 0）"
@@ -62,7 +62,7 @@ def _crawl(movie: Movie, cfg, tqdm_bar=None) -> CrawlResult:
             if stopped.is_set():
                 return
             try:
-                parser(info)
+                parser(info, context=context)
                 if stopped.is_set():
                     return
                 movie_id = info.dvdid or info.cid
@@ -104,7 +104,8 @@ def _crawl(movie: Movie, cfg, tqdm_bar=None) -> CrawlResult:
 
     def wrapper(parser, info, retry, done):
         try:
-            worker(parser, info, retry)
+            with SiteContext(cfg, threading.current_thread().name.replace("javsp.web.", "")) as context:
+                worker(parser, info, retry, context)
         finally:
             done.set()
 
@@ -170,11 +171,11 @@ def _crawl(movie: Movie, cfg, tqdm_bar=None) -> CrawlResult:
 class CrawlerExecutor:
     """逐部任务共用的站点调度器；超时为软截止，返回前回收工作线程。"""
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, *, runtime=None):
         self.cfg = cfg
         self.local_enabled = getattr(getattr(cfg, "r18dev", None), "enabled", False)
         self.online_enabled = getattr(cfg.crawler, "online_enabled", True)
-        self.local_path = getattr(cfg, "_r18dev_db_path", None)
+        self.local_path = runtime.database_path if runtime is not None else None
         self._last_online = False
 
     def crawl(self, movie: Movie, progress=None) -> CrawlResult:
@@ -214,7 +215,7 @@ def parallel_crawler(movie: Movie, tqdm_bar=None):
     """兼容旧字典接口，包括身份更新和分类归一化。"""
     from javsp.metadata.summarizer import normalize_genres
 
-    cfg = Cfg()
+    cfg = load_config()
     result = CrawlerExecutor(cfg).crawl(movie, tqdm_bar)
     movie.dvdid, movie.cid, movie.data_src = result.dvdid, result.cid, result.data_src
     result.require_data()

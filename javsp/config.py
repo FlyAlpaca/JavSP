@@ -1,18 +1,18 @@
 import logging
 import os
+import sys
 from argparse import ArgumentParser, RawTextHelpFormatter
 from enum import StrEnum
 from pathlib import Path
 from typing import Literal
 
 import yaml
-from confz import BaseConfig, CLArgSource, EnvSource, FileSource
-from pydantic import ByteSize, Field, NonNegativeInt, PositiveInt, PrivateAttr, model_validator
+from confz import BaseConfig, DataSource, EnvSource, FileSource
+from pydantic import ByteSize, Field, NonNegativeInt, PositiveInt, model_validator
 from pydantic_core import Url
 from pydantic_extra_types.pendulum_dt import Duration
 
 from javsp.lib import resource_path
-from javsp.metadata.actors import ActorMapping
 
 _logger = logging.getLogger(__name__)
 
@@ -307,47 +307,37 @@ def _find_user_config() -> str | None:
     return None
 
 
-def get_config_source():
-    """构建配置源列表，使用缓存避免重复计算
-
-    缓存一旦生成便不会刷新，因为配置源在程序启动时由命令行参数和文件决定，
-    运行期间不会改变。如果未来需要动态刷新配置，需先置 _config_sources = None。
-    """
-    global _config_sources
-    if _config_sources is not None:
-        return _config_sources
-
-    parser = ArgumentParser(
-        prog="JavSP",
-        description="汇总多站点数据的AV元数据刮削器",
-        formatter_class=RawTextHelpFormatter,
-        # 禁用前缀缩写匹配：避免 pytest 等工具传入的参数（如 --co）被误解析为
-        # --config 的缩写而导致 SystemExit，从而破坏测试收集和模块导入。
-        allow_abbrev=False,
-    )
+def get_config_source(argv=None):
+    """显式构建默认、用户、环境与 CLI 配置源，每次调用互相独立。"""
+    argv = list(sys.argv[1:] if argv is None else argv)
+    parser = ArgumentParser(prog="JavSP", description="汇总多站点数据的AV元数据刮削器",
+                            formatter_class=RawTextHelpFormatter, allow_abbrev=False)
     parser.add_argument("-c", "--config", help="使用指定的配置文件")
-    args, _ = parser.parse_known_args()
-    sources = []
-
-    # 1. 始终加载默认模板配置（已随 wheel 打包到 site-packages 根目录）
-    default_config = resource_path(DEFAULT_CONFIG_FILE)
-    sources.append(FileSource(file=default_config))
-
-    # 2. 加载用户配置（如果存在且非空），覆盖默认值
+    args, _ = parser.parse_known_args(argv)
+    sources = [FileSource(file=resource_path(DEFAULT_CONFIG_FILE))]
     user_config = args.config if args.config is not None else _find_user_config()
     if user_config is not None:
         source = _user_config_source(user_config)
         if source is not None:
             sources.append(source)
-
-    # 3. 环境变量和命令行参数优先级最高
     sources.append(EnvSource(prefix="JAVSP_", allow_all=True, nested_separator="__"))
-    sources.append(CLArgSource(prefix="o"))
-    _config_sources = sources
+    overrides = {}
+    for index, argument in enumerate(argv):
+        if argument.startswith("--o"):
+            if index + 1 >= len(argv) or argv[index + 1].startswith("--"):
+                raise ConfigLoadError(f"配置覆盖参数缺少值: {argument}")
+            target = overrides
+            parts = argument[3:].split(".")
+            for part in parts[:-1]:
+                target = target.setdefault(part, {})
+            target[parts[-1]] = argv[index + 1]
+    sources.append(DataSource(data=overrides))
     return sources
 
 
-_config_sources = None
+def load_config(argv=None):
+    """入口调用的配置加载器；导入配置模型不会读取文件或解析 CLI。"""
+    return Cfg(config_sources=get_config_source(argv))
 
 
 class Cfg(BaseConfig):
@@ -358,11 +348,6 @@ class Cfg(BaseConfig):
     summarizer: Summarizer
     translator: Translator
     other: Other
-    CONFIG_SOURCES = get_config_source()
-    _r18dev_db_path: Path | None = PrivateAttr(default_factory=lambda: (Path.cwd() / "config/r18dev.sqlite").resolve())
-    _actor_mapping_path: Path = PrivateAttr(default_factory=lambda: (Path.cwd() / "config/actor-mapping.xml").resolve())
-    _actor_mapping: ActorMapping | None = PrivateAttr(default=None)
-
     @model_validator(mode="after")
     def require_data_source(self):
         if not self.r18dev.enabled and not self.crawler.online_enabled:

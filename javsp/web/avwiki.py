@@ -4,7 +4,7 @@ import logging
 
 from javsp.datatype import MovieInfo
 from javsp.web.base import request_get, resp2html, xpath_first
-from javsp.web.exceptions import CrawlerError, MovieNotFoundError
+from javsp.web.exceptions import MovieNotFoundError
 
 logger = logging.getLogger(__name__)
 base_url = "https://av-wiki.net"
@@ -20,13 +20,13 @@ XP = {
 }
 
 
-def parse_data(movie: MovieInfo):
+def parse_data(movie: MovieInfo, *, context):
     """从网页抓取并解析指定番号的数据
     Args:
         movie (MovieInfo): 要解析的影片信息，解析后的信息直接更新到此变量内
     """
     movie.url = url = f"{base_url}/{movie.dvdid}"
-    resp = request_get(url, delay_raise=True)
+    resp = request_get(url, delay_raise=True, context=context)
     if resp.status_code == 404:
         raise MovieNotFoundError(__name__, movie.dvdid)
     html = resp2html(resp)
@@ -72,14 +72,3 @@ def parse_data(movie: MovieInfo):
         setattr(movie, attr, data.get(key))
     movie.title = title
     movie.uncensored = False  # 服务器在日本且面向日本国内公开发售，不会包含无码片
-
-
-if __name__ == "__main__":
-
-
-    movie = MovieInfo("259LUXU-593")
-    try:
-        parse_data(movie)
-        print(movie)
-    except CrawlerError as e:
-        logger.error(e, exc_info=True)

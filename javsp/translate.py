@@ -11,7 +11,7 @@ from pathlib import Path
 
 import requests
 
-from javsp.config import Cfg, Translator
+from javsp.config import Translator
 from javsp.datatype import MovieInfo
 from javsp.download import DownloadError, DownloadSpec, clear_parts, download_file, parts
 
@@ -70,7 +70,7 @@ def _parts(spec: ModelSpec, model_dir: Path) -> list[tuple[int, int, Path]]:
     return parts(download)
 
 
-def ensure_model(cfg: Translator, session=None) -> Path:
+def ensure_model(cfg: Translator, session=None, *, proxy=None) -> Path:
     """在启动阶段验证缓存；缺失或损坏时下载并原子替换。"""
     spec = MODELS[cfg.model]
     model_dir = cfg.model_dir
@@ -87,7 +87,6 @@ def ensure_model(cfg: Translator, session=None) -> Path:
 
     logger.info("下载本地翻译模型: %s", spec.url)
     client = session or requests.Session()
-    proxy = Cfg().network.proxy_server
     request_options = {"proxies": {"http": str(proxy), "https": str(proxy)}} if proxy is not None else {}
     temporary = None
     download = DownloadSpec(spec.url, spec.size, model_dir / f".{spec.filename}.{spec.sha256}")
@@ -115,8 +114,9 @@ def ensure_model(cfg: Translator, session=None) -> Path:
 class LocalTranslator:
     """单批次复用一个仅在容器内监听的 llama-server。"""
 
-    def __init__(self, cfg: Translator, *, binary=None, port=18080, session=None):
+    def __init__(self, cfg: Translator, *, binary=None, port=18080, session=None, proxy=None):
         self.cfg = cfg
+        self.proxy = proxy
         self.binary = binary or shutil.which("llama-server")
         self.port = port
         self.session = session or requests.Session()
@@ -130,7 +130,7 @@ class LocalTranslator:
 
     def start(self):
         try:
-            path = ensure_model(self.cfg)
+            path = ensure_model(self.cfg, proxy=self.proxy)
             if not self.binary:
                 raise TranslateError("找不到 llama-server；请使用包含 llama.cpp 的镜像")
             runtime = self.cfg.runtime

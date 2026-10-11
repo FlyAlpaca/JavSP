@@ -12,7 +12,6 @@ import requests
 from PIL import Image
 
 from javsp.concurrency import finish_executor
-from javsp.config import Cfg
 from javsp.cropper import get_cropper
 from javsp.datatype import Movie
 from javsp.func import split_by_punc
@@ -28,14 +27,13 @@ SUBTITLE_MARK_FILE = Image.open(os.path.abspath(resource_path("image/sub_mark.pn
 UNCENSORED_MARK_FILE = Image.open(os.path.abspath(resource_path("image/unc_mark.png")))
 
 
-def generate_names(movie: Movie, cfg=None):
+def generate_names(movie: Movie, cfg):
     """按照模板生成相关文件的文件名"""
 
     def legalize_path(path: str):
         """Windows下文件名中不能包含换行 #467"""
         return "".join(c for c in path if c not in {"\n"})
 
-    cfg = cfg if cfg is not None else Cfg()
     info = movie.info
     # 准备用来填充命名模板的字典
     d = info.get_info_dic(cfg)
@@ -145,10 +143,9 @@ def generate_names(movie: Movie, cfg=None):
         return legalize_info()
 
 
-def download_cover(covers, fanart_path, big_covers=None, movie_id="", cfg=None):
+def download_cover(covers, fanart_path, big_covers=None, movie_id="", *, cfg):
     """每组最多并发下载三张封面，高清全部失败后才尝试普通封面。"""
     failed_reasons = []
-    cfg = cfg if cfg is not None else Cfg()
     retry = cfg.network.retry
     temp_dir = os.path.dirname(os.path.abspath(fanart_path))
 
@@ -171,7 +168,7 @@ def download_cover(covers, fanart_path, big_covers=None, movie_id="", cfg=None):
                     if stopped.is_set():
                         return None
                     try:
-                        info = download(url, temp_path)
+                        info = download(url, temp_path, network=cfg.network)
                         if stopped.is_set():
                             return None
                         if not valid_pic(temp_path):
@@ -243,7 +240,7 @@ def download_cover(covers, fanart_path, big_covers=None, movie_id="", cfg=None):
     return None, reason_detail
 
 
-def download_extra_fanarts(movie: Movie, scrape_interval: float, tqdm_bar=None, destination_dir=None):
+def download_extra_fanarts(movie: Movie, scrape_interval: float, tqdm_bar=None, destination_dir=None, *, cfg):
     """并发保存全部剧照，按统一的启动间隔限速，等待所有任务结束。"""
     warnings = []
     if not movie.info.preview_pics:
@@ -264,7 +261,7 @@ def download_extra_fanarts(movie: Movie, scrape_interval: float, tqdm_bar=None, 
                 if delay > 0:
                     time.sleep(delay)
                 next_start = time.monotonic() + max(0, scrape_interval)
-            info = download(url, temp_path)
+            info = download(url, temp_path, network=cfg.network)
             if not valid_pic(temp_path):
                 warning = f"下载剧照{idx}失败: {url}: 图片无效或已损坏"
                 warnings.append(warning)
@@ -317,10 +314,9 @@ def get_pic_path(fanart_path, image_path):
     return fanart_base + extension
 
 
-def process_poster(movie: Movie, cfg=None, folder_cover_path=None, generate_folder_cover=True):
+def process_poster(movie: Movie, cfg, folder_cover_path=None, generate_folder_cover=True):
     """处理封面图片：裁剪、添加标签，并生成文件夹封面缩略图"""
 
-    cfg = cfg if cfg is not None else Cfg()
 
     def should_use_ai_crop_match(label):
         for r in cfg.summarizer.cover.crop.on_id_pattern:

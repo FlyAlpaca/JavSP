@@ -8,7 +8,7 @@ from functools import cached_property
 
 from pydantic import BaseModel, ConfigDict, PrivateAttr, model_validator
 
-from javsp.config import Cfg
+from javsp.config import load_config
 from javsp.lib import detect_special_attr, resource_path
 
 logger = logging.getLogger(__name__)
@@ -165,9 +165,8 @@ class MovieInfo(BaseModel):
             if k in self.model_fields:
                 setattr(self, k, v)
 
-    def get_info_dic(self, cfg=None) -> dict[str, str]:
+    def get_info_dic(self, cfg) -> dict[str, str]:
         """生成用来填充模板的字典"""
-        cfg = cfg if cfg is not None else Cfg()
         info = self
         d = {}
         d["num"] = info.dvdid or info.cid
@@ -247,7 +246,7 @@ class Movie:
         """兼容影片/字幕移动接口，复用输出事务的预检、提交及回滚。"""
         from javsp.publish.output import OutputExecutor
 
-        return OutputExecutor(Cfg()).execute_files(self, use_hardlink).moved_files
+        return OutputExecutor(load_config()).execute_files(self, use_hardlink).moved_files
 
 
 class GenreMap(dict):

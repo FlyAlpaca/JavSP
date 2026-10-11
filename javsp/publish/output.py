@@ -422,7 +422,8 @@ class OutputExecutor:
             os.unlink(extra)
             os.mkdir(extra)
             warnings.extend(download_extra_fanarts(
-                staged_movie, self.cfg.summarizer.extra_fanarts.scrap_interval.total_seconds(), destination_dir=extra
+                staged_movie, self.cfg.summarizer.extra_fanarts.scrap_interval.total_seconds(),
+                destination_dir=extra, cfg=self.cfg
             ))
             artifacts.extend((str(path), os.path.join(movie.save_dir, "extrafanart", path.name))
                              for path in sorted(Path(extra).iterdir()))

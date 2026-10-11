@@ -2,14 +2,11 @@
 
 import logging
 
-from javsp.config import Cfg, CrawlerID
 from javsp.datatype import MovieInfo
-from javsp.logging_config import configure_logging
 from javsp.web.base import get_html, xpath_first
-from javsp.web.exceptions import CrawlerError, MovieNotFoundError
+from javsp.web.exceptions import MovieNotFoundError
 
 logger = logging.getLogger(__name__)
-base_url = str(Cfg().network.proxy_free[CrawlerID.avsox])
 
 _SITE = "avsox"
 
@@ -31,13 +28,13 @@ XP = {
 }
 
 
-def parse_data(movie: MovieInfo):
+def parse_data(movie: MovieInfo, *, context):
     """解析指定番号的影片数据"""
     # avsox无法直接跳转到影片的网页，因此先搜索再从搜索结果中寻找目标网页
     full_id = movie.dvdid
     if full_id.startswith("FC2-"):
         full_id = full_id.replace("FC2-", "FC2-PPV-")
-    html = get_html(f"{base_url}tw/search/{full_id}")
+    html = get_html(f"{context.base_url}tw/search/{full_id}", context=context)
     ids = html.xpath(XP["search_id"])
     urls = html.xpath(XP["search_url"])
     ids_lower = list(map(str.lower, ids))
@@ -48,7 +45,7 @@ def parse_data(movie: MovieInfo):
         raise MovieNotFoundError(__name__, movie.dvdid, ids)
 
     # 提取影片信息
-    html = get_html(url)
+    html = get_html(url, context=context)
     container = xpath_first(html, XP["container"], label=_SITE)
     title = xpath_first(container, XP["title"], label=_SITE)
     cover = xpath_first(container, XP["cover"], label=_SITE)
@@ -80,14 +77,3 @@ def parse_data(movie: MovieInfo):
     else:
         movie.producer = producer
         movie.serial = serial
-
-
-if __name__ == "__main__":
-    configure_logging(debug=True)
-
-    movie = MovieInfo("082713-417")
-    try:
-        parse_data(movie)
-        print(movie)
-    except CrawlerError as e:
-        logger.error(e, exc_info=True)

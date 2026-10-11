@@ -3,8 +3,10 @@
 import pytest
 from requests import Response
 
+from javsp.config import load_config
 from javsp.datatype import MovieInfo
 from javsp.web import javbus
+from javsp.web.context import SiteContext
 from javsp.web.exceptions import CrawlerError, MovieNotFoundError, SiteBlocked
 
 MOVIE_PAGE = """
@@ -35,7 +37,8 @@ def response(body, url="https://www.javbus.com/ABC-123", status=200, history=())
 def parse(monkeypatch, resp):
     monkeypatch.setattr(javbus, "request_get", lambda *args, **kwargs: resp)
     movie = MovieInfo("ABC-123")
-    javbus.parse_data(movie)
+    with SiteContext(load_config(), "javbus") as context:
+        javbus.parse_data(movie, context=context)
     return movie
 
 

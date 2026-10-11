@@ -24,8 +24,7 @@ def score_config(tmp_path):
     data["summarizer"]["nfo"]["custom_tags_fields"] = ["评分：{score}"]
     config_file = tmp_path / "score-config.yml"
     config_file.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
-    with Cfg.change_config_sources(FileSource(file=str(config_file))):
-        yield
+    return Cfg(config_sources=FileSource(file=str(config_file)))
 
 
 @pytest.mark.parametrize(
@@ -53,14 +52,14 @@ def test_score_in_names_and_nfo(tmp_path, score_config, score, source, expected)
     movie = Movie("ABC-123")
     movie.files = [str(tmp_path / "ABC-123.mp4")]
     movie.info = info
-    generate_names(movie)
+    generate_names(movie, cfg=score_config)
 
     assert movie.save_dir == str(tmp_path / expected)
     assert movie.basename == f"ABC-123-{expected}"
     assert info.nfo_title == f"ABC-123 测试 {expected}"
 
     nfo_file = tmp_path / "movie.nfo"
-    write_nfo(info, nfo_file)
+    write_nfo(info, nfo_file, cfg=score_config)
     xml = etree.parse(str(nfo_file))
     assert xml.xpath("/movie/tag/text()") == [f"评分：{expected}"]
     assert xml.xpath("/movie/rating/text()") == ([str(info.score)] if info.score else [])

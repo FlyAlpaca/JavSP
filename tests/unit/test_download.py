@@ -56,7 +56,7 @@ class StreamingResponse:
 @pytest.fixture
 def network_config(monkeypatch):
     config = SimpleNamespace(network=SimpleNamespace(proxy_server=None, timeout=timedelta(seconds=2)))
-    monkeypatch.setattr(base, "Cfg", lambda: config)
+    return config.network
 
 
 def install_response(monkeypatch, response):
@@ -66,7 +66,7 @@ def install_response(monkeypatch, response):
         calls.append((url, kwargs))
         return response
 
-    monkeypatch.setattr(base.requests, "get", get)
+    monkeypatch.setattr(base.requests.Session, "get", lambda self, url, **kwargs: get(url, **kwargs))
     return calls
 
 
@@ -93,7 +93,8 @@ def test_download_streams_without_explicit_flush_and_reports_exact_bytes(tmp_pat
             self.file.close()
 
     monkeypatch.setattr(base, "open", lambda *args: BufferedFile(), raising=False)
-    base.urlretrieve("https://example.test/file", target, lambda *args: progress.append(args), {"referer": "https://example.test/"})
+    base.urlretrieve("https://example.test/file", target, lambda *args: progress.append(args),
+                     {"referer": "https://example.test/"}, network=network_config)
     assert target.read_bytes() == b"a" * 65536 + b"b" * 7
     assert response.closed
     assert calls[0][1]["stream"] is True
@@ -108,7 +109,7 @@ def test_download_closes_response_on_http_or_stream_error(tmp_path, monkeypatch,
     install_response(monkeypatch, response)
     target = tmp_path / "download.bin"
     with pytest.raises(type(error)):
-        base.urlretrieve("https://example.test/file", target)
+        base.urlretrieve("https://example.test/file", target, network=network_config)
     assert response.closed
     if isinstance(error, requests.HTTPError):
         assert not target.exists()
@@ -118,12 +119,12 @@ def test_download_closes_response_when_destination_cannot_be_opened(tmp_path, mo
     response = StreamingResponse([b"data"])
     install_response(monkeypatch, response)
     with pytest.raises(OSError):
-        base.urlretrieve("https://example.test/file", tmp_path)
+        base.urlretrieve("https://example.test/file", tmp_path, network=network_config)
     assert response.closed
 
 
 def test_normal_get_keeps_non_streaming_default(monkeypatch, network_config):
     response = StreamingResponse([])
     calls = install_response(monkeypatch, response)
-    assert base.Request().get("https://example.test/page") is response
+    assert base.Request(network_config).get("https://example.test/page") is response
     assert calls[0][1]["stream"] is False

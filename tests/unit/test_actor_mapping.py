@@ -4,7 +4,8 @@ import pytest
 import requests
 from lxml import etree
 
-from javsp.config import Cfg
+from javsp import startup
+from javsp.config import load_config
 from javsp.datatype import Movie, MovieInfo
 from javsp.metadata import actors, summarizer
 from javsp.metadata.actors import ActorMapping, ActorMappingError, prepare_actor_mapping
@@ -192,36 +193,38 @@ def test_size_and_download_time_limits_preserve_cache(tmp_path, monkeypatch):
 
 
 def test_startup_loads_snapshot_even_with_alias_switch_off(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(summarizer, "actressAliasMap", None)
-    cfg = Cfg.model_validate(Cfg().model_dump())
-    cfg = cfg.model_copy(update={"crawler": cfg.crawler.model_copy(update={"normalize_actress_name": False})})
+    cfg = load_config()
+    cfg = cfg.model_copy(update={"scanner": cfg.scanner.model_copy(update={"input_directory": tmp_path}),
+                                 "crawler": cfg.crawler.model_copy(update={"normalize_actress_name": False})})
+    monkeypatch.setattr(startup, "check_for_updates", lambda: None)
+    monkeypatch.setattr(startup, "import_crawlers", lambda cfg: None)
+    monkeypatch.setattr(startup, "prepare_database", lambda *args, **kw: None)
     session = Session()
-    monkeypatch.setattr(
-        summarizer, "prepare_actor_mapping", lambda path, proxy: prepare_actor_mapping(path, session=session, proxy=proxy)
-    )
-    mapping = summarizer.load_actress_aliases(cfg)
-    assert cfg._actor_mapping is mapping
-    assert cfg._actor_mapping_path == tmp_path / "config/actor-mapping.xml"
+    monkeypatch.setattr(startup, "prepare_actor_mapping",
+                        lambda path, proxy: prepare_actor_mapping(path, session=session, proxy=proxy))
+    runtime = startup.prepare_startup(cfg, base_dir=tmp_path)
+    mapping = runtime.actor_mapping
+    assert runtime.actor_mapping_path == tmp_path / "config/actor-mapping.xml"
     monkeypatch.chdir(tmp_path.parent)
-    assert cfg._actor_mapping_path == tmp_path / "config/actor-mapping.xml"
-    assert MetadataMerger(cfg).aliases is mapping
+    assert runtime.actor_mapping_path == tmp_path / "config/actor-mapping.xml"
+    assert MetadataMerger(cfg, runtime=runtime).aliases is mapping
 
 
-def test_legacy_summary_and_alias_helper_use_loaded_snapshot(monkeypatch):
-    monkeypatch.setattr(summarizer, "actressAliasMap", ActorMapping.from_xml(XML))
-    assert summarizer.resolve_alias("橋本ありな") == "新ありな（新有菜）"
+def test_alias_helper_and_merger_use_explicit_snapshot():
+    mapping = ActorMapping.from_xml(XML)
+    assert summarizer.resolve_alias("橋本ありな", mapping) == "新ありな（新有菜）"
     movie = Movie("ABC-123")
     source = MovieInfo(movie, title="title", cover="cover", actress=["新ありな"])
-    assert summarizer.info_summary(movie, {"r18dev": source}) is None
-    assert movie.info.actress == ["新ありな（新有菜）"]
+    result = CrawlResult({"r18dev": source}, [], movie.dvdid, None, "normal")
+    merged = MetadataMerger(load_config(), aliases=mapping).merge(movie, result)
+    assert merged.actress == ["新ありな（新有菜）"]
     assert source.actress == ["新ありな"]
 
 
 @pytest.mark.parametrize("normalize", [True, False])
 def test_merged_names_consistent_in_paths_nfo_and_thumbnails(tmp_path, normalize):
-    cfg = Cfg().model_copy(deep=True)
-    cfg._actor_mapping = ActorMapping.from_xml(XML)
+    cfg = load_config().model_copy(deep=True)
+    mapping = ActorMapping.from_xml(XML)
     cfg = cfg.model_copy(update={"crawler": cfg.crawler.model_copy(update={"normalize_actress_name": normalize})})
     movie = Movie("ABC-123")
     movie.files = [str(tmp_path / "ABC-123.mp4")]
@@ -232,7 +235,7 @@ def test_merged_names_consistent_in_paths_nfo_and_thumbnails(tmp_path, normalize
         actress=["新ありな", "新有菜", "橋本ありな"],
         actress_pics={"新有菜": "portrait", "橋本ありな": "other"},
     )
-    merged = MetadataMerger(cfg).merge(movie, CrawlResult({"r18dev": source}, [], "ABC-123", None, "normal"))
+    merged = MetadataMerger(cfg, aliases=mapping).merge(movie, CrawlResult({"r18dev": source}, [], "ABC-123", None, "normal"))
     display = "新ありな（新有菜）"
     expected = [display] if normalize else [display, "橋本ありな（新有菜）"]
     assert merged.actress == expected
@@ -250,16 +253,15 @@ def test_merged_names_consistent_in_paths_nfo_and_thumbnails(tmp_path, normalize
     assert tree.xpath("/movie/actor[name=$name]/thumb/text()", name=display) == ["portrait"]
 
 
-def test_component_can_load_cache_without_network_and_requires_mapping_for_names(tmp_path):
-    cfg = Cfg().model_copy(deep=True)
-    cfg._actor_mapping_path = tmp_path / "actor-mapping.xml"
-    cfg._actor_mapping = None
+def test_component_requires_explicit_mapping_for_names(tmp_path):
+    cfg = load_config()
     movie = Movie("ABC-123")
     result = CrawlResult(
         {"r18dev": MovieInfo(movie, title="title", cover="cover", actress=["新ありな"])}, [], "ABC-123", None, "normal"
     )
-    merger = MetadataMerger(cfg)
-    with pytest.raises(ActorMappingError):
-        merger.merge(movie, result)
-    cfg._actor_mapping_path.write_bytes(XML)
+    with pytest.raises(ValueError, match="演员映射未初始化"):
+        MetadataMerger(cfg).merge(movie, result)
+    path = tmp_path / "actor-mapping.xml"
+    path.write_bytes(XML)
+    merger = MetadataMerger(cfg, aliases=ActorMapping.from_file(path))
     assert merger.merge(movie, result).actress == ["新ありな（新有菜）"]

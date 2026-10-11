@@ -18,7 +18,7 @@ __all__ = [
 ]
 
 
-from javsp.config import Cfg
+from javsp.config import load_config
 from javsp.datatype import Movie
 from javsp.lib import re_escape
 from javsp.scan.avid import get_cid, get_id, guess_av_type, normalize_id
@@ -197,7 +197,7 @@ class Scanner:
 
 def scan_movies(root: str) -> list[Movie]:
     """兼容列表接口；只有兼容接口更新历史失败列表。"""
-    result = Scanner(Cfg()).scan(root)
+    result = Scanner(load_config()).scan(root)
     failed_items[:] = result.unrecognized
     return result.movies
 
@@ -250,10 +250,9 @@ def is_remote_drive(path: str):
     return result == DRIVE_REMOTE
 
 
-def get_remaining_path_len(path, cfg=None):
+def get_remaining_path_len(path, cfg):
     """计算当前系统支持的最大路径长度与给定路径长度的差值"""
     # TODO: 支持不同的操作系统
-    cfg = cfg if cfg is not None else Cfg()
     fullpath = os.path.abspath(path)
     # Windows: If the length exceeds ~256 characters, you will be able to see the path/files
     # via Windows/File Explorer, but may not be able to delete/move/rename these paths/files
@@ -286,7 +285,7 @@ _sub_files = {}
 SUB_EXTENSIONS = (".srt", ".ass")
 
 
-def find_subtitle_in_dir(folder: str, dvdid: str):
+def find_subtitle_in_dir(folder: str, dvdid: str, *, cfg):
     """在folder内寻找是否有匹配dvdid的字幕（使用归一化匹配，IPZ-380 == ipz380 == ipz00380）"""
     norm_target = normalize_id(dvdid)
     if not norm_target:
@@ -299,7 +298,7 @@ def find_subtitle_in_dir(folder: str, dvdid: str):
             for file in filenames:
                 basename, ext = os.path.splitext(file)
                 if ext in SUB_EXTENSIONS:
-                    match_id = get_id(basename)
+                    match_id = get_id(basename, cfg)
                     if match_id:
                         # 使用归一化番号作为 key，支持模糊匹配
                         folder_data[normalize_id(match_id)] = os.path.join(dirpath, file)
@@ -318,8 +317,3 @@ def find_matching_subtitles(video_path: str) -> list[str]:
         if os.path.exists(sub_path):
             subtitles.append(sub_path)
     return subtitles
-
-
-if __name__ == "__main__":
-    p = "C:/Windows\\System32//PerceptionSimulation\\..\\Assets\\/ClosedHand.png"
-    print(get_remaining_path_len(p))

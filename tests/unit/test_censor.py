@@ -28,22 +28,22 @@ def test_censor_in_names_and_nfo(tmp_path, representations, uncensored, index):
     config_file = tmp_path / "censor-config.yml"
     config_file.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
 
-    with Cfg.change_config_sources(FileSource(file=str(config_file))):
-        info = MovieInfo("ABC-123", title="测试", uncensored=uncensored)
-        assert info.get_info_dic()["censor"] == expected
+    cfg = Cfg(config_sources=FileSource(file=str(config_file)))
+    info = MovieInfo("ABC-123", title="测试", uncensored=uncensored)
+    assert info.get_info_dic(cfg)["censor"] == expected
 
-        movie = Movie("ABC-123")
-        movie.files = [str(tmp_path / "ABC-123.mp4")]
-        movie.info = info
-        generate_names(movie)
+    movie = Movie("ABC-123")
+    movie.files = [str(tmp_path / "ABC-123.mp4")]
+    movie.info = info
+    generate_names(movie, cfg)
 
-        assert movie.save_dir == str(tmp_path / expected / "ABC-123")
-        assert movie.basename == f"ABC-123-{expected}"
-        assert info.nfo_title == f"ABC-123 {expected}"
+    assert movie.save_dir == str(tmp_path / expected / "ABC-123")
+    assert movie.basename == f"ABC-123-{expected}"
+    assert info.nfo_title == f"ABC-123 {expected}"
 
-        nfo_file = tmp_path / "movie.nfo"
-        write_nfo(info, nfo_file)
-        xml = etree.parse(str(nfo_file))
-        assert xml.xpath("/movie/title/text()") == [f"ABC-123 {expected}"]
-        assert xml.xpath("/movie/genre/text()") == [expected]
-        assert xml.xpath("/movie/tag/text()") == [expected]
+    nfo_file = tmp_path / "movie.nfo"
+    write_nfo(info, nfo_file, cfg)
+    xml = etree.parse(str(nfo_file))
+    assert xml.xpath("/movie/title/text()") == [f"ABC-123 {expected}"]
+    assert xml.xpath("/movie/genre/text()") == [expected]
+    assert xml.xpath("/movie/tag/text()") == [expected]

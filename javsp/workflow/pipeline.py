@@ -21,11 +21,13 @@ class _CrawlerProgress:
 
 
 class JobRunner:
-    def __init__(self, cfg, on_event=None, *, translator=None, crawler=None, merger=None, planner=None, executor=None):
+    def __init__(self, cfg, on_event=None, *, translator=None, crawler=None, merger=None, planner=None,
+                 executor=None, runtime=None):
         self.cfg, self.on_event = cfg, on_event
-        self.translator = translator
-        self.crawler = crawler if crawler is not None else CrawlerExecutor(cfg)
-        self.merger = merger if merger is not None else MetadataMerger(cfg)
+        self.runtime = runtime
+        self.translator = translator if translator is not None else (runtime.translator if runtime else None)
+        self.crawler = crawler if crawler is not None else CrawlerExecutor(cfg, runtime=runtime)
+        self.merger = merger if merger is not None else MetadataMerger(cfg, runtime=runtime)
         self.planner = planner if planner is not None else OutputPlanner(cfg)
         self.executor = executor if executor is not None else OutputExecutor(cfg)
 
@@ -143,8 +145,10 @@ class JobRunner:
 
 
 class Pipeline:
-    def __init__(self, cfg, on_event=None, translator=None):
-        self.cfg, self.on_event, self.translator = cfg, on_event, translator
+    def __init__(self, cfg, on_event=None, translator=None, *, runtime=None):
+        self.cfg, self.on_event = cfg, on_event
+        self.runtime = runtime
+        self.translator = translator if translator is not None else (runtime.translator if runtime else None)
 
     def scan(self, root):
         if self.on_event:
@@ -156,10 +160,11 @@ class Pipeline:
             from javsp.translate import LocalTranslator
 
             with LocalTranslator(self.cfg.translator) as translator:
-                return Pipeline(self.cfg, self.on_event, translator).run(root, review, on_result)
+                return Pipeline(self.cfg, self.on_event, translator, runtime=self.runtime).run(root, review, on_result)
         scan = self.scan(root)
         if review:
             review(scan.movies, root)
-        batch = JobRunner(self.cfg, self.on_event, translator=self.translator).run_batch(scan.movies, on_result)
+        runner = JobRunner(self.cfg, self.on_event, translator=self.translator, runtime=self.runtime)
+        batch = runner.run_batch(scan.movies, on_result)
         batch.scan = scan
         return batch

@@ -11,7 +11,6 @@ from javsp.publish import processor
 @pytest.fixture
 def poster_config(monkeypatch):
     cover = SimpleNamespace(add_label=False, crop=SimpleNamespace(on_id_pattern=[], engine=None))
-    monkeypatch.setattr(processor, "Cfg", lambda: SimpleNamespace(summarizer=SimpleNamespace(cover=cover)))
     return cover
 
 
@@ -35,7 +34,7 @@ def test_folder_cover_is_jpeg_and_keeps_aspect_ratio(tmp_path, poster_config, si
     movie = movie_for(tmp_path, size, mode)
     original = (tmp_path / "fanart.png").read_bytes()
 
-    processor.process_poster(movie)
+    processor.process_poster(movie, cfg=SimpleNamespace(summarizer=SimpleNamespace(cover=poster_config)))
 
     with Image.open(movie.poster_file) as poster, Image.open(tmp_path / "folder.jpg") as folder:
         assert folder.format == "JPEG"
@@ -62,7 +61,7 @@ def test_folder_cover_uses_cropped_poster_with_labels(tmp_path, monkeypatch, pos
     monkeypatch.setattr(processor, "SUBTITLE_MARK_FILE", Image.new("RGBA", (150, 150), "green"))
     monkeypatch.setattr(processor, "UNCENSORED_MARK_FILE", Image.new("RGBA", (150, 150), "yellow"))
 
-    processor.process_poster(movie)
+    processor.process_poster(movie, cfg=SimpleNamespace(summarizer=SimpleNamespace(cover=poster_config)))
 
     with Image.open(tmp_path / "folder.jpg") as folder:
         assert folder.getpixel((20, 20))[2] > 240
@@ -78,7 +77,7 @@ def test_custom_folder_filename_preserves_full_size_image(tmp_path, poster_confi
     if destination == "fanart_file":
         Image.new("RGB", (1000, 800), "blue").save(movie.fanart_file)
 
-    processor.process_poster(movie)
+    processor.process_poster(movie, cfg=SimpleNamespace(summarizer=SimpleNamespace(cover=poster_config)))
 
     with Image.open(tmp_path / "folder.jpg") as folder:
         assert folder.height == 800

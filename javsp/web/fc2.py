@@ -2,12 +2,10 @@
 
 import logging
 
-from javsp.config import Cfg
 from javsp.datatype import MovieInfo
 from javsp.lib import strftime_to_minutes
-from javsp.logging_config import configure_logging
 from javsp.web.base import get_html, get_list_first, request_get, resp2html, select_fc2_cover, xpath_first
-from javsp.web.exceptions import CrawlerError, MovieNotFoundError, SiteBlocked
+from javsp.web.exceptions import MovieNotFoundError, SiteBlocked
 
 logger = logging.getLogger(__name__)
 base_url = "https://adult.contents.fc2.com"
@@ -33,9 +31,9 @@ XP = {
 }
 
 
-def get_movie_score(fc2_id):
+def get_movie_score(fc2_id, *, context):
     """通过评论数据来计算FC2的影片评分（10分制），无法获得评分时返回None"""
-    html = get_html(f"{base_url}/article/{fc2_id}/review")
+    html = get_html(f"{base_url}/article/{fc2_id}/review", context=context)
     review_tags = html.xpath(XP["review_li"])
     reviews = {}
     for tag in review_tags:
@@ -56,7 +54,7 @@ def get_movie_score(fc2_id):
         return final_score
 
 
-def parse_data(movie: MovieInfo):
+def parse_data(movie: MovieInfo, *, context):
     """解析指定番号的影片数据"""
     # 去除番号中的'FC2'字样
     id_uc = movie.dvdid.upper()
@@ -65,7 +63,7 @@ def parse_data(movie: MovieInfo):
     fc2_id = id_uc.replace("FC2-", "")
     # 抓取网页
     url = f"{base_url}/article/{fc2_id}/"
-    resp = request_get(url)
+    resp = request_get(url, context=context)
     if "/id.fc2.com/" in resp.url:
         raise SiteBlocked("FC2要求当前IP登录账号才可访问，请尝试更换为日本IP")
     html = resp2html(resp)
@@ -86,9 +84,9 @@ def parse_data(movie: MovieInfo):
     publish_date = date_str[-10:].replace("/", "-") if date_str else None
     preview_pics = container.xpath(XP["preview_pics"])
 
-    if Cfg().crawler.hardworking:
+    if context.cfg.crawler.hardworking:
         # 通过评论数据来计算准确的评分
-        score = get_movie_score(fc2_id)
+        score = get_movie_score(fc2_id, context=context)
         if score is not None:
             movie.score = f"{score:.2f}"
         # 预览视频是动态加载的，不在静态网页中
@@ -97,7 +95,7 @@ def parse_data(movie: MovieInfo):
             key = desc_frame_url.split("=")[-1]
             api_url = f"{base_url}/api/v2/videos/{fc2_id}/sample?key={key}"
             try:
-                r = request_get(api_url).json()
+                r = request_get(api_url, context=context).json()
                 movie.preview_video = r.get("path")
             except Exception:
                 logger.debug(f"FC2获取预览视频失败: {fc2_id}", exc_info=True)
@@ -124,14 +122,3 @@ def parse_data(movie: MovieInfo):
     select_fc2_cover(movie)
     if not movie.cover:
         movie.cover = thumb_pic
-
-
-if __name__ == "__main__":
-    configure_logging(debug=True)
-
-    movie = MovieInfo("FC2-718323")
-    try:
-        parse_data(movie)
-        print(movie)
-    except CrawlerError as e:
-        logger.error(e, exc_info=True)

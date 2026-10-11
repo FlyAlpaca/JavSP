@@ -3,6 +3,7 @@
 import logging
 import re
 from contextlib import contextmanager
+from pathlib import Path
 
 import requests
 
@@ -10,8 +11,8 @@ from javsp.__version__ import get_version
 from javsp.crawl.dispatcher import import_crawlers
 from javsp.crawl.r18dev import prepare_database
 from javsp.func import get_scan_dir
-from javsp.metadata.actors import ActorMappingError
-from javsp.metadata.summarizer import load_actress_aliases
+from javsp.metadata.actors import ActorMappingError, prepare_actor_mapping
+from javsp.runtime import RuntimeContext
 from javsp.translate import LocalTranslator
 
 logger = logging.getLogger(__name__)
@@ -53,27 +54,35 @@ def check_for_updates(*, session=requests):
         logger.info("JavSP 已是最新稳定版本")
 
 
-def prepare_startup(cfg):
+def prepare_startup(cfg, *, base_dir=None):
     """统一检查配置依赖、数据源和运行资源，返回已验证的扫描目录。"""
     root = get_scan_dir(cfg.scanner.input_directory)
     if root is None:
         raise StartupError("扫描目录不存在或不是目录，请检查容器挂载和 scanner.input_directory")
 
+    runtime = RuntimeContext.create(cfg, base_dir)
+    runtime.root = Path(root).resolve()
     check_for_updates()
     try:
-        load_actress_aliases(cfg)
+        runtime.actor_mapping = prepare_actor_mapping(runtime.actor_mapping_path, proxy=cfg.network.proxy_server)
     except ActorMappingError as error:
         raise StartupError(str(error)) from error
     if cfg.r18dev.enabled:
-        cfg._r18dev_db_path = prepare_database(cfg._r18dev_db_path, cfg.crawler.online_enabled)
+        runtime.database_path = prepare_database(
+            runtime.database_cache_path, cfg.crawler.online_enabled, proxy=cfg.network.proxy_server
+        )
     import_crawlers(cfg)
-    return root
+    return runtime
 
 
 @contextmanager
 def startup_context(cfg):
     """按顺序准备数据源和模型，并负责关闭模型服务。"""
-    root = prepare_startup(cfg)
-    with LocalTranslator(cfg.translator) as translator:
+    runtime = prepare_startup(cfg)
+    with LocalTranslator(cfg.translator, proxy=cfg.network.proxy_server) as translator:
+        runtime.translator = translator
         logger.info("启动前检查完成：配置、扫描目录、数据源和模型已就绪")
-        yield root, translator
+        try:
+            yield runtime
+        finally:
+            runtime.translator = None

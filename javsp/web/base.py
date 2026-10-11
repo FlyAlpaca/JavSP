@@ -16,7 +16,6 @@ from lxml.html.clean import Cleaner
 from requests.models import Response
 from tqdm import tqdm
 
-from javsp.config import Cfg
 from javsp.web.exceptions import CrawlerError
 
 __all__ = [
@@ -77,11 +76,11 @@ def is_cloudflare_challenge(resp) -> bool:
     return False
 
 
-def read_proxy():
-    if Cfg().network.proxy_server is None:
+def read_proxy(network):
+    if network.proxy_server is None:
         return {}
     else:
-        proxy = str(Cfg().network.proxy_server)
+        proxy = str(network.proxy_server)
         return {"http": proxy, "https": proxy}
 
 
@@ -91,23 +90,34 @@ def read_proxy():
 class Request:
     """作为网络请求出口并支持各个模块定制功能"""
 
-    def __init__(self, use_scraper=False) -> None:
+    def __init__(self, network, use_scraper=False) -> None:
         # 必须使用copy()，否则各个模块对headers的修改都将会指向本模块中定义的headers变量，导致只有最后一个对headers的修改生效
         self.headers = headers.copy()
         self.cookies = {}
 
-        self.proxies = read_proxy()
-        self.timeout = Cfg().network.timeout.total_seconds()
+        self.proxies = read_proxy(network)
+        self.timeout = network.timeout.total_seconds()
         if not use_scraper:
             self.scraper = None
-            self.__get = requests.get
-            self.__post = requests.post
-            self.__head = requests.head
+            self.session = requests.Session()
+            self.__get = self.session.get
+            self.__post = self.session.post
+            self.__head = self.session.head
         else:
             self.scraper = curl_requests.Session(impersonate="chrome")
+            self.session = self.scraper
             self.__get = self._scraper_monitor(self.scraper.get)
             self.__post = self._scraper_monitor(self.scraper.post)
             self.__head = self._scraper_monitor(self.scraper.head)
+
+    def close(self):
+        self.session.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        self.close()
 
     def _scraper_monitor(self, func):
         """监控curl_cffi的工作状态，遇到不支持的Challenge时直接抛出异常
@@ -190,14 +200,14 @@ class DownloadProgressBar(tqdm):
         self.update(b * bsize - self.n)
 
 
-def request_get(url, cookies=None, timeout=None, delay_raise=False):
+def request_get(url, cookies=None, timeout=None, delay_raise=False, *, context):
     """获取指定url的原始请求"""
-    return Request().get(url, cookies=cookies, timeout=timeout, delay_raise=delay_raise)
+    return context.request.get(url, cookies=cookies, timeout=timeout, delay_raise=delay_raise)
 
 
-def request_post(url, data, cookies=None, timeout=None, delay_raise=False):
+def request_post(url, data, cookies=None, timeout=None, delay_raise=False, *, context):
     """向指定url发送post请求"""
-    return Request().post(url, data, cookies=cookies, timeout=timeout, delay_raise=delay_raise)
+    return context.request.post(url, data, cookies=cookies, timeout=timeout, delay_raise=delay_raise)
 
 
 def get_resp_text(resp: Response, encoding=None):
@@ -209,9 +219,9 @@ def get_resp_text(resp: Response, encoding=None):
     return resp.text
 
 
-def get_html(url, encoding="utf-8"):
+def get_html(url, encoding="utf-8", *, context):
     """使用get方法访问指定网页并返回经lxml解析后的document"""
-    resp = request_get(url)
+    resp = request_get(url, context=context)
     text = get_resp_text(resp, encoding=encoding)
     html = lxml.html.fromstring(text)
     html.make_links_absolute(url, resolve_base_href=True)
@@ -233,9 +243,9 @@ def resp2html(resp, encoding="utf-8") -> lxml.html.HtmlElement:
     return html
 
 
-def post_html(url, data, encoding="utf-8", cookies=None):
+def post_html(url, data, encoding="utf-8", cookies=None, *, context):
     """使用post方法访问指定网页并返回经lxml解析后的document"""
-    resp = request_post(url, data, cookies=cookies)
+    resp = request_post(url, data, cookies=cookies, context=context)
     text = get_resp_text(resp, encoding=encoding)
     html = lxml.html.fromstring(text)
     # jav321提供ed2k形式的资源链接，其中的非ASCII字符可能导致转换失败，因此要先进行处理
@@ -292,24 +302,27 @@ def select_fc2_cover(movie):
         movie.cover = movie.preview_pics[0]
 
 
-def is_connectable(url, timeout=3):
+def is_connectable(url, timeout=3, *, context):
     """测试与指定url的连接"""
     try:
-        req = Request()
-        req.get(url, timeout=timeout)
+        context.request.get(url, timeout=timeout)
         return True
     except Exception as e:
         logger.debug(f"Not connectable: {url}\n" + repr(e))
         return False
 
 
-def urlretrieve(url, filename=None, reporthook=None, extra_headers=None):
+def urlretrieve(url, filename=None, reporthook=None, extra_headers=None, *, network):
     """下载文件，走统一的 Request 出口"""
-    req = Request()
+    with Request(network) as req:
+        return _urlretrieve(req, url, filename, reporthook, extra_headers)
+
+
+def _urlretrieve(req, url, filename, reporthook, extra_headers):
     if extra_headers:
         for k, v in extra_headers.items():
             req.headers[k] = v
-    with contextlib.closing(req.get(url, timeout=Cfg().network.timeout.total_seconds() * 3, stream=True, delay_raise=True)) as r:
+    with contextlib.closing(req.get(url, timeout=req.timeout * 3, stream=True, delay_raise=True)) as r:
         r.raise_for_status()
         header = r.headers
         with open(filename, "wb") as fp:
@@ -327,7 +340,7 @@ def urlretrieve(url, filename=None, reporthook=None, extra_headers=None):
                         reporthook(downloaded, 1, size)  # 按实际收到的字节数更新进度
 
 
-def download(url, output_path, desc=None):
+def download(url, output_path, desc=None, *, network):
     """下载指定url的资源"""
     # 支持“下载”本地资源，以供fc2fan的本地镜像所使用
     if not url.startswith(("http://", "https://")):
@@ -343,10 +356,6 @@ def download(url, output_path, desc=None):
     slash_pos = url.find("/", 8)
     referrer["referer"] = url[: slash_pos + 1] if slash_pos != -1 else url + "/"
     with DownloadProgressBar(unit="B", unit_scale=True, miniters=1, desc=desc, leave=False) as t:
-        urlretrieve(url, filename=output_path, reporthook=t.update_to, extra_headers=referrer)
+        urlretrieve(url, filename=output_path, reporthook=t.update_to, extra_headers=referrer, network=network)
         info = {k: t.format_dict[k] for k in ("total", "elapsed", "rate")}
         return info
-
-
-if __name__ == "__main__":
-    download("https://www.javbus.com/pics/cover/6n54_b.jpg", "cover.jpg")

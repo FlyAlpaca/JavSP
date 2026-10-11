@@ -3,17 +3,13 @@
 import logging
 import re
 
-from javsp.config import Cfg
 from javsp.datatype import MovieInfo
-from javsp.logging_config import configure_logging
-from javsp.web.base import Request, resp2html, xpath_first
-from javsp.web.exceptions import CrawlerError, MovieNotFoundError, SiteBlocked
+from javsp.web.base import resp2html, xpath_first
+from javsp.web.exceptions import MovieNotFoundError, SiteBlocked
 
 logger = logging.getLogger(__name__)
 base_url = "https://www.mgstage.com"
 # 初始化Request实例（要求携带已通过R18认证的cookies，否则会被重定向到认证页面）
-request = Request()
-request.cookies = {"adc": "1"}
 
 _SITE = "mgstage"
 
@@ -37,10 +33,10 @@ XP = {
 }
 
 
-def parse_data(movie: MovieInfo):
+def parse_data(movie: MovieInfo, *, context):
     """解析指定番号的影片数据"""
     url = f"{base_url}/product/product_detail/{movie.dvdid}/"
-    resp = request.get(url, delay_raise=True)
+    resp = context.request.get(url, delay_raise=True)
     if resp.status_code == 403:
         raise SiteBlocked("mgstage不允许从当前IP所在地区访问，请尝试更换为日本地区代理")
     # url不存在时会被重定向至主页。history非空时说明发生了重定向
@@ -97,12 +93,12 @@ def parse_data(movie: MovieInfo):
     plot = "".join(plots).strip()
     preview_pics = container.xpath(XP["preview_pics"])
 
-    if Cfg().crawler.hardworking:
+    if context.cfg.crawler.hardworking:
         # 预览视频是点击按钮后再加载的，不在静态网页中
         btn_url = xpath_first(container, XP["sample_btn"], label=_SITE)
         video_pid = btn_url.split("/")[-1]
         req_url = f"{base_url}/sampleplayer/sampleRespons.php?pid={video_pid}"
-        resp = request.get(req_url).json()
+        resp = context.request.get(req_url).json()
         video_url = resp.get("url")
         if video_url:
             # /sample/shirouto/siro/3093/SIRO-3093_sample.ism/request?uid=XXX&amp;pid=XXX
@@ -120,15 +116,3 @@ def parse_data(movie: MovieInfo):
     movie.plot = plot
     movie.preview_pics = preview_pics
     movie.uncensored = False  # 服务器在日本且面向日本国内公开发售，不会包含无码片
-
-
-if __name__ == "__main__":
-
-    configure_logging(debug=True)
-
-    movie = MovieInfo("HRV-045")
-    try:
-        parse_data(movie)
-        print(movie)
-    except CrawlerError as e:
-        logger.error(e, exc_info=True)

@@ -6,22 +6,21 @@ from types import SimpleNamespace
 import pytest
 
 from javsp import startup
+from javsp.config import load_config
+from javsp.runtime import RuntimeContext
 
 
 def test_startup_prepares_sources_before_model(tmp_path, monkeypatch):
     calls = []
-    cfg = SimpleNamespace(
-        scanner=SimpleNamespace(input_directory=tmp_path),
-        r18dev=SimpleNamespace(enabled=True),
-        crawler=SimpleNamespace(online_enabled=False),
-        _r18dev_db_path=tmp_path / "r18dev.sqlite",
-    )
+    cfg = load_config()
+    cfg = cfg.model_copy(update={"scanner": cfg.scanner.model_copy(update={"input_directory": tmp_path}),
+                                 "r18dev": cfg.r18dev.model_copy(update={"enabled": True})})
     monkeypatch.setattr(startup, "check_for_updates", lambda: calls.append("version"))
-    monkeypatch.setattr(startup, "load_actress_aliases", lambda config: calls.append("aliases"))
-    monkeypatch.setattr(startup, "prepare_database", lambda path, online: calls.append("database") or path)
+    monkeypatch.setattr(startup, "prepare_actor_mapping", lambda *a, **kw: calls.append("aliases"))
+    monkeypatch.setattr(startup, "prepare_database", lambda path, online, **kw: calls.append("database") or path)
     monkeypatch.setattr(startup, "import_crawlers", lambda config: calls.append("crawlers"))
 
-    assert startup.prepare_startup(cfg) == str(tmp_path)
+    assert startup.prepare_startup(cfg, base_dir=tmp_path).root == tmp_path
     assert calls == ["version", "aliases", "database", "crawlers"]
 
 
@@ -33,24 +32,27 @@ def test_missing_scan_directory_stops_before_network(tmp_path, monkeypatch):
 
 
 def test_mapping_failure_stops_before_data_sources(tmp_path, monkeypatch):
-    cfg = SimpleNamespace(scanner=SimpleNamespace(input_directory=tmp_path))
+    cfg = load_config()
+    cfg = cfg.model_copy(update={"scanner": cfg.scanner.model_copy(update={"input_directory": tmp_path})})
     monkeypatch.setattr(startup, "check_for_updates", lambda: None)
 
-    def missing(_cfg):
+    def missing(*args, **kwargs):
         raise startup.ActorMappingError("无有效缓存")
 
-    monkeypatch.setattr(startup, "load_actress_aliases", missing)
+    monkeypatch.setattr(startup, "prepare_actor_mapping", missing)
     with pytest.raises(startup.StartupError, match="无有效缓存"):
         startup.prepare_startup(cfg)
 
 
 def test_model_starts_after_preparation_and_closes(monkeypatch):
     calls = []
-    cfg = SimpleNamespace(translator=object())
-    monkeypatch.setattr(startup, "prepare_startup", lambda config: calls.append("resources") or "/media")
+    cfg = load_config()
+    runtime = RuntimeContext.create(cfg)
+    runtime.root = __import__("pathlib").Path("/media")
+    monkeypatch.setattr(startup, "prepare_startup", lambda config: calls.append("resources") or runtime)
 
     @contextmanager
-    def translator(_config):
+    def translator(_config, **kw):
         calls.append("model started")
         try:
             yield object()
@@ -58,8 +60,9 @@ def test_model_starts_after_preparation_and_closes(monkeypatch):
             calls.append("model closed")
 
     monkeypatch.setattr(startup, "LocalTranslator", translator)
-    with startup.startup_context(cfg) as (root, _):
-        assert root == "/media"
+    with startup.startup_context(cfg) as ready:
+        assert str(ready.root) == "/media"
+        assert ready.translator is not None
         calls.append("scan")
     assert calls == ["resources", "model started", "scan", "model closed"]
 

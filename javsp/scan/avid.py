@@ -17,7 +17,6 @@ from pathlib import Path
 
 __all__ = ["get_id", "get_cid", "guess_av_type", "normalize_id"]
 
-from javsp.config import Cfg
 
 
 # =============================================================================
@@ -188,10 +187,9 @@ def _format_no_sep(m):
 # =============================================================================
 
 
-def get_id(filepath_str: str, cfg=None) -> str:
+def get_id(filepath_str: str, cfg) -> str:
     """从给定的文件路径中提取番号（DVD ID）"""
     filepath = Path(filepath_str)
-    cfg = cfg if cfg is not None else Cfg()
     ignore_pattern = re.compile("|".join(cfg.scanner.ignored_id_pattern))
     norm = ignore_pattern.sub("", filepath.stem).upper()
 
@@ -296,7 +294,3 @@ def guess_av_type(avid: str) -> str:
         return "cid"
     # 以上都不是: 默认归类为normal
     return "normal"
-
-
-if __name__ == "__main__":
-    print(get_id("FC2-123456/Unknown.mp4"))

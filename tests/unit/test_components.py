@@ -3,7 +3,7 @@
 import sys
 from types import SimpleNamespace
 
-from javsp.config import Cfg
+from javsp.config import load_config
 from javsp.crawl import dispatcher
 from javsp.datatype import Movie, MovieInfo
 from javsp.metadata.summarizer import MetadataMerger
@@ -16,7 +16,7 @@ def test_scan_results_are_independent(tmp_path):
     first.mkdir()
     second.mkdir()
     (first / "未知.mp4").write_bytes(b"video")
-    cfg = Cfg().model_copy(deep=True)
+    cfg = load_config().model_copy(deep=True)
     cfg = cfg.model_copy(update={"scanner": cfg.scanner.model_copy(update={"minimum_size": 0})})
     scanner = Scanner(cfg)
     result = scanner.scan(str(first))
@@ -29,13 +29,13 @@ def test_scan_results_are_independent(tmp_path):
 def test_crawler_returns_identity_without_mutating_input(monkeypatch):
     cfg = SimpleNamespace(
         crawler=SimpleNamespace(selection={"cid": ["testcid"], "normal": ["testnormal"]}),
-        network=SimpleNamespace(retry=1, timeout=SimpleNamespace(total_seconds=lambda: 1)),
+        network=SimpleNamespace(proxy_server=None, proxy_free={}, retry=1, timeout=SimpleNamespace(total_seconds=lambda: 1)),
     )
 
-    def cid(info):
+    def cid(info, *, context):
         info.title = "CID title"
 
-    def normal(info):
+    def normal(info, *, context):
         info.title = "normal title"
 
     for name, parser in (("testcid", cid), ("testnormal", normal)):
@@ -48,7 +48,7 @@ def test_crawler_returns_identity_without_mutating_input(monkeypatch):
 
 
 def test_merge_preserves_source_data_and_tracks_selected_cover():
-    cfg = Cfg().model_copy(deep=True)
+    cfg = load_config().model_copy(deep=True)
     cfg = cfg.model_copy(update={"crawler": cfg.crawler.model_copy(update={"normalize_actress_name": False})})
     info = MovieInfo("ABC-123", title="title", cover="cover", genre=["original"])
     result = CrawlResult({"javdb": info}, [], "ABC-123", None, "normal")
@@ -62,7 +62,7 @@ def test_merge_preserves_source_data_and_tracks_selected_cover():
 
 def test_scanner_uses_supplied_id_patterns(tmp_path):
     (tmp_path / "XYZ-999 ABC-123.mp4").write_bytes(b"video")
-    cfg = Cfg()
+    cfg = load_config()
     scanner = cfg.scanner.model_copy(update={"minimum_size": 0, "ignored_id_pattern": ["XYZ-999"]})
     cfg = cfg.model_copy(update={"scanner": scanner})
     result = Scanner(cfg).scan(str(tmp_path))
@@ -73,7 +73,7 @@ def test_empty_folder_ignore_list_scans_subdirectories(tmp_path):
     folder = tmp_path / 'movie'
     folder.mkdir()
     (folder / 'ABC-123.mp4').write_bytes(b'video')
-    cfg = Cfg()
+    cfg = load_config()
     cfg = cfg.model_copy(update={'scanner': cfg.scanner.model_copy(update={
         'minimum_size': 0, 'ignored_folder_name_pattern': [], 'skip_nfo_dir': False,
     })})

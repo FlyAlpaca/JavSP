@@ -8,14 +8,14 @@ import pytest
 from PIL import Image
 from pydantic_extra_types.pendulum_dt import Duration
 
-from javsp.config import Cfg
+from javsp.config import load_config
 from javsp.datatype import Movie, MovieInfo
 from javsp.publish import output, processor
 from javsp.publish.output import OutputExecutor, OutputPlanner, RecoveryError
 
 
 def config_for(tmp_path, move=True, **summary):
-    cfg = Cfg()
+    cfg = load_config()
     paths = cfg.summarizer.path.model_copy(update={"output_folder_pattern": str(tmp_path / "out"), "hard_link": False})
     extra = cfg.summarizer.extra_fanarts.model_copy(update={"enabled": False})
     summarizer = cfg.summarizer.model_copy(update={"path": paths, "extra_fanarts": extra, "move_files": move, **summary})
@@ -330,10 +330,10 @@ def test_extra_fanarts_participate_in_transaction(scene, tmp_path, monkeypatch, 
     cfg = cfg.model_copy(update={"summarizer": cfg.summarizer.model_copy(update={"extra_fanarts": extras})})
     info.preview_pics = [info.cover, "failed-preview"]
     download = processor.download
-    def local_download(url, path):
+    def local_download(url, path, **kwargs):
         if url == "failed-preview":
             raise OSError("preview unavailable")
-        return download(url, path)
+        return download(url, path, **kwargs)
     monkeypatch.setattr(processor, "download", local_download)
     target = tmp_path / "out" / "extrafanart"
     target.mkdir(parents=True)

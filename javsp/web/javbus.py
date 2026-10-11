@@ -5,19 +5,13 @@ from urllib.parse import urlsplit
 
 from lxml import etree
 
-from javsp.config import Cfg, CrawlerID
 from javsp.datatype import GenreMap, MovieInfo
-from javsp.logging_config import configure_logging
 from javsp.web.base import is_cloudflare_challenge, request_get, resp2html, xpath_first
 from javsp.web.exceptions import CrawlerError, MovieNotFoundError, SiteBlocked
 
 logger = logging.getLogger(__name__)
 genre_map = GenreMap("data/genre_javbus.csv")
 permanent_url = "https://www.javbus.com"
-if Cfg().network.proxy_server is not None:
-    base_url = permanent_url
-else:
-    base_url = str(Cfg().network.proxy_free[CrawlerID.javbus])
 
 _SITE = "javbus"
 
@@ -41,13 +35,13 @@ XP = {
 }
 
 
-def parse_data(movie: MovieInfo):
+def parse_data(movie: MovieInfo, *, context):
     """从网页抓取并解析指定番号的数据
     Args:
         movie (MovieInfo): 要解析的影片信息，解析后的信息直接更新到此变量内
     """
-    url = f"{base_url}/{movie.dvdid}"
-    resp = request_get(url, delay_raise=True)
+    url = f"{context.base_url}/{movie.dvdid}"
+    resp = request_get(url, delay_raise=True, context=context)
     if is_cloudflare_challenge(resp):
         raise SiteBlocked(f"JavBus: 无法通过CloudFlare检测: {url}")
     # 旧版登录跳转的302响应可能带有影片数据；普通重定向通常只有空正文。
@@ -133,19 +127,8 @@ def parse_data(movie: MovieInfo):
     movie.actress_pics = actress_pics
 
 
-def parse_clean_data(movie: MovieInfo):
+def parse_clean_data(movie: MovieInfo, *, context):
     """解析指定番号的影片数据并进行清洗"""
-    parse_data(movie)
+    parse_data(movie, context=context)
     movie.genre_norm = genre_map.map(movie.genre_id)
     movie.genre_id = None  # 没有别的地方需要再用到，清空genre id（暗示已经完成转换）
-
-
-if __name__ == "__main__":
-    configure_logging(debug=True)
-
-    movie = MovieInfo("NANP-030")
-    try:
-        parse_clean_data(movie)
-        print(movie)
-    except CrawlerError as e:
-        logger.error(e, exc_info=True)

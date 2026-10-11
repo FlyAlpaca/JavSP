@@ -4,9 +4,8 @@ import logging
 import re
 
 from javsp.datatype import MovieInfo
-from javsp.logging_config import configure_logging
 from javsp.web.base import post_html, xpath_first
-from javsp.web.exceptions import CrawlerError, MovieNotFoundError
+from javsp.web.exceptions import MovieNotFoundError
 
 logger = logging.getLogger(__name__)
 base_url = "https://www.jav321.com"
@@ -33,9 +32,9 @@ XP = {
 }
 
 
-def parse_data(movie: MovieInfo):
+def parse_data(movie: MovieInfo, *, context):
     """解析指定番号的影片数据"""
-    html = post_html(f"{base_url}/search", data={"sn": movie.dvdid})
+    html = post_html(f"{base_url}/search", data={"sn": movie.dvdid}, context=context)
     page_url = html.xpath(XP["page_url"])[0]
     # TODO: 注意cid是dmm的概念。如果影片来自MGSTAGE，这里的cid很可能是jav321自己添加的，例如 345SIMM-542
     cid = page_url.split("/")[-1]  # /video/ipx00177
@@ -107,14 +106,3 @@ def parse_data(movie: MovieInfo):
     if len(preview_pics) > 0:
         movie.cover = preview_pics[0]
         movie.preview_pics = preview_pics[1:]
-
-
-if __name__ == "__main__":
-    configure_logging(debug=True)
-
-    movie = MovieInfo("SCUTE-1177")
-    try:
-        parse_data(movie)
-        print(movie)
-    except CrawlerError as e:
-        logger.error(e, exc_info=True)
