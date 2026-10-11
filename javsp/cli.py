@@ -10,7 +10,7 @@ from javsp.workflow.models import Stage
 def summarize_batch(batch, filemove_log=False):
     stats = {"total": batch.total, "success": 0, "failed": 0, "success_list": [],
              "failed_list": [], "filemove_list": [], "pending_list": [], "aborted": batch.aborted,
-             "batch_error": str(batch.error) if batch.error else ""}
+             "batch_error": str(batch.error) if batch.error else "", "warnings": list(batch.warnings)}
     movies = []
     for job in batch.jobs:
         movie_id = job.error.movie_id if job.error else job.movie.dvdid or job.movie.cid or "未知番号"
@@ -70,6 +70,10 @@ def print_summary(stats):
         print("  未处理影片: " + ", ".join(stats["pending_list"]))
     if stats.get("batch_error"):
         print("  批次终止原因: " + stats["batch_error"])
+    if stats.get("warnings"):
+        print("  清理告警:")
+        for warning in stats["warnings"]:
+            print(f"    {warning}")
     print("=" * width)
     print()
 

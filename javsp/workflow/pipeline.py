@@ -7,6 +7,7 @@ from javsp.crawl.dispatcher import CrawlerExecutor
 from javsp.metadata.summarizer import MetadataMerger
 from javsp.publish.output import OutputExecutor
 from javsp.publish.planner import OutputPlanner
+from javsp.publish.source_cleanup import SourceCleanup
 from javsp.publish.transaction import RecoveryError
 from javsp.scan.file import Scanner
 from javsp.workflow.models import BatchResult, JobError, JobResult, Stage, StageEvent
@@ -146,9 +147,14 @@ class Pipeline:
 
     def run(self, root, review=None, on_result=None) -> BatchResult:
         scan = self.scan(root)
+        cleanup = SourceCleanup(root, self.cfg, scan)
         if review:
             review(scan.movies, root)
-        runner = JobRunner(self.cfg, self.on_event, translator=self.translator, runtime=self.runtime, root=root)
+        runner = JobRunner(
+            self.cfg, self.on_event, translator=self.translator, runtime=self.runtime, root=root,
+            executor=OutputExecutor(self.cfg, cleanup_empty_dirs=False),
+        )
         batch = runner.run_batch(scan.movies, on_result)
         batch.scan = scan
+        cleanup.run(batch)
         return batch

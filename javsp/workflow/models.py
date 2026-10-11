@@ -16,6 +16,7 @@ class Stage(StrEnum):
     COMMIT = "提交产物"
     ROLLBACK = "恢复文件"
     DONE = "整理完成"
+    CLEANUP = "清理源目录"
 
 
 @dataclass
@@ -53,6 +54,7 @@ class OutputResult:
     moved_files: list[tuple[str, str]] = field(default_factory=list)
     artifacts: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    skipped_files: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -88,6 +90,7 @@ class BatchResult:
     aborted: bool = False
     scan: ScanResult | None = None
     error: JobError | None = None
+    warnings: list[str] = field(default_factory=list)
 
     @property
     def exit_code(self) -> int:

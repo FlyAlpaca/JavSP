@@ -83,6 +83,7 @@ def test_offline_pipeline_end_to_end(scene, tmp_path):
     successful, stats = summarize_batch(result, True)
     assert len(successful) == stats["success"] == 2 and stats["failed"] == 0
     assert len(stats["filemove_list"]) == 2
+    assert source.is_dir()
 
 
 def test_local_translation_updates_nfo_and_directory_name(scene, tmp_path, monkeypatch):
@@ -241,3 +242,98 @@ def test_scan_progress_callback_failure_does_not_abort(scene):
 
     batch = run_in_id_order(Pipeline(cfg, failed_callback, translator=object()), source)
     assert batch.exit_code == 0
+
+
+def test_pipeline_cleans_shared_nested_source_directory_after_all_jobs(scene):
+    cfg, source, _ = scene
+    group = source / "group"
+    disc = group / "disc"
+    disc.mkdir(parents=True)
+    for video in source.glob("*.mp4"):
+        video.rename(disc / video.name)
+    (group / "old.nfo").write_bytes(b"old")
+    (disc / "unmatched.ass").write_bytes(b"ordinary subtitle")
+    observed = []
+    batch = Pipeline(cfg, translator=object()).run(
+        source, on_result=lambda job: observed.append(group.is_dir()),
+    )
+    assert batch.exit_code == 0 and len(batch.jobs) == 2
+    assert observed == [True, True]
+    assert not group.exists() and source.is_dir() and not batch.warnings
+
+
+@pytest.mark.parametrize("blocker", ["unrecognized", "small", "duplicate", "failed", "conflict_subtitle"])
+def test_pipeline_keeps_source_directory_with_unprocessed_files(scene, tmp_path, monkeypatch, blocker):
+    cfg, source, _ = scene
+    group = source / "group"
+    group.mkdir()
+    (source / "ABC-123.mp4").rename(group / "ABC-123.mp4")
+    (group / "notes.txt").write_bytes(b"keep")
+    if blocker == "unrecognized":
+        (group / "unknown-video.mp4").write_bytes(b"unrecognized")
+    elif blocker == "small":
+        (group / "ABC-125.mp4").write_bytes(b"x")
+        cfg = cfg.model_copy(update={"scanner": cfg.scanner.model_copy(update={"minimum_size": 4})})
+    elif blocker == "duplicate":
+        (source / "ABC-125.mp4").write_bytes(b"one")
+        (group / "ABC-125.mp4").write_bytes(b"two")
+    elif blocker == "failed":
+        (group / "ABC-125.mp4").write_bytes(b"failed")
+        parser = sys.modules["javsp.web.testlocal"].parse_data
+        def parse(info, *, context):
+            if info.dvdid == "ABC-125":
+                raise MovieNotFoundError("testlocal", info.dvdid)
+            parser(info, context=context)
+        monkeypatch.setattr(sys.modules["javsp.web.testlocal"], "parse_data", parse)
+    else:
+        (group / "ABC-123.srt").write_bytes(b"source subtitle")
+        destination = tmp_path / "out" / "ABC-123"
+        destination.mkdir(parents=True)
+        (destination / "ABC-123.srt").write_bytes(b"existing subtitle")
+    batch = Pipeline(cfg, translator=object()).run(source)
+    assert group.is_dir() and (group / "notes.txt").read_bytes() == b"keep"
+    if blocker == "unrecognized":
+        assert batch.scan.unrecognized
+    elif blocker == "small":
+        assert str(group / "ABC-125.mp4") in batch.scan.skipped
+    elif blocker == "duplicate":
+        assert batch.scan.duplicates
+    elif blocker == "failed":
+        assert batch.exit_code == 1 and not batch.aborted
+    else:
+        job = next(job for job in batch.jobs if job.movie.dvdid == "ABC-123")
+        assert job.success and job.output.skipped_files == [str(group / "ABC-123.srt")]
+        assert (group / "ABC-123.srt").read_bytes() == b"source subtitle"
+
+
+def test_pipeline_cleans_successful_sibling_despite_failure_and_retains_parent(scene, monkeypatch):
+    cfg, source, _ = scene
+    parent = source / "group"
+    failed, completed = parent / "failed", parent / "completed"
+    for directory, identity in ((failed, "ABC-123"), (completed, "ABC-124")):
+        directory.mkdir(parents=True)
+        (source / f"{identity}.mp4").rename(directory / f"{identity}.mp4")
+        (directory / "notes.txt").write_bytes(b"notes")
+    parser = sys.modules["javsp.web.testlocal"].parse_data
+    def parse(info, *, context):
+        if info.dvdid == "ABC-123":
+            raise MovieNotFoundError("testlocal", info.dvdid)
+        parser(info, context=context)
+    monkeypatch.setattr(sys.modules["javsp.web.testlocal"], "parse_data", parse)
+    batch = run_in_id_order(Pipeline(cfg, translator=object()), source)
+    assert batch.exit_code == 1 and not batch.aborted
+    assert failed.is_dir() and parent.is_dir() and not completed.exists()
+
+
+def test_cancelled_pipeline_retains_completed_source_directory(scene, monkeypatch):
+    cfg, source, _ = scene
+    group = source / "group"
+    group.mkdir()
+    (source / "ABC-123.mp4").rename(group / "ABC-123.mp4")
+    (group / "notes.txt").write_bytes(b"keep")
+    def cancel(self):
+        raise KeyboardInterrupt()
+    monkeypatch.setattr("javsp.crawl.dispatcher.CrawlerExecutor.throttle", cancel)
+    batch = run_in_id_order(Pipeline(cfg, translator=object()), source)
+    assert batch.aborted and batch.jobs[0].success
+    assert group.is_dir() and (group / "notes.txt").read_bytes() == b"keep"
