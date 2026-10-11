@@ -2,11 +2,12 @@
 
 import logging
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
 from lxml import etree
 
-from javsp.datatype import filemove_logger
+from javsp.datatype import Movie, filemove_logger
 from javsp.publish.image import valid_pic
 from javsp.publish.media import download_cover, download_extra_fanarts, process_poster
 from javsp.publish.nfo import write_nfo
@@ -17,10 +18,27 @@ from javsp.workflow.models import OutputResult, Stage, StageEvent
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class PreparedOutput:
+    plan: OutputPlan
+    movie: Movie
+    transaction: FileTransaction
+    artifacts: list[tuple[str, str, tuple[int, ...] | None]]
+    warnings: list[str]
+    finished: bool = False
+
+    @property
+    def targets(self):
+        return {_key(op.target) for op in self.plan.operations if not op.skip} | {
+            _key(target) for _, target, _ in self.artifacts
+        }
+
+
 class OutputExecutor:
-    def __init__(self, cfg, on_event=None, *, cleanup_empty_dirs=True):
+    def __init__(self, cfg, on_event=None, *, cleanup_empty_dirs=True, resources=None):
         self.cfg, self.on_event = cfg, on_event
         self.cleanup_empty_dirs = cleanup_empty_dirs
+        self.resources = resources
         self.stage = Stage.PREPARE
         self.committed_result = None
 
@@ -40,7 +58,7 @@ class OutputExecutor:
         fanart = tx.temp(movie.fanart_file, ".jpg")
         result = download_cover(movie.info.covers, fanart,
                                 movie.info.big_covers if self.cfg.summarizer.cover.highres else None,
-                                movie_id=movie.dvdid or movie.cid, cfg=self.cfg)
+                                movie_id=movie.dvdid or movie.cid, cfg=self.cfg, resources=self.resources)
         if not result or result[0] is None:
             raise ValueError(f"下载封面图片失败: {result[1] if result else '未知原因'}")
         movie.info.cover, fanart = result
@@ -64,7 +82,7 @@ class OutputExecutor:
             os.mkdir(extra)
             warnings.extend(download_extra_fanarts(
                 staged_movie, self.cfg.summarizer.extra_fanarts.scrap_interval.total_seconds(),
-                destination_dir=extra, cfg=self.cfg
+                destination_dir=extra, cfg=self.cfg, resources=self.resources
             ))
             artifacts.extend((str(path), os.path.join(movie.save_dir, "extrafanart", path.name))
                              for path in sorted(Path(extra).iterdir()))
@@ -92,19 +110,66 @@ class OutputExecutor:
         operations, warnings = _file_operations(planned, self.cfg, hardlink)
         return self.execute(OutputPlan(planned, operations, warnings=warnings, generate=False))
 
-    def execute(self, plan: OutputPlan) -> OutputResult:
-        tx = FileTransaction()
+    def _recover(self, prepared, cause):
+        failed_stage = self.stage
+        self._emit(prepared.movie, Stage.ROLLBACK)
+        errors = prepared.transaction.rollback()
+        self.stage = failed_stage
+        prepared.finished = True
+        if errors:
+            paths = prepared.transaction.preserve(cause, errors)
+            raise RecoveryError(cause, errors, paths) from cause
+        for warning in prepared.transaction.cleanup(remove_dirs=True):
+            logger.warning(warning)
+
+    def discard(self, prepared):
+        if prepared.finished:
+            return []
+        interruption = None
+        while True:
+            try:
+                warnings = prepared.transaction.cleanup(remove_dirs=True)
+                break
+            except (KeyboardInterrupt, SystemExit) as cause:
+                interruption = cause
+        prepared.finished = True
+        if interruption:
+            for warning in warnings:
+                logger.warning(warning)
+            raise interruption
+        return warnings
+
+    def prepare(self, plan: OutputPlan) -> PreparedOutput:
         self.committed_result = None
-        movie = _snapshot(plan.movie)
-        warnings = list(plan.warnings)
-        for warning in warnings:
+        prepared = PreparedOutput(plan, _snapshot(plan.movie), FileTransaction(), [], list(plan.warnings))
+        for warning in prepared.warnings:
             logger.warning(warning)
         try:
-            self._emit(movie, Stage.PREPARE)
-            artifacts = []
+            if self.resources:
+                self.resources.check()
+            self._emit(prepared.movie, Stage.PREPARE)
             if plan.generate:
-                movie, artifacts, prepared_warnings = self._prepare(plan, tx)
-                warnings.extend(prepared_warnings)
+                prepared.movie, prepared.artifacts, warnings = self._prepare(plan, prepared.transaction)
+                prepared.warnings.extend(warnings)
+            if self.resources:
+                self.resources.check()
+            return prepared
+        except BaseException as cause:
+            self._recover(prepared, cause)
+            raise
+
+    def execute(self, plan: OutputPlan) -> OutputResult:
+        return self.commit(self.prepare(plan))
+
+    def commit(self, prepared: PreparedOutput) -> OutputResult:
+        if prepared.finished:
+            raise ValueError("准备结果已提交或已放弃")
+        plan, movie, tx = prepared.plan, prepared.movie, prepared.transaction
+        artifacts, warnings = prepared.artifacts, prepared.warnings
+        self.committed_result = None
+        try:
+            if self.resources:
+                self.resources.check()
             moved = [(op.source, op.target) for op in plan.operations if not op.skip]
             if moved:
                 movie.files = [op.target for op in plan.operations if not op.skip and op.source in plan.movie.files]
@@ -126,16 +191,9 @@ class OutputExecutor:
                 [op.source for op in plan.operations if op.skip],
             )
         except BaseException as cause:
-            failed_stage = self.stage
-            self._emit(movie, Stage.ROLLBACK)
-            errors = tx.rollback()
-            self.stage = failed_stage
-            if errors:
-                paths = tx.preserve(cause, errors)
-                raise RecoveryError(cause, errors, paths) from cause
-            for warning in tx.cleanup(remove_dirs=True):
-                logger.warning(warning)
+            self._recover(prepared, cause)
             raise
+        prepared.finished = True
         # 到这里整片已提交；清理/日志错误不能再把已提交任务误判为可回滚。
         cleanup_warnings = tx.cleanup()
         warnings.extend(cleanup_warnings)

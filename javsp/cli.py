@@ -1,10 +1,14 @@
 """CLI 进度展示和批次统计，不承载核心处理。"""
 
+import logging
 import os
+import sys
 
 from tqdm import tqdm
 
 from javsp.workflow.models import Stage
+
+logger = logging.getLogger(__name__)
 
 
 def summarize_batch(batch, filemove_log=False):
@@ -82,25 +86,45 @@ class ProgressDisplay:
     def __init__(self):
         self.outer = None
         self.inner = None
+        self.active = {}
+        self.terminal = bool(sys.stderr and sys.stderr.isatty())
 
     def review(self, movies, root):
         from javsp.startup import StartupError
 
         if not movies:
             raise StartupError("未找到影片文件")
-        self.outer = tqdm(total=len(movies), desc="整理影片", ascii=True, leave=False)
+        self.outer = tqdm(total=len(movies), desc="整理影片", ascii=True, leave=False, disable=not self.terminal)
 
     def on_event(self, event):
+        if event.task_id:
+            if event.stage == Stage.DONE:
+                self.active.pop(event.task_id, None)
+            else:
+                self.active[event.task_id] = (event.movie_id, event.detail or str(event.stage))
+            if not self.terminal:
+                logger.info("任务 %s [%s] %s", event.task_id, event.movie_id, event.detail or event.stage)
+            self._refresh()
+            return
         if event.stage == Stage.CRAWL and not event.detail:
             if self.inner:
                 self.inner.close()
-            self.inner = tqdm(total=6, desc="步骤", ascii=True, leave=False)
+            self.inner = tqdm(total=6, desc="步骤", ascii=True, leave=False, disable=not self.terminal)
         if self.inner:
             self.inner.set_description(event.detail or str(event.stage))
             if not event.detail and event.stage not in (Stage.CRAWL, Stage.ROLLBACK):
                 self.inner.update()
 
+    def _refresh(self):
+        if self.outer:
+            detail = " | ".join(f"{task}: {movie_id} {stage}" for task, (movie_id, stage) in self.active.items())
+            self.outer.set_postfix_str(detail)
+
     def on_result(self, job):
+        task_id = getattr(job, "task_id", "")
+        if task_id:
+            self.active.pop(task_id, None)
+            self._refresh()
         if self.inner:
             self.inner.close()
             self.inner = None

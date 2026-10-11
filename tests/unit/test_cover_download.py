@@ -1,3 +1,4 @@
+from javsp.concurrency import BatchResources
 from javsp.config import load_config
 
 """离线验证封面并发下载、高清优先和临时文件隔离。"""
@@ -25,7 +26,9 @@ def save_image(path, color):
 
 
 @pytest.mark.parametrize("highres", [True, False])
-def test_fast_cover_waits_for_slow_request_and_loser_cannot_overwrite(tmp_path, monkeypatch, cover_config, highres):
+@pytest.mark.parametrize("shared_pool", [False, True])
+def test_fast_cover_waits_for_slow_request_and_loser_cannot_overwrite(tmp_path, monkeypatch, cover_config, highres, shared_pool):
+    resources = BatchResources(load_config()) if shared_pool else None
     slow_started = threading.Event()
     release_slow = threading.Event()
     workers = []
@@ -53,7 +56,7 @@ def test_fast_cover_waits_for_slow_request_and_loser_cannot_overwrite(tmp_path, 
                 ["ordinary.jpg"] if highres else candidates,
                 str(target),
                 candidates if highres else None,
-            cfg=cover_config)
+            cfg=cover_config, resources=resources)
         )
     )
     caller.start()
@@ -70,6 +73,8 @@ def test_fast_cover_waits_for_slow_request_and_loser_cannot_overwrite(tmp_path, 
     finally:
         release_slow.set()
         caller.join(5)
+        if resources:
+            resources.close()
     assert not caller.is_alive()
     result = results[0]
     assert result == ("fast.png", str(tmp_path / "fanart.png"))

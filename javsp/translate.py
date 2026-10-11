@@ -5,6 +5,7 @@ import logging
 import re
 import shutil
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -121,6 +122,7 @@ class LocalTranslator:
         self.port = port
         self.session = session or requests.Session()
         self._own_session = session is None
+        self._slots = threading.BoundedSemaphore(cfg.runtime.parallel if self._own_session else 1)
         self.session.trust_env = False
         self.process = None
 
@@ -201,6 +203,14 @@ class LocalTranslator:
         self.close()
 
     def translate(self, text: str, field: str) -> str:
+        with self._slots:
+            if not self._own_session:
+                return self._translate(text, field, self.session)
+            with requests.Session() as session:
+                session.trust_env = False
+                return self._translate(text, field, session)
+
+    def _translate(self, text: str, field: str, session) -> str:
         prompt = _prompt(text, field)
         generation = self.cfg.generation
         payload = {
@@ -214,7 +224,7 @@ class LocalTranslator:
             "stream": False,
         }
         try:
-            response = self.session.post(f"{self.base_url}/v1/chat/completions", json=payload, timeout=(10, generation.timeout))
+            response = session.post(f"{self.base_url}/v1/chat/completions", json=payload, timeout=(10, generation.timeout))
             response.raise_for_status()
             result = response.json()
             choice = result["choices"][0]

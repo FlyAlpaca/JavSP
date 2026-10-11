@@ -37,6 +37,12 @@ def _user_config_source(path):
     return FileSource(file=path)
 
 
+class Concurrency(BaseConfig):
+    movies: PositiveInt = 3
+    crawlers: PositiveInt = 6
+    images: PositiveInt = 3
+
+
 class Scanner(BaseConfig):
     ignored_id_pattern: list[str]
     input_directory: Path | None = None
@@ -341,6 +347,7 @@ def load_config(argv=None):
 
 
 class Cfg(BaseConfig):
+    concurrency: Concurrency = Field(default_factory=Concurrency)
     scanner: Scanner
     network: Network
     crawler: Crawler

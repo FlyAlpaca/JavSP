@@ -105,6 +105,7 @@ def test_invalid_config_is_reported_after_cli_startup():
 
 def test_batch_continues_and_counts_failure(monkeypatch):
     cfg = load_config()
+    cfg = cfg.model_copy(update={"concurrency": cfg.concurrency.model_copy(update={"movies": 1})})
     movies = [Movie("ABC-123"), Movie("ABC-124")]
     visited = []
 

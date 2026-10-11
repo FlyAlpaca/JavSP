@@ -6,12 +6,12 @@ import re
 import tempfile
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
 
 import requests
 from PIL import Image
 
-from javsp.concurrency import finish_executor
+from javsp.concurrency import await_futures, finish_executor
 from javsp.cropper import get_cropper
 from javsp.datatype import Movie
 from javsp.lib import resource_path
@@ -24,10 +24,12 @@ logger = logging.getLogger(__name__)
 # 海报标签图片（模块级常量）
 SUBTITLE_MARK_FILE = Image.open(os.path.abspath(resource_path("image/sub_mark.png")))
 UNCENSORED_MARK_FILE = Image.open(os.path.abspath(resource_path("image/unc_mark.png")))
+SUBTITLE_MARK_FILE.load()
+UNCENSORED_MARK_FILE.load()
 
 
-def download_cover(covers, fanart_path, big_covers=None, movie_id="", *, cfg):
-    """每组最多并发下载三张封面，高清全部失败后才尝试普通封面。"""
+def download_cover(covers, fanart_path, big_covers=None, movie_id="", *, cfg, resources=None):
+    """使用批次图片额度（独立调用最多三线程），高清全部失败后才尝试普通封面。"""
     failed_reasons = []
     retry = cfg.network.retry
     temp_dir = os.path.dirname(os.path.abspath(fanart_path))
@@ -41,6 +43,8 @@ def download_cover(covers, fanart_path, big_covers=None, movie_id="", *, cfg):
         label = "高清封面" if highres else "封面"
 
         def fetch(url):
+            if resources:
+                resources.check()
             temp_path = None
             try:
                 if stopped.is_set():
@@ -48,10 +52,14 @@ def download_cover(covers, fanart_path, big_covers=None, movie_id="", *, cfg):
                 with tempfile.NamedTemporaryFile(prefix=".javsp-cover-", dir=temp_dir, delete=False) as temp:
                     temp_path = temp.name
                 for attempt in range(retry):
+                    if resources:
+                        resources.check()
                     if stopped.is_set():
                         return None
                     try:
                         info = download(url, temp_path, network=cfg.network)
+                        if resources:
+                            resources.check()
                         if stopped.is_set():
                             return None
                         if not valid_pic(temp_path):
@@ -93,11 +101,13 @@ def download_cover(covers, fanart_path, big_covers=None, movie_id="", *, cfg):
                     except FileNotFoundError:
                         pass
 
-        executor = ThreadPoolExecutor(max_workers=min(3, len(urls)), thread_name_prefix="cover")
+        executor = resources.images if resources else ThreadPoolExecutor(
+            max_workers=min(3, len(urls)), thread_name_prefix="cover"
+        )
         futures = []
         try:
             for url in urls:
-                futures.append(executor.submit(fetch, url))
+                futures.append(resources.submit(executor, fetch, url) if resources else executor.submit(fetch, url))
             for future in as_completed(futures):
                 result = future.result()
                 if result is not None:
@@ -110,7 +120,12 @@ def download_cover(covers, fanart_path, big_covers=None, movie_id="", *, cfg):
         finally:
             stopped.set()
             # 回收在途请求和临时文件后再返回，避免批量运行时后台线程累积。
-            finish_executor(executor, futures)
+            if resources:
+                for future in futures:
+                    future.cancel()
+                await_futures(futures)
+            else:
+                finish_executor(executor, futures)
         return None
 
     result = download_group(big_covers or [], highres=True)
@@ -123,7 +138,7 @@ def download_cover(covers, fanart_path, big_covers=None, movie_id="", *, cfg):
     return None, reason_detail
 
 
-def download_extra_fanarts(movie: Movie, scrape_interval: float, tqdm_bar=None, destination_dir=None, *, cfg):
+def download_extra_fanarts(movie: Movie, scrape_interval: float, tqdm_bar=None, destination_dir=None, *, cfg, resources=None):
     """并发保存全部剧照，按统一的启动间隔限速，等待所有任务结束。"""
     warnings = []
     if not movie.info.preview_pics:
@@ -134,17 +149,24 @@ def download_extra_fanarts(movie: Movie, scrape_interval: float, tqdm_bar=None, 
     next_start = 0.0
 
     def fetch(idx, url):
+        if resources:
+            resources.check()
         nonlocal next_start
         temp_path = None
         try:
             with tempfile.NamedTemporaryFile(prefix=".javsp-fanart-", dir=destination_dir, delete=False) as temp:
                 temp_path = temp.name
-            with start_lock:
-                delay = next_start - time.monotonic()
-                if delay > 0:
-                    time.sleep(delay)
-                next_start = time.monotonic() + max(0, scrape_interval)
+            if resources:
+                resources.fanart_start(scrape_interval)
+            else:
+                with start_lock:
+                    delay = next_start - time.monotonic()
+                    if delay > 0:
+                        time.sleep(delay)
+                    next_start = time.monotonic() + max(0, scrape_interval)
             info = download(url, temp_path, network=cfg.network)
+            if resources:
+                resources.check()
             if not valid_pic(temp_path):
                 warning = f"下载剧照{idx}失败: {url}: 图片无效或已损坏"
                 warnings.append(warning)
@@ -168,17 +190,35 @@ def download_extra_fanarts(movie: Movie, scrape_interval: float, tqdm_bar=None, 
                 except FileNotFoundError:
                     pass
 
-    executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="fanart")
-    futures = []
+    executor = resources.images if resources else ThreadPoolExecutor(max_workers=3, thread_name_prefix="fanart")
+    futures = set()
+    pending = iter(enumerate(movie.info.preview_pics))
+    limit = cfg.concurrency.images if resources else 3
+    completed = 0
     try:
-        for idx, url in enumerate(movie.info.preview_pics):
-            futures.append(executor.submit(fetch, idx, url))
-        for completed, future in enumerate(as_completed(futures), start=1):
-            future.result()
-            if tqdm_bar is not None:
-                tqdm_bar.set_description(f"下载剧照 {completed}/{len(futures)}")
+        while True:
+            while len(futures) < limit:
+                try:
+                    idx, url = next(pending)
+                except StopIteration:
+                    break
+                futures.add(resources.submit(executor, fetch, idx, url) if resources else executor.submit(fetch, idx, url))
+            if not futures:
+                break
+            done, _ = wait(futures, return_when=FIRST_COMPLETED)
+            for future in done:
+                future.result()
+                futures.remove(future)
+                completed += 1
+                if tqdm_bar is not None:
+                    tqdm_bar.set_description(f"下载剧照 {completed}/{len(movie.info.preview_pics)}")
     finally:
-        finish_executor(executor, futures)
+        if resources:
+            for future in futures:
+                future.cancel()
+            await_futures(futures)
+        else:
+            finish_executor(executor, futures)
 
     return warnings
 
