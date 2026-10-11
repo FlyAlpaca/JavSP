@@ -116,3 +116,10 @@ wheel 保留运行时资源，避免移动 `data/`、`image/` 或默认配置导
 
 无 Git 元数据的 Docker 构建由 `SETUPTOOLS_SCM_PRETEND_VERSION` 传入版本。Docker 工作流验证三段或四段稳定版本标签，标签推送生成版本号和 `latest`，
 手动触发只生成 `dev`。推送标签会触发发布；本地创建标签不会发布镜像。
+
+## 配置与构建数据边界
+
+用户配置不存在时使用默认值，空文件不覆盖默认值；已发现或显式指定的配置不可读、格式错误或顶层不是映射时终止加载。
+`scanner.ignored_folder_name_pattern: []` 表示不按目录名过滤。
+源码包采用明确文件范围；数据库、模型、日志、分片和 `.javsp-*` 恢复材料不会进入交付产物或 Docker 上下文。
+构建检查同时验证 wheel 与 sdist；请对本次新建的独立输出目录运行 `tools/check_dist.py`，避免旧产物混入验证。

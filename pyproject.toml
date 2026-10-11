@@ -59,6 +59,11 @@ packages = ["javsp"]
 "data" = "data"
 "config_default.yml" = "config_default.yml"
 
+# 源码包只收录开发和构建所需文件，不根据本地未跟踪文件自动扩展范围。
+[tool.hatch.build.targets.sdist]
+include = ["/javsp", "/tests", "/tools", "/docs", "/docker", "/.github", "/README.md", "/CHANGELOG.md", "/LICENSE", "/pyproject.toml", "/uv.lock"]
+exclude = ["**/*.sqlite", "**/*.sqlite-*", "**/*.gguf", "**/*.part", "**/*.log", "**/.javsp-*", "**/recovery.json", "**/__pycache__", "**/*.pyc"]
+
 # sdist 也包含这些静态资源，保证源码包完整
 [tool.hatch.build.targets.sdist.force-include]
 "image" = "image"

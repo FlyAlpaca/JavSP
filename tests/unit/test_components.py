@@ -67,3 +67,16 @@ def test_scanner_uses_supplied_id_patterns(tmp_path):
     cfg = cfg.model_copy(update={"scanner": scanner})
     result = Scanner(cfg).scan(str(tmp_path))
     assert result.movies[0].dvdid == "ABC-123"
+
+
+def test_empty_folder_ignore_list_scans_subdirectories(tmp_path):
+    folder = tmp_path / 'movie'
+    folder.mkdir()
+    (folder / 'ABC-123.mp4').write_bytes(b'video')
+    cfg = Cfg()
+    cfg = cfg.model_copy(update={'scanner': cfg.scanner.model_copy(update={
+        'minimum_size': 0, 'ignored_folder_name_pattern': [], 'skip_nfo_dir': False,
+    })})
+    result = Scanner(cfg).scan(str(tmp_path))
+    assert [movie.dvdid for movie in result.movies] == ['ABC-123']
+    assert result.skipped == []

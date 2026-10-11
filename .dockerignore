@@ -24,3 +24,10 @@ LICENSE
 .git/
 # 用户配置文件不入镜像，运行时通过 -v 挂载
 config.yml
+config/
+**/*.sqlite
+**/*.sqlite-*
+**/*.gguf
+**/*.part
+**/.javsp-*
+**/recovery.json

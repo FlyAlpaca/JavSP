@@ -37,13 +37,14 @@ def _scan_movies(root: str, cfg, result: ScanResult) -> list[Movie]:
     # 扫描所有影片文件并获取它们的番号
     dic = {}  # avid: [abspath1, abspath2...]
     small_videos = {}
-    ignore_folder_name_pattern = re.compile("|".join(cfg.scanner.ignored_folder_name_pattern))
+    patterns = cfg.scanner.ignored_folder_name_pattern
+    ignore_folder_name_pattern = re.compile("|".join(patterns)) if patterns else None
     skip_nfo = cfg.scanner.skip_nfo_dir
 
     for dirpath, dirnames, filenames in os.walk(root):
         filtered_dirs = []
         for name in dirnames:
-            if ignore_folder_name_pattern.match(name):
+            if ignore_folder_name_pattern and ignore_folder_name_pattern.match(name):
                 result.skipped.append(os.path.join(dirpath, name))
                 continue
 
