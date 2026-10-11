@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import tempfile
 import time
 from pathlib import Path
@@ -11,10 +12,14 @@ from pathlib import Path
 import requests
 from lxml import etree
 
+from javsp.download import DownloadError, DownloadSpec, ObjectChanged, clear_parts, download_file
+
 logger = logging.getLogger(__name__)
 MAPPING_URL = "https://raw.githubusercontent.com/li-peifeng/Jav-Actors-Mapping/main/actor-mapping.xml"
 MAX_MAPPING_SIZE = 32 * 1024 * 1024
 DOWNLOAD_DEADLINE = 600
+MAPPING_PART_SIZE = 1024 * 1024
+DOWNLOAD_ATTEMPTS = 3
 
 
 class ActorMappingError(Exception):
@@ -100,6 +105,75 @@ def _atomic_write(path: Path, content: bytes):
             temporary.unlink(missing_ok=True)
 
 
+def _mapping_content(path, session, headers, options):
+    """探测未压缩对象；强 ETag 与准确范围响应才允许复用分片。"""
+    request_headers = {**headers, "Accept-Encoding": "identity", "Range": "bytes=0-0"}
+    with session.get(MAPPING_URL, headers=request_headers, stream=True, timeout=(30, 120), **options) as response:
+        if response.status_code == 304:
+            return None, None
+        response.raise_for_status()
+        new_etag = response.headers.get("ETag")
+        match = re.fullmatch(r"bytes 0-0/(\d+)", response.headers.get("Content-Range", ""))
+        if response.status_code == 206 and match and new_etag and not new_etag.startswith("W/"):
+            size = int(match.group(1))
+            if not 0 < size <= MAX_MAPPING_SIZE:
+                raise ActorMappingError("演员映射文件大小无效或过大")
+        else:
+            size = None
+            if response.status_code == 200:
+                return _read_mapping_response(response), new_etag
+    if size is None:
+        # 不支持可靠范围/对象身份时重新请求完整响应，不能将探测字节当作 XML。
+        with session.get(
+            MAPPING_URL, headers={**headers, "Accept-Encoding": "identity"}, stream=True, timeout=(30, 120), **options
+        ) as response:
+            response.raise_for_status()
+            return _read_mapping_response(response), response.headers.get("ETag")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    identity = hashlib.sha256(f"{MAPPING_URL}\0{size}\0{new_etag}\0{MAPPING_PART_SIZE}".encode()).hexdigest()[:24]
+    prefix = path.parent / f".{path.name}-download-{identity}"
+    # 只清理本缓存的旧版本分片，不触及其他运行资源。
+    for stale in path.parent.glob(f".{path.name}-download-*"):
+        if not stale.name.startswith(prefix.name + ".") and stale.is_file():
+            stale.unlink()
+    spec = DownloadSpec(MAPPING_URL, size, prefix, new_etag, part_size=MAPPING_PART_SIZE)
+    assembled = None
+    try:
+        assembled = download_file(spec, client=session, options=options, label="下载 GitHub 演员映射", logger=logger)
+        content = assembled.read_bytes()
+        ActorMapping.from_xml(content)
+    except (ObjectChanged, ActorMappingError):
+        clear_parts(spec)
+        raise
+    else:
+        clear_parts(spec)
+        return content, new_etag
+    finally:
+        if assembled is not None:
+            assembled.unlink(missing_ok=True)
+
+
+def _read_mapping_response(response):
+    if response.status_code != 200:
+        raise ActorMappingError(f"演员映射响应状态异常: {response.status_code}")
+    if int(response.headers.get("Content-Length", "0")) > MAX_MAPPING_SIZE:
+        raise ActorMappingError("演员映射文件过大")
+    logger.info("下载 GitHub 演员映射（单连接）")
+    started = last_report = time.monotonic()
+    content = bytearray()
+    for chunk in response.iter_content(64 * 1024):
+        now = time.monotonic()
+        if now - started > DOWNLOAD_DEADLINE:
+            raise ActorMappingError("演员映射下载超过 10 分钟")
+        content.extend(chunk)
+        if len(content) > MAX_MAPPING_SIZE:
+            raise ActorMappingError("演员映射文件过大")
+        if now - last_report >= 30:
+            logger.info("演员映射已下载 %.1f MiB", len(content) / (1024 * 1024))
+            last_report = now
+    return bytes(content)
+
+
 def prepare_actor_mapping(path: Path, *, session=requests, proxy=None) -> ActorMapping:
     """每次调用检查更新；只有完整、可解析的新表才能替换缓存。"""
     cached = None
@@ -128,35 +202,23 @@ def prepare_actor_mapping(path: Path, *, session=requests, proxy=None) -> ActorM
         headers["If-None-Match"] = etag
     options = {"proxies": {"http": str(proxy), "https": str(proxy)}} if proxy is not None else {}
     try:
-        started = time.monotonic()
-        with session.get(MAPPING_URL, headers=headers, stream=True, timeout=(5, 30), **options) as response:
-            if response.status_code == 304 and cached is not None and etag:
+        for attempt in range(DOWNLOAD_ATTEMPTS):
+            try:
+                content, new_etag = _mapping_content(path, session, headers, options)
+                break
+            except (requests.RequestException, DownloadError) as error:
+                if attempt + 1 == DOWNLOAD_ATTEMPTS:
+                    raise
+                logger.warning("演员映射下载暂时失败，将重试（%s/%s）: %s", attempt + 1, DOWNLOAD_ATTEMPTS, error)
+        if content is None:
+            if cached is not None and etag:
                 logger.info("演员映射没有更新，复用缓存（%s 条）", cached.row_count)
                 return cached
-            response.raise_for_status()
-            if response.status_code != 200:
-                raise ActorMappingError(f"演员映射响应状态异常: {response.status_code}")
-            if int(response.headers.get("Content-Length", "0")) > MAX_MAPPING_SIZE:
-                raise ActorMappingError("演员映射文件过大")
-            logger.info("下载 GitHub 演员映射")
-            content = bytearray()
-            last_report = started
-            for chunk in response.iter_content(64 * 1024):
-                now = time.monotonic()
-                if now - started > DOWNLOAD_DEADLINE:
-                    raise ActorMappingError("演员映射下载超过 10 分钟")
-                content.extend(chunk)
-                if len(content) > MAX_MAPPING_SIZE:
-                    raise ActorMappingError("演员映射文件过大")
-                if now - last_report >= 30:
-                    logger.info("演员映射已下载 %.1f MiB", len(content) / (1024 * 1024))
-                    last_report = now
-            content = bytes(content)
-            updated = ActorMapping.from_xml(content)
-            new_etag = response.headers.get("ETag")
+            raise ActorMappingError("演员映射返回 304 但没有对应有效缓存")
+        updated = ActorMapping.from_xml(content)
         if cached is None or content != cached_content:
             _atomic_write(path, content)
-    except (requests.RequestException, ActorMappingError, OSError, ValueError) as error:
+    except (requests.RequestException, DownloadError, ActorMappingError, OSError, ValueError) as error:
         if cached is not None:
             logger.warning("演员映射更新失败，继续使用有效缓存: %s", error)
             return cached
