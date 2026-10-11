@@ -20,6 +20,23 @@ DEFAULT_CONFIG_FILE = "config_default.yml"
 USER_CONFIG_FILE = "config/config.yml"
 
 
+class ConfigLoadError(ValueError):
+    """用户配置无法读取或解析。"""
+
+
+def _user_config_source(path):
+    try:
+        with open(path, encoding="utf-8") as stream:
+            data = yaml.safe_load(stream)
+    except (OSError, UnicodeError, yaml.YAMLError) as error:
+        raise ConfigLoadError(f"无法读取或解析配置文件: {path}") from error
+    if data is None:
+        return None
+    if not isinstance(data, dict):
+        raise ConfigLoadError(f"配置文件顶层必须是映射: {path}")
+    return FileSource(file=path)
+
+
 class Scanner(BaseConfig):
     ignored_id_pattern: list[str]
     input_directory: Path | None = None
@@ -317,17 +334,11 @@ def get_config_source():
     sources.append(FileSource(file=default_config))
 
     # 2. 加载用户配置（如果存在且非空），覆盖默认值
-    if args.config is not None:
-        sources.append(FileSource(file=args.config))
-    else:
-        user_config = _find_user_config()
-        if user_config is not None:
-            try:
-                with open(user_config, encoding="utf-8") as f:
-                    if yaml.safe_load(f) is not None:
-                        sources.append(FileSource(file=user_config))
-            except Exception:
-                pass
+    user_config = args.config if args.config is not None else _find_user_config()
+    if user_config is not None:
+        source = _user_config_source(user_config)
+        if source is not None:
+            sources.append(source)
 
     # 3. 环境变量和命令行参数优先级最高
     sources.append(EnvSource(prefix="JAVSP_", allow_all=True, nested_separator="__"))
