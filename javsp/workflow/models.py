@@ -92,26 +92,3 @@ class BatchResult:
     @property
     def exit_code(self) -> int:
         return int(self.aborted or any(not job.success for job in self.jobs))
-
-    def legacy(self, filemove_log=False):
-        stats = {"total": self.total, "success": 0, "failed": 0, "success_list": [],
-                 "failed_list": [], "filemove_list": [], "pending_list": [], "aborted": self.aborted,
-                 "batch_error": str(self.error) if self.error else ""}
-        movies = []
-        for job in self.jobs:
-            movie_id = job.error.movie_id if job.error else job.movie.dvdid or job.movie.cid or "未知番号"
-            if job.success:
-                movies.append(job.movie)
-                stats["success"] += 1
-                sources = {}
-                for name, crawler in (job.movie.info.field_sources or {}).items():
-                    sources.setdefault(crawler, []).append(name)
-                stats["success_list"].append((movie_id, ", ".join(f"{c}[{len(fs)}]" for c, fs in sources.items())))
-                if filemove_log:
-                    summary = " | 来源: " + ", ".join(f"{c}({', '.join(fs)})" for c, fs in sources.items()) if sources else ""
-                    stats["filemove_list"].extend((movie_id, src, dst, summary) for src, dst in job.output.moved_files)
-            else:
-                stats["failed"] += 1
-                stats["failed_list"].append((movie_id, str(job.error)))
-        stats["pending_list"] = [m.dvdid or m.cid or "未知番号" for m in self.pending]
-        return movies, stats

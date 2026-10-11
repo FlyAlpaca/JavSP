@@ -84,7 +84,7 @@ def test_scan_unreadable_child_continues(tmp_path, monkeypatch):
         return original_listdir(path)
 
     monkeypatch.setattr(file.os, "listdir", listdir)
-    assert [movie.dvdid for movie in file.scan_movies(str(tmp_path))] == ["ABC-123"]
+    assert [movie.dvdid for movie in file.Scanner(config.load_config()).scan(str(tmp_path)).movies] == ["ABC-123"]
 
 
 def test_nfo_site_categories_are_tags(tmp_path, monkeypatch):

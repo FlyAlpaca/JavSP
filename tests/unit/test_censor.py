@@ -9,8 +9,8 @@ from lxml import etree
 
 from javsp.config import Cfg
 from javsp.datatype import Movie, MovieInfo
+from javsp.publish.naming import generate_names
 from javsp.publish.nfo import write_nfo
-from javsp.publish.processor import generate_names
 
 
 @pytest.mark.parametrize("representations", [None, ["未打码", "已打码", "待确认"]])

@@ -9,9 +9,11 @@ import pytest
 from pydantic import ValidationError
 
 from javsp import __main__ as cli
+from javsp.cli import summarize_batch
 from javsp.config import Cfg, load_config
 from javsp.datatype import Movie, MovieInfo
-from javsp.workflow.models import JobError, JobResult, OutputResult, ScanResult, Stage
+from javsp.workflow.models import BatchResult, JobError, JobResult, OutputResult, Stage
+from javsp.workflow.pipeline import JobRunner
 
 
 @pytest.mark.parametrize("failed, code", [(0, 0), (1, 1), (3, 1)])
@@ -22,11 +24,18 @@ def test_entry_returns_failure_status(tmp_path, monkeypatch, failed, code):
         translator=object(),
     )
     monkeypatch.setattr(cli, "load_config", lambda: cfg)
-    for name in ("setup_filemove_log", "print_summary"):
-        monkeypatch.setattr(cli, name, lambda *a, **kw: None)
-    monkeypatch.setattr(cli, "startup_context", lambda cfg: nullcontext(SimpleNamespace(root=tmp_path, translator=object())))
-    monkeypatch.setattr(cli, "Pipeline", lambda cfg, **kw: SimpleNamespace(scan=lambda root: ScanResult([object()] * 3)))
-    monkeypatch.setattr(cli, "RunNormalMode", lambda *a, **kw: ([], {"failed": failed}))
+    cfg.summarizer = SimpleNamespace(filemove_log=False)
+    runtime = SimpleNamespace(cfg=cfg, root=tmp_path, translator=object())
+    monkeypatch.setattr(cli, "setup_filemove_log", lambda *a, **kw: None)
+    monkeypatch.setattr(cli, "print_summary", lambda *a: None)
+    monkeypatch.setattr(cli, "startup_context", lambda cfg: nullcontext(runtime))
+    batch = BatchResult(3)
+    for index in range(3):
+        movie = Movie(f"ABC-{index + 123}")
+        movie.info = MovieInfo(movie)
+        error = JobError(movie.dvdid, Stage.CRAWL, ValueError("failed")) if index < failed else None
+        batch.jobs.append(JobResult(movie, output=None if error else OutputResult(movie), error=error))
+    monkeypatch.setattr(cli, "Pipeline", lambda *a, **kw: SimpleNamespace(run=lambda *a, **kw: batch))
     monkeypatch.chdir(tmp_path)
     with pytest.raises(SystemExit) as exc:
         cli.entry()
@@ -106,10 +115,10 @@ def test_batch_continues_and_counts_failure(monkeypatch):
         movie.info = MovieInfo(movie)
         return JobResult(movie, output=OutputResult(movie))
 
-    monkeypatch.setattr(cli.JobRunner, "run", run)
-    monkeypatch.setattr("javsp.translate.LocalTranslator.start", lambda self: self)
+    monkeypatch.setattr(JobRunner, "run", run)
     monkeypatch.setattr("javsp.crawl.dispatcher.CrawlerExecutor.throttle", lambda self: None)
-    successful, stats = cli.RunNormalMode(movies, cfg)
+    batch = JobRunner(cfg, translator=object()).run_batch(movies)
+    successful, stats = summarize_batch(batch)
     assert visited == movies
     assert successful == [movies[1]]
     assert stats["total"] == 2 and stats["failed"] == 1 and stats["success"] == 1

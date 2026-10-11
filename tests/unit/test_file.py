@@ -2,7 +2,8 @@ import os
 
 import pytest
 
-from javsp.scan.file import scan_movies
+from javsp.config import load_config
+from javsp.scan.file import Scanner
 
 DEFAULT_SIZE = 512 * 2**20  # 512 MiB
 
@@ -28,7 +29,7 @@ def prepare_files(files, tmp_path):
 # 根文件夹下的单个影片文件
 @pytest.mark.parametrize("files", [("ABC-123.mp4",)])
 def test_single_movie(prepare_files):
-    movies = scan_movies(prepare_files)
+    movies = Scanner(load_config()).scan(prepare_files).movies
     assert len(movies) == 1
     assert movies[0].dvdid == "ABC-123"
     assert len(movies[0].files) == 1
@@ -39,7 +40,7 @@ def test_single_movie(prepare_files):
 # 多个分片以数字排序: 012
 @pytest.mark.parametrize("files", [("ABC-123-0.mp4", "ABC-123-1.mp4", "ABC-123- 2.mp4")])
 def test_scan_movies__012(prepare_files):
-    movies = scan_movies(prepare_files)
+    movies = Scanner(load_config()).scan(prepare_files).movies
     assert len(movies) == 1
     assert movies[0].dvdid == "ABC-123"
     assert len(movies[0].files) == 3
@@ -52,7 +53,7 @@ def test_scan_movies__012(prepare_files):
 # 多个分片以数字排序: 123
 @pytest.mark.parametrize("files", [("ABC-123.1.mp4", "ABC-123. 2.mp4", "ABC-123.3.mp4")])
 def test_scan_movies__123(prepare_files):
-    movies = scan_movies(prepare_files)
+    movies = Scanner(load_config()).scan(prepare_files).movies
     assert len(movies) == 1
     assert movies[0].dvdid == "ABC-123"
     assert len(movies[0].files) == 3
@@ -65,7 +66,7 @@ def test_scan_movies__123(prepare_files):
 # 多个分片以字母排序
 @pytest.mark.parametrize("files", [("ABC-123-A.mp4", "ABC-123-B.mp4", "ABC-123- C .mp4")])
 def test_scan_movies__abc(prepare_files):
-    movies = scan_movies(prepare_files)
+    movies = Scanner(load_config()).scan(prepare_files).movies
     assert len(movies) == 1
     assert movies[0].dvdid == "ABC-123"
     assert len(movies[0].files) == 3
@@ -78,7 +79,7 @@ def test_scan_movies__abc(prepare_files):
 # 多个分片以.CDx编号
 @pytest.mark.parametrize("files", [("ABC-123.CD1.mp4", "ABC-123.CD2 .mp4", "ABC-123.CD3.mp4")])
 def test_scan_movies__cdx(prepare_files):
-    movies = scan_movies(prepare_files)
+    movies = Scanner(load_config()).scan(prepare_files).movies
     assert len(movies) == 1
     assert movies[0].dvdid == "ABC-123"
     assert len(movies[0].files) == 3
@@ -90,7 +91,7 @@ def test_scan_movies__cdx(prepare_files):
 
 @pytest.mark.parametrize("files", [("abc123cd1.mp4", "abc123cd2.mp4")])
 def test_scan_movies__cdx_without_delimeter(prepare_files):
-    movies = scan_movies(prepare_files)
+    movies = Scanner(load_config()).scan(prepare_files).movies
     assert len(movies) == 1
     assert movies[0].dvdid == "ABC-123"
     assert len(movies[0].files) == 2
@@ -102,7 +103,7 @@ def test_scan_movies__cdx_without_delimeter(prepare_files):
 # 文件夹以番号命名，分片位于文件夹内且无番号信息
 @pytest.mark.parametrize("files", [("ABC-123/CD1.mp4", "ABC-123/CD2 .mp4", "ABC-123/CD3.mp4")])
 def test_scan_movies__from_folder(prepare_files):
-    movies = scan_movies(prepare_files)
+    movies = Scanner(load_config()).scan(prepare_files).movies
     assert len(movies) == 1
     assert movies[0].dvdid == "ABC-123"
     assert len(movies[0].files) == 3
@@ -115,7 +116,7 @@ def test_scan_movies__from_folder(prepare_files):
 # 分片以多位数字编号
 @pytest.mark.parametrize("files", [("ABC-123.01.mp4", "ABC-123.02.mp4", "ABC-123.03.mp4")])
 def test_scan_movies__0x123(prepare_files):
-    movies = scan_movies(prepare_files)
+    movies = Scanner(load_config()).scan(prepare_files).movies
     assert len(movies) == 1
     assert movies[0].dvdid == "ABC-123"
     assert len(movies[0].files) == 3
@@ -128,7 +129,7 @@ def test_scan_movies__0x123(prepare_files):
 # 无效: 没有可以匹配到番号的文件
 @pytest.mark.parametrize("files", [("什么也没有.mp4",)])
 def test_scan_movies__nothing(prepare_files):
-    movies = scan_movies(prepare_files)
+    movies = Scanner(load_config()).scan(prepare_files).movies
     assert len(movies) == 0
 
 
@@ -138,7 +139,7 @@ def test_scan_movies__nothing_in_cwd(prepare_files):
     cwd = os.getcwd()
     os.chdir(prepare_files)
     try:
-        movies = scan_movies(".")
+        movies = Scanner(load_config()).scan('.').movies
     finally:
         os.chdir(cwd)
     assert len(movies) == 0
@@ -147,42 +148,42 @@ def test_scan_movies__nothing_in_cwd(prepare_files):
 # 无效：多个分片命名杂乱
 @pytest.mark.parametrize("files", [("ABC-123-1.mp4", "ABC-123-第2部分.mp4", "ABC-123-3.mp4")])
 def test_scan_movies__strange_names(prepare_files):
-    movies = scan_movies(prepare_files)
+    movies = Scanner(load_config()).scan(prepare_files).movies
     assert len(movies) == 0
 
 
 # 无效：同一影片的分片和非分片混合
 @pytest.mark.parametrize("files", [("ABC-123.mp4", "ABC-123-1.mp4", "ABC-123-2.mp4")])
 def test_scan_movies__mix_slices(prepare_files):
-    movies = scan_movies(prepare_files)
+    movies = Scanner(load_config()).scan(prepare_files).movies
     assert len(movies) == 0
 
 
 # 无效：多个分片位于不同文件夹
 @pytest.mark.parametrize("files", [("ABC-123.CD1.mp4", "sub/ABC-123.CD2.mp4", "ABC-123.CD3.mp4")])
 def test_scan_movies__wrong_structure(prepare_files):
-    movies = scan_movies(prepare_files)
+    movies = Scanner(load_config()).scan(prepare_files).movies
     assert len(movies) == 0
 
 
 # 无效：分片的起始编号不合法
 @pytest.mark.parametrize("files", [("ABC-123.CD2.mp4", "ABC-123.CD3.mp4", "ABC-123.CD4.mp4")])
 def test_scan_movies__wrong_initial_id(prepare_files):
-    movies = scan_movies(prepare_files)
+    movies = Scanner(load_config()).scan(prepare_files).movies
     assert len(movies) == 0
 
 
 # 无效：分片的编号不连续
 @pytest.mark.parametrize("files", [("ABC-123.CD1.mp4", "ABC-123.CD3.mp4", "ABC-123.CD4.mp4")])
 def test_scan_movies__not_consecutive(prepare_files):
-    movies = scan_movies(prepare_files)
+    movies = Scanner(load_config()).scan(prepare_files).movies
     assert len(movies) == 0
 
 
 # 无效：分片的编号重复
 @pytest.mark.parametrize("files", [("ABC-123-1.mp4", "ABC-123-1 .mp4", "ABC-123-3.mp4")])
 def test_scan_movies__duplicate_index(prepare_files):
-    movies = scan_movies(prepare_files)
+    movies = Scanner(load_config()).scan(prepare_files).movies
     assert len(movies) == 0
 
 
@@ -192,7 +193,7 @@ def test_scan_movies__duplicate_index(prepare_files):
     [("DEF-456/movie.mp4", "ABC-123.1.mp4", "sub/ABC-123.2.mp4", "ABC-123.3.mp4")],
 )
 def test_scan_movies__mix_data(prepare_files):
-    movies = scan_movies(prepare_files)
+    movies = Scanner(load_config()).scan(prepare_files).movies
     assert len(movies) == 1
     assert movies[0].dvdid == "DEF-456"
     assert len(movies[0].files) == 1
@@ -212,7 +213,7 @@ def test_scan_movies__mix_data(prepare_files):
     ],
 )
 def test_scan_movies__1_video_with_ad(prepare_files):
-    movies = scan_movies(prepare_files)
+    movies = Scanner(load_config()).scan(prepare_files).movies
     assert len(movies) == 1
     assert movies[0].dvdid == "ABC-123"
     assert len(movies[0].files) == 1
@@ -231,7 +232,7 @@ def test_scan_movies__1_video_with_ad(prepare_files):
     ],
 )
 def test_scan_movies__n_video_with_ad(prepare_files):
-    movies = scan_movies(prepare_files)
+    movies = Scanner(load_config()).scan(prepare_files).movies
     assert len(movies) == 2
     dvdids = {m.dvdid for m in movies}
     assert dvdids == {"ABC-123", "DEF-456"}
@@ -241,7 +242,7 @@ def test_scan_movies__n_video_with_ad(prepare_files):
 # 多个分片以 -CDx 编号（无点号分隔）
 @pytest.mark.parametrize("files", [("ABC-123-CD1.mp4", "ABC-123-CD2.mp4", "ABC-123-CD3.mp4")])
 def test_scan_movies__cdx_dash(prepare_files):
-    movies = scan_movies(prepare_files)
+    movies = Scanner(load_config()).scan(prepare_files).movies
     assert len(movies) == 1
     assert movies[0].dvdid == "ABC-123"
     assert len(movies[0].files) == 3
@@ -254,7 +255,7 @@ def test_scan_movies__cdx_dash(prepare_files):
 # 多个分片以纯数字 -1/-2 编号（无 CD 字母、无点号分隔）
 @pytest.mark.parametrize("files", [("ABC-123-1.mp4", "ABC-123-2.mp4", "ABC-123-3.mp4")])
 def test_scan_movies__dash_numbers(prepare_files):
-    movies = scan_movies(prepare_files)
+    movies = Scanner(load_config()).scan(prepare_files).movies
     assert len(movies) == 1
     assert movies[0].dvdid == "ABC-123"
     assert len(movies[0].files) == 3
@@ -267,7 +268,7 @@ def test_scan_movies__dash_numbers(prepare_files):
 # 多个分片以大小写混合的字母编号
 @pytest.mark.parametrize("files", [("ABC-123-a.mp4", "ABC-123-B.mp4", "ABC-123-C.mp4")])
 def test_scan_movies__mixed_case_letters(prepare_files):
-    movies = scan_movies(prepare_files)
+    movies = Scanner(load_config()).scan(prepare_files).movies
     assert len(movies) == 1
     assert movies[0].dvdid == "ABC-123"
     assert len(movies[0].files) == 3

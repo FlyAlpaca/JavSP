@@ -11,7 +11,7 @@ import pytest
 import requests
 from PIL import Image
 
-from javsp.publish import processor
+from javsp.publish import media
 
 
 def movie_for(tmp_path, urls):
@@ -50,13 +50,13 @@ def test_all_images_keep_original_numbers_with_at_most_three_downloads(tmp_path,
             with lock:
                 active -= 1
 
-    monkeypatch.setattr(processor, "download", download)
+    monkeypatch.setattr(media, "download", download)
     movie = movie_for(tmp_path, [str(i) for i in range(8)])
     bar = SimpleNamespace(set_description=progress.append)
 
     def run():
         try:
-            processor.download_extra_fanarts(movie, 0, bar, cfg=load_config())
+            media.download_extra_fanarts(movie, 0, bar, cfg=load_config())
         except Exception as error:
             errors.append(error)
 
@@ -100,8 +100,8 @@ def test_start_interval_is_shared_and_downloads_overlap(tmp_path, monkeypatch):
             with lock:
                 active -= 1
 
-    monkeypatch.setattr(processor, "download", download)
-    processor.download_extra_fanarts(movie_for(tmp_path, ["a", "b", "c", "d"]), 0.04, cfg=load_config())
+    monkeypatch.setattr(media, "download", download)
+    media.download_extra_fanarts(movie_for(tmp_path, ["a", "b", "c", "d"]), 0.04, cfg=load_config())
     starts.sort()
     assert len(starts) == 4
     assert all(after - before >= 0.035 for before, after in zip(starts, starts[1:]))
@@ -113,9 +113,9 @@ def test_single_image_has_no_trailing_sleep(tmp_path, monkeypatch):
         raise AssertionError(f"单张图片不应等待: {seconds}")
 
     clock = SimpleNamespace(monotonic=time.monotonic, sleep=sleep, strftime=time.strftime, gmtime=time.gmtime)
-    monkeypatch.setattr(processor, "time", clock)
-    monkeypatch.setattr(processor, "download", lambda url, path, **kw: save_image(path, 1))
-    processor.download_extra_fanarts(movie_for(tmp_path, ["one"]), 1.5, cfg=load_config())
+    monkeypatch.setattr(media, "time", clock)
+    monkeypatch.setattr(media, "download", lambda url, path, **kw: save_image(path, 1))
+    media.download_extra_fanarts(movie_for(tmp_path, ["one"]), 1.5, cfg=load_config())
     assert (tmp_path / "extrafanart" / "0.png").exists()
 
 
@@ -133,8 +133,8 @@ def test_failed_and_invalid_images_do_not_block_others_or_replace_existing_files
             return {}
         return save_image(path, 2)
 
-    monkeypatch.setattr(processor, "download", download)
-    processor.download_extra_fanarts(movie_for(tmp_path, ["failed", "invalid", "good"]), 0, cfg=load_config())
+    monkeypatch.setattr(media, "download", download)
+    media.download_extra_fanarts(movie_for(tmp_path, ["failed", "invalid", "good"]), 0, cfg=load_config())
     assert (destination / "0.png").read_bytes() == b"existing"
     assert not (destination / "1.png").exists()
     assert (destination / "2.png").exists()
@@ -144,7 +144,7 @@ def test_failed_and_invalid_images_do_not_block_others_or_replace_existing_files
 
 
 def test_no_images_creates_no_directory(tmp_path):
-    processor.download_extra_fanarts(movie_for(tmp_path, []), 1.5, cfg=load_config())
+    media.download_extra_fanarts(movie_for(tmp_path, []), 1.5, cfg=load_config())
     assert list(tmp_path.iterdir()) == []
 
 
@@ -157,8 +157,8 @@ def test_fanart_extension_matches_content(tmp_path, monkeypatch, image_format, e
         original.append(Path(path).read_bytes())
         return {"elapsed": 1, "rate": 100}
 
-    monkeypatch.setattr(processor, "download", download)
-    processor.download_extra_fanarts(movie_for(tmp_path, ["https://example.test/wrong.png"]), 0, cfg=load_config())
+    monkeypatch.setattr(media, "download", download)
+    media.download_extra_fanarts(movie_for(tmp_path, ["https://example.test/wrong.png"]), 0, cfg=load_config())
     target = tmp_path / "extrafanart" / ("0" + extension)
     assert target.read_bytes() == original[0]
     with Image.open(target) as image:

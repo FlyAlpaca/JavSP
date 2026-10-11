@@ -2,7 +2,9 @@ import os
 
 import pytest
 
+from javsp.config import load_config
 from javsp.datatype import Movie
+from javsp.publish.output import OutputExecutor
 from javsp.scan.file import find_matching_subtitles
 
 DEFAULT_SIZE = 512 * 2**20  # 512 MiB
@@ -48,7 +50,7 @@ def test_find_subtitle_nonexist(tmp_path):
     assert len(subtitles) == 0
 
 
-# ===================== Movie.rename_files 字幕移动 =====================
+# ===================== OutputExecutor.execute_files 字幕移动 =====================
 
 
 def _setup_scene(tmp_path, video, subtitle=None):
@@ -69,7 +71,7 @@ def test_rename_files_exact_match(tmp_path):
     movie.files = [str(src / "IPZ-380.mp4")]
     movie.save_dir = str(dst)
     movie.basename = "IPZ-380"
-    movie.rename_files()
+    OutputExecutor(load_config()).execute_files(movie)
 
     assert (dst / "IPZ-380.mp4").exists()
     assert (dst / "IPZ-380.srt").exists()
@@ -83,7 +85,7 @@ def test_rename_files_fuzzy_no_dash(tmp_path):
     movie.files = [str(src / "IPZ-380.mp4")]
     movie.save_dir = str(dst)
     movie.basename = "IPZ-380"
-    movie.rename_files()
+    OutputExecutor(load_config()).execute_files(movie)
 
     assert (dst / "IPZ-380.mp4").exists()
     # 字幕被重命名为目标 basename
@@ -98,7 +100,7 @@ def test_rename_files_fuzzy_zero_padding(tmp_path):
     movie.files = [str(src / "IPZ-380.mp4")]
     movie.save_dir = str(dst)
     movie.basename = "IPZ-380"
-    movie.rename_files()
+    OutputExecutor(load_config()).execute_files(movie)
 
     assert (dst / "IPZ-380.mp4").exists()
     assert (dst / "IPZ-380.srt").exists()
@@ -112,7 +114,7 @@ def test_rename_files_different_dvdid_not_match(tmp_path):
     movie.files = [str(src / "IPZ-380.mp4")]
     movie.save_dir = str(dst)
     movie.basename = "IPZ-380"
-    movie.rename_files()
+    OutputExecutor(load_config()).execute_files(movie)
 
     assert (dst / "IPZ-380.mp4").exists()
     assert (src / "ABC-123.srt").exists()
@@ -125,7 +127,7 @@ def test_rename_files_ass_format(tmp_path):
     movie.files = [str(src / "IPZ-380.mp4")]
     movie.save_dir = str(dst)
     movie.basename = "IPZ-380"
-    movie.rename_files()
+    OutputExecutor(load_config()).execute_files(movie)
 
     assert (dst / "IPZ-380.mp4").exists()
     assert (dst / "IPZ-380.ass").exists()
@@ -139,7 +141,7 @@ def test_rename_files_subtitle_name_follows_video(tmp_path):
     movie.files = [str(src / "IPZ-380.mp4")]
     movie.save_dir = str(dst)
     movie.basename = "custom_name"
-    movie.rename_files()
+    OutputExecutor(load_config()).execute_files(movie)
 
     assert (dst / "custom_name.mp4").exists()
     assert (dst / "custom_name.srt").exists()
@@ -152,7 +154,7 @@ def test_rename_files_multicd_video_single_subtitle(tmp_path):
     movie.files = [str(src / "IPZ-380-CD1.mp4")]
     movie.save_dir = str(dst)
     movie.basename = "IPZ-380"
-    movie.rename_files()
+    OutputExecutor(load_config()).execute_files(movie)
 
     assert (dst / "IPZ-380.mp4").exists()
     assert (dst / "IPZ-380.srt").exists()
@@ -167,9 +169,19 @@ def test_rename_files_subtitle_already_in_dest(tmp_path):
     movie.files = [str(src / "IPZ-380.mp4")]
     movie.save_dir = str(dst)
     movie.basename = "IPZ-380"
-    movie.rename_files()
+    OutputExecutor(load_config()).execute_files(movie)
 
     assert (dst / "IPZ-380.mp4").exists()
     assert (dst / "IPZ-380.srt").exists()
     # 目标已存在时源字幕文件不会被删除
     assert (src / "IPZ-380.srt").exists()
+
+
+def test_subtitle_search_observes_new_files(tmp_path):
+    from javsp.scan.file import find_subtitle_in_dir
+
+    cfg = load_config()
+    assert find_subtitle_in_dir(str(tmp_path), 'ABC-123', cfg=cfg) is None
+    target = tmp_path / 'ABC-123.srt'
+    target.write_text('subtitle', encoding='utf-8')
+    assert find_subtitle_in_dir(str(tmp_path), 'ABC-123', cfg=cfg) == str(target)

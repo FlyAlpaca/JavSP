@@ -8,7 +8,7 @@
 | `javsp/workflow/` | 流水线编排、阶段事件与结果契约 |
 | `javsp/scan/` | 番号识别与本地文件扫描 |
 | `javsp/crawl/` | 抓取调度与 R18.dev 本地数据源 |
-| `javsp/web/` | 动态加载的站点抓取器、网络请求和翻译 |
+| `javsp/web/` | 动态加载的站点抓取器与网络请求 |
 | `javsp/metadata/` | 来源合并、字段选择与元数据整理 |
 | `javsp/publish/` | 路径规划、图片及 NFO 生成、文件提交和恢复 |
 | `javsp/cropper/` | 海报裁剪后端 |
@@ -41,8 +41,8 @@
 | OutputExecutor | `execute(plan) -> OutputResult` | 暂存、校验、提交、备份与逆序回滚 |
 | JobRunner / Pipeline | `run(movie)` / `run(root)` | 任务状态、阶段错误、批次停止及未处理列表 |
 
-翻译位于合并与规划之间。现有列表/字典接口通过适配器继续使用，包括 `scan_movies`、`parallel_crawler`、
-`info_summary`、`generate_names`、`Movie.rename_files` 和 `RunNormalMode`，实际处理复用新实现。
+翻译位于合并与规划之间。CLI 通过 `Pipeline.run()` 调用核心处理，进度和统计展示位于 `javsp/cli.py`。
+运行上下文统一管理翻译器，流水线和单片任务只使用已准备的翻译器，不启动或关闭模型服务。
 
 ### 输出事务与恢复边界
 
@@ -92,9 +92,9 @@ uv run --locked --extra dev pytest tests/integration/test_proxyfree.py --run-int
 ## 维护工具
 
 ```bash
-python tools/call_crawler.py ABC-123
-python tools/check_genre.py
-python tools/version.py
+uv run --locked --extra dev python tools/call_crawler.py ABC-123
+uv run --locked --extra dev python tools/check_genre.py
+uv run --locked --extra dev python tools/version.py
 ```
 
 工具按自身文件位置定位仓库；从其他目录调用时可使用脚本的绝对路径。
@@ -109,10 +109,10 @@ wheel 保留运行时资源，避免移动 `data/`、`image/` 或默认配置导
 
 ## 版本与发布
 
-版本由 Git tag 和 Hatch VCS 驱动。当前稳定版使用中文注释标签 `v2.0.2`；wheel/sdist 和安装元数据版本为 `2.0.2`。
+版本由 Git tag 和 Hatch VCS 驱动。稳定发布使用中文注释标签；wheel/sdist 和安装元数据版本应与待发布标签一致。
 发布前通过 Ruff、全部离线单元测试和构建，确认工作区只包含任务修改，再提交并在最终提交创建标签。
 更新 tag 后使用 `uv sync --locked --extra dev --reinstall-package javsp` 刷新本地安装元数据；
-`uv run --locked python tools/version.py`、运行时版本和 wheel METADATA 应一致。
+`uv run --locked --extra dev python tools/version.py`、运行时版本和 wheel METADATA 应一致。
 
 无 Git 元数据的 Docker 构建由 `SETUPTOOLS_SCM_PRETEND_VERSION` 传入版本。Docker 工作流验证三段或四段稳定版本标签，标签推送生成版本号和 `latest`，
 手动触发只生成 `dev`。推送标签会触发发布；本地创建标签不会发布镜像。
@@ -133,3 +133,25 @@ wheel 保留运行时资源，避免移动 `data/`、`image/` 或默认配置导
 站点解析接口为 `parse_data(info, *, context)`，清洗接口同样接收上下文；调用者使用 `with SiteContext(cfg, site)` 管理会话。
 每个站点任务拥有独立请求头、Cookie、动态域名和登录候选，重试复用会话，任务结束后关闭。
 站点模块不再提供直接执行示例；手动抓取使用 `tools/call_crawler.py`。
+
+
+## 内部接口迁移
+
+配置键、Docker 挂载和批处理退出规则保持既有含义；内部 Python 接口采用显式配置与结构化结果。
+
+| 原调用 | 新调用 |
+| --- | --- |
+| `Cfg()` | `load_config()`，或用完整数据构造 `Cfg` |
+| `scan_movies(root)` / 全局失败列表 | `Scanner(cfg).scan(root)` 的 `movies` / `unrecognized` |
+| `parallel_crawler(movie)` | `CrawlerExecutor(cfg, runtime=runtime).crawl(movie)` |
+| `info_summary(movie, sources)` | `MetadataMerger(cfg, runtime=runtime).merge(movie, result)` |
+| `Movie.rename_files(hardlink)` | `OutputExecutor(cfg).execute_files(movie, hardlink)`，从结果读取路径 |
+| `RunNormalMode` / 旧单片包装 | `Pipeline.run()` / `JobRunner.run()`，显式传入翻译器或运行上下文 |
+| `BatchResult.legacy()` | CLI 层 `summarize_batch(batch)` |
+| `publish.processor` | `publish.naming` 与 `publish.media` |
+| `publish.output.OutputPlanner` / `RecoveryError` | `publish.planner.OutputPlanner` / `publish.transaction.RecoveryError` |
+
+输出规划在副本上执行；相对输出模板以扫描根目录为基准，命名阶段在校验长度前解析成绝对目录。
+核心处理不切换进程工作目录。独立使用规划器可传入 `root`；独立任务应传入准备好的翻译器，资源的关闭由调用者负责。
+`startup_context(cfg)` 返回单个 `RuntimeContext`，包含 `root`、数据库、演员映射及翻译器；退出上下文时关闭翻译服务。
+文件事务集中于 `publish.transaction`，输出执行器只协调暂存、校验、整片提交及提交后清理。
