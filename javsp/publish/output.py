@@ -10,6 +10,7 @@ from lxml import etree
 from javsp.datatype import Movie, filemove_logger
 from javsp.publish.image import valid_pic
 from javsp.publish.media import download_cover, download_extra_fanarts, process_poster
+from javsp.publish.naming import validate_output_paths
 from javsp.publish.nfo import write_nfo
 from javsp.publish.planner import OutputPlan, _file_operations, _snapshot, _validate_targets
 from javsp.publish.transaction import FileTransaction, RecoveryError, _key, _stamp
@@ -89,6 +90,7 @@ class OutputExecutor:
         nfo = tx.temp(movie.nfo_file, ".nfo")
         write_nfo(movie.info, nfo, self.cfg)
         artifacts.append((nfo, movie.nfo_file))
+        validate_output_paths([target for _, target in artifacts], self.cfg)
         _validate_targets(plan.operations, [target for _, target in artifacts], movie.files)
         for staged, target in artifacts:
             if target == movie.nfo_file:
@@ -141,6 +143,7 @@ class OutputExecutor:
 
     def prepare(self, plan: OutputPlan) -> PreparedOutput:
         self.committed_result = None
+        validate_output_paths([op.target for op in plan.operations if not op.skip] + list(plan.artifacts), self.cfg)
         prepared = PreparedOutput(plan, _snapshot(plan.movie), FileTransaction(), [], list(plan.warnings))
         for warning in prepared.warnings:
             logger.warning(warning)

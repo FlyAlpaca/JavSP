@@ -5,124 +5,149 @@ import os
 from pathlib import Path
 
 from javsp.datatype import Movie
-from javsp.func import split_by_punc
-from javsp.scan.file import get_remaining_path_len, replace_illegal_chars
+from javsp.scan.file import replace_illegal_chars
 
 logger = logging.getLogger(__name__)
 
 
+def _filesystem_limits(path: Path):
+    parent = path.parent
+    while parent != parent.parent:
+        try:
+            if parent.is_dir():
+                break
+        except OSError:
+            # 规划中的名称可能已经超限；向上寻找可查询的现有目录。
+            pass
+        parent = parent.parent
+    limits = []
+    for name, default in (("PC_NAME_MAX", 255), ("PC_PATH_MAX", None)):
+        try:
+            value = os.pathconf(parent, name)
+        except (AttributeError, OSError, ValueError):
+            value = default
+        limits.append(value if value is not None and value > 0 else default)
+    return limits
+
+
+def _path_violations(path, cfg, *, components_only=False):
+    path = Path(os.path.abspath(path))
+    name_max, path_max = _filesystem_limits(path)
+    violations = []
+    for part in path.parts[1:]:
+        length = len(os.fsencode(part)) if os.name != "nt" else len(part.encode("utf-16-le")) // 2
+        if length > name_max:
+            violations.append((length - name_max, f"单个目录或文件名超过文件系统限制 {name_max}: {part}"))
+    if not components_only:
+        text = str(path)
+        length = len(text.encode("utf-8")) if cfg.summarizer.path.length_by_byte else len(text)
+        maximum = cfg.summarizer.path.length_maximum
+        if length > maximum:
+            violations.append((length - maximum, f"完整路径超过配置长度限制 {maximum}: {path}"))
+        if path_max is not None and len(os.fsencode(text)) >= path_max:
+            violations.append((len(os.fsencode(text)) - path_max + 1, f"完整路径超过文件系统限制 {path_max - 1}: {path}"))
+    return violations
+
+
+def validate_output_paths(paths, cfg):
+    """写入前检查全部目标；配置字符计数不能绕过文件系统的名称限制。"""
+    for path in paths:
+        violations = _path_violations(path, cfg)
+        if violations:
+            raise ValueError(f"无法生成符合长度限制的输出路径，请缩短输出目录或命名模板；{violations[0][1]}")
+
+
 def generate_names(movie: Movie, cfg, *, base_dir=None):
-    """按照模板生成相关文件的文件名"""
-
-    def legalize_path(path: str):
-        """Windows下文件名中不能包含换行 #467"""
-        return "".join(c for c in path if c not in {"\n"})
-
+    """按模板生成路径，必要时仅缩短路径字段，保留完整元数据。"""
     base_dir = Path(base_dir or Path.cwd()).resolve()
     info = movie.info
-    # 准备用来填充命名模板的字典
-    d = info.get_info_dic(cfg)
+    original = info.get_info_dic(cfg)
+    actors = info.actress or []
+    selected = actors[:cfg.summarizer.path.max_actress_count]
+    original["actress"] = (
+        ",".join(selected + (["…"] if len(selected) < len(actors) else [])) if actors else cfg.summarizer.default.actress
+    )
+    info.label = original["label"].upper()
+    values = {key: replace_illegal_chars(value.strip()) for key, value in original.items()}
+    info.nfo_title = cfg.summarizer.nfo.title_pattern.format(**values)
+    original = values.copy()
+    values = {key: value.replace("\n", "") for key, value in values.items()}
+    values["num"] += movie.attr_str
 
-    if info.actress and len(info.actress) > cfg.summarizer.path.max_actress_count:
-        logging.debug("女优人数过多，按配置保留了其中的前n个: " + ",".join(info.actress))
-        actress = info.actress[: cfg.summarizer.path.max_actress_count] + ["…"]
-    else:
-        actress = info.actress
-    d["actress"] = ",".join(actress) if actress else cfg.summarizer.default.actress
-
-    # 保存label供后面判断裁剪图片的方式使用
-    info.label = d["label"].upper()
-    # 处理字段：替换不能作为文件名的字符，移除首尾的空字符
-    for k, v in d.items():
-        d[k] = replace_illegal_chars(v.strip())
-
-    # 生成nfo文件中的影片标题
-    nfo_title = cfg.summarizer.nfo.title_pattern.format(**d)
-    info.nfo_title = nfo_title
-
-    # 使用字典填充模板，生成相关文件的路径（多分片影片要考虑CD-x部分）
-    if info.title_break is not None:
-        title_break = info.title_break
-    else:
-        title_break = split_by_punc(d["title"])
-    if info.ori_title_break is not None:
-        ori_title_break = info.ori_title_break
-    else:
-        ori_title_break = split_by_punc(d["rawtitle"])
-    copyd = d.copy()
-
-    def legalize_info():
-        if movie.save_dir is not None:
-            movie.save_dir = legalize_path(movie.save_dir)
-        if movie.nfo_file is not None:
-            movie.nfo_file = legalize_path(movie.nfo_file)
-        if movie.fanart_file is not None:
-            movie.fanart_file = legalize_path(movie.fanart_file)
-        if movie.poster_file is not None:
-            movie.poster_file = legalize_path(movie.poster_file)
-        if d["title"] != copyd["title"]:
-            logger.info(f"自动截短标题为:\n{copyd['title']}")
-        if d["rawtitle"] != copyd["rawtitle"]:
-            logger.info(f"自动截短原始标题为:\n{copyd['rawtitle']}")
-        return
-
-    copyd["num"] = copyd["num"] + movie.attr_str
-    longest_ext = max((os.path.splitext(i)[1] for i in movie.files), key=len)
-    for end in range(len(ori_title_break), 0, -1):
-        copyd["rawtitle"] = replace_illegal_chars("".join(ori_title_break[:end]).strip())
-        for sub_end in range(len(title_break), 0, -1):
-            copyd["title"] = replace_illegal_chars("".join(title_break[:sub_end]).strip())
-            if cfg.summarizer.move_files:
-                save_dir = os.path.normpath(str(base_dir / cfg.summarizer.path.output_folder_pattern.format(**copyd))).strip()
-                basename = os.path.normpath(cfg.summarizer.path.basename_pattern.format(**copyd)).strip()
-            else:
-                # 如果不整理文件，则保存抓取的数据到当前目录
-                save_dir = os.path.dirname(movie.files[0])
-                filebasename = os.path.basename(movie.files[0])
-                ext = os.path.splitext(filebasename)[1]
-                basename = filebasename.replace(ext, "")
-            long_path = os.path.join(save_dir, basename + longest_ext)
-            remaining = get_remaining_path_len(os.path.abspath(long_path), cfg)
-            if remaining > 0:
-                movie.save_dir = save_dir
-                movie.basename = basename
-                movie.nfo_file = os.path.join(
-                    save_dir,
-                    cfg.summarizer.nfo.basename_pattern.format(**copyd) + ".nfo",
-                )
-                movie.fanart_file = os.path.join(
-                    save_dir,
-                    cfg.summarizer.fanart.basename_pattern.format(**copyd) + ".jpg",
-                )
-                movie.poster_file = os.path.join(
-                    save_dir,
-                    cfg.summarizer.cover.basename_pattern.format(**copyd) + ".jpg",
-                )
-                return legalize_info()
-    else:
-        # 以防万一，当整理路径非常深或者标题起始很长一段没有标点符号时，硬性截短生成的名称
-        # remaining 为负数时表示需要削减的字符数，确保截断后长度不为负
-        copyd["title"] = copyd["title"][: max(0, len(copyd["title"]) + remaining)]
-        copyd["rawtitle"] = copyd["rawtitle"][: max(0, len(copyd["rawtitle"]) + remaining)]
-        # 如果不整理文件，则保存抓取的数据到当前目录
-        if not cfg.summarizer.move_files:
-            save_dir = os.path.dirname(movie.files[0])
-            filebasename = os.path.basename(movie.files[0])
-            ext = os.path.splitext(filebasename)[1]
-            basename = filebasename.replace(ext, "")
+    def render():
+        if cfg.summarizer.move_files:
+            save_dir = os.path.normpath(str(base_dir / cfg.summarizer.path.output_folder_pattern.format(**values))).strip()
+            basename = cfg.summarizer.path.basename_pattern.format(**values).strip()
         else:
-            save_dir = os.path.normpath(str(base_dir / cfg.summarizer.path.output_folder_pattern.format(**copyd))).strip()
-            basename = os.path.normpath(cfg.summarizer.path.basename_pattern.format(**copyd)).strip()
-        movie.save_dir = save_dir
-        movie.basename = basename
+            save_dir = os.path.dirname(movie.files[0])
+            basename = Path(movie.files[0]).stem
+        if not basename or basename in (".", ".."):
+            raise ValueError("命名模板生成了空的影片文件名")
+        names = {
+            "save_dir": save_dir,
+            "basename": os.path.normpath(basename),
+            "nfo_file": os.path.join(save_dir, cfg.summarizer.nfo.basename_pattern.format(**values) + ".nfo"),
+            "fanart_file": os.path.join(save_dir, cfg.summarizer.fanart.basename_pattern.format(**values) + ".jpg"),
+            "poster_file": os.path.join(save_dir, cfg.summarizer.cover.basename_pattern.format(**values) + ".jpg"),
+        }
+        paths = [names["nfo_file"], os.path.join(save_dir, "folder.jpg")]
+        # 实际图片格式在下载后才确定，为 .webp/.tiff 等扩展名预留五个字符。
+        paths.extend(os.path.splitext(names[key])[0] + ".tiff" for key in ("fanart_file", "poster_file"))
+        if cfg.summarizer.move_files:
+            for index, source in enumerate(movie.files, 1):
+                suffix = f"-CD{index}" if len(movie.files) > 1 else ""
+                extensions = [Path(source).suffix]
+                if cfg.summarizer.match_subtitles:
+                    extensions.extend((".srt", ".ass"))
+                paths.extend(os.path.join(save_dir, names["basename"] + suffix + ext) for ext in extensions)
+        if cfg.summarizer.extra_fanarts.enabled:
+            paths.append(os.path.join(save_dir, "extrafanart", f"{max(1, len(info.preview_pics or []))}.tiff"))
+        return names, paths
 
-        movie.nfo_file = os.path.join(save_dir, cfg.summarizer.nfo.basename_pattern.format(**copyd) + ".nfo")
-        movie.fanart_file = os.path.join(save_dir, cfg.summarizer.fanart.basename_pattern.format(**copyd) + ".jpg")
-        movie.poster_file = os.path.join(save_dir, cfg.summarizer.cover.basename_pattern.format(**copyd) + ".jpg")
+    def overflow(*, components_only=False):
+        _, paths = render()
+        return sum(amount for path in paths for amount, _ in _path_violations(path, cfg, components_only=components_only))
 
-        # 截断后仍超长则给出明确警告，后续文件操作会暴露实际问题
-        long_path = os.path.join(save_dir, basename + longest_ext)
-        if get_remaining_path_len(os.path.abspath(long_path), cfg) <= 0:
-            logger.warning(f"生成的整理路径仍超过长度限制，请检查命名模板或输出目录: {long_path}")
+    def shorten(field, *, components_only=False):
+        text = values[field]
+        if len(text) <= 1:
+            return
+        before = overflow(components_only=components_only)
 
-        return legalize_info()
+        def prefix(length):
+            shortened = text[:length].rstrip()
+            return shortened + ("…" if field == "actress" and length < len(text) else "")
+
+        values[field] = prefix(1)
+        minimum = overflow(components_only=components_only)
+        if minimum >= before:
+            values[field] = text
+            return
+        # 按 Unicode 字符边界找最长可用前缀；每次检查真实编码长度和全部模板。
+        low, high = 1, len(text)
+        while low < high:
+            middle = (low + high + 1) // 2
+            values[field] = prefix(middle)
+            if overflow(components_only=components_only) <= minimum:
+                low = middle
+            else:
+                high = middle - 1
+        values[field] = prefix(low)
+        if field == "actress" and low < len(text) and "," in text[:low]:
+            # 优先保留完整演员名；单个名字本身超长时才按字符截短。
+            values[field] = text[:low].rsplit(",", 1)[0] + ",…"
+
+    # 先解决独立超长的目录/文件名，避免为长演员目录白白删掉标题。
+    for field in ("actress", "title", "rawtitle"):
+        if overflow(components_only=True):
+            shorten(field, components_only=True)
+    for field in ("title", "rawtitle", "actress"):
+        if overflow():
+            shorten(field)
+    names, paths = render()
+    validate_output_paths(paths, cfg)
+    for key, value in names.items():
+        setattr(movie, key, value)
+    for field, label in (("title", "标题"), ("rawtitle", "原始标题"), ("actress", "演员路径字段")):
+        if values[field] != original[field]:
+            logger.info("自动截短%s为:\n%s", label, values[field])
