@@ -15,9 +15,9 @@ from javsp.concurrency import await_futures, finish_executor
 from javsp.cropper import get_cropper
 from javsp.datatype import Movie
 from javsp.lib import resource_path
+from javsp.network import download
 from javsp.publish.image import LabelPosition, add_label_to_poster, get_pic_size, valid_pic
 from javsp.scan.file import get_fmt_size
-from javsp.web.base import download
 
 logger = logging.getLogger(__name__)
 

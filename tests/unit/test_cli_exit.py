@@ -117,7 +117,6 @@ def test_batch_continues_and_counts_failure(monkeypatch):
         return JobResult(movie, output=OutputResult(movie))
 
     monkeypatch.setattr(JobRunner, "run", run)
-    monkeypatch.setattr("javsp.crawl.dispatcher.CrawlerExecutor.throttle", lambda self: None)
     batch = JobRunner(cfg, translator=object()).run_batch(movies)
     successful, stats = summarize_batch(batch)
     assert visited == movies
@@ -136,22 +135,22 @@ def failure_stats(cause, stage=Stage.CRAWL):
 def test_failure_summary_removes_wrappers_and_keeps_full_reason(capsys):
     cause = ValueError(
         "未获取到影片数据 (IPX-658):\n"
-        "  - r18dev: 本地数据库未找到唯一匹配的影片记录（可能未收录、番号不匹配或存在重复记录）；在线抓取已关闭"
+        "  - r18dev: 本地数据库未找到匹配的影片记录（可能未收录或番号不匹配）"
     )
     stats, original = failure_stats(cause)
     print_summary(stats)
     output = capsys.readouterr().out
-    assert "IPX-658: 抓取数据：r18dev: 本地库无唯一匹配（未收录/番号不符/多条记录）；在线抓取关闭" in output
+    assert "IPX-658: 抓取数据：r18dev: 本地库未命中（未收录/番号不符）" in output
     assert output.count("IPX-658") == 1
     assert "未获取到影片数据" not in output
     assert stats["failed_list"] == [("IPX-658", original)]
 
 
-def test_failure_summary_keeps_multiple_sources_on_one_line(capsys):
-    cause = ValueError("未获取到影片数据 (IPX-658):\n  - r18dev: 未收录\n  - javbus: 网络超时")
+def test_failure_summary_keeps_multiple_reasons_on_one_line(capsys):
+    cause = ValueError("未获取到影片数据 (IPX-658):\n  - r18dev: 未收录\n  - r18dev: 数据库损坏")
     stats, _ = failure_stats(cause)
     print_summary(stats)
-    assert "IPX-658: 抓取数据：r18dev: 未收录；javbus: 网络超时" in capsys.readouterr().out
+    assert "IPX-658: 抓取数据：r18dev: 未收录；r18dev: 数据库损坏" in capsys.readouterr().out
 
 
 def test_failure_summary_displays_reason_longer_than_old_limit(capsys):

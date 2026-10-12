@@ -20,11 +20,11 @@ JavSP 识别本地影片、汇总元数据并生成媒体库产物。运行交�
 | `javsp/config.py`、`config_default.yml` | 配置模型、加载与默认值 |
 | `javsp/workflow/` | 流水线编排、阶段事件及单片/批次结果 |
 | `javsp/scan/` | 番号识别、本地影片与字幕扫描 |
-| `javsp/crawl/`、`javsp/web/` | 抓取调度、本地数据库与在线站点适配 |
+| `javsp/crawl/`、`javsp/network.py` | R18.dev 本地数据库查询、通用图片下载 |
 | `javsp/metadata/`、`javsp/translate.py` | 字段合并、演员映射与本地翻译 |
 | `javsp/publish/`、`javsp/cropper/` | 输出规划、图片/NFO、文件事务与裁剪 |
-| `data/`、`image/` | 随包发布的运行时资源 |
-| `tests/unit/`、`tests/integration/`、`tests/data/` | 离线测试、在线测试与测试样本 |
+| `image/` | 随包发布的图片资源 |
+| `tests/unit/`、`tests/data/` | 离线测试与番号识别样本 |
 | `tools/`、`docker/`、`.github/workflows/` | 维护工具、容器与 CI/发布流程 |
 
 - 沿用扫描、抓取、合并、翻译、规划、提交的职责划分，组件显式接收所需配置。
@@ -71,7 +71,7 @@ JavSP 识别本地影片、汇总元数据并生成媒体库产物。运行交�
 - 默认测试使用临时目录、模拟数据或本地 HTTP 服务，不对真实媒体库运行整理程序。
 - 不提交用户配置、凭据、数据库、模型、下载分片、日志或缓存；不要仅凭“未跟踪”认定文件可删除。
 - 清理前区分可再生成缓存、运行时资源和用户数据；删除媒体、数据库或恢复材料必须在用户明确授权范围内。
-- 保留随包发布的 `data/`、`image/` 和默认配置；移动资源时检查资源查找、打包和 Docker 上下文。
+- 保留随包发布的 `image/` 和默认配置；移动资源时检查资源查找、打包和 Docker 上下文。
 - 不覆盖、还原或删除用户已有的无关修改；不要使用宽泛的清理或重置命令处理工作区。
 
 ## 检查与测试
@@ -103,15 +103,9 @@ uv run --locked --extra dev python tools/check_dist.py dist
 ```
 
 - 测试优先断言行为与失败边界；修复缺陷时补充可复现该缺陷的回归用例，避免只重复实现的测试。
-- 默认 `pytest` 跳过在线集成测试。需要验证外部站点时显式使用 `--run-integration`，例如：
-
-  ```bash
-  uv run --locked --extra dev pytest tests/integration/test_crawlers.py --run-integration --only javbus
-  ```
-
-- 在线抓取测试即使比较失败也可能更新 `tests/data/` 样本；运行后审查差异，不将新抓取结果自动视为正确基准。
-- 维护工具也可能改写样本或分类表，运行前阅读其行为；各站点独立样本不要仅因内容相同而合并。
-- 不把站点封禁、网络或凭据问题直接判定为实现缺陷，也不以离线测试通过代替在线验证。
+- R18.dev 本地库是唯一影片元数据来源且始终启用；不恢复在线站点抓取器、站点选择或启停开关。
+- 元数据规则使用 `r18dev.required_keys/normalize_actress_name/respect_source_id`；旧抓取配置只忽略并提醒，不继承旧值。
+- 数据库、演员映射、模型与图片仍可联网下载；离线测试通过不等于远端资源下载验证通过。
 - CI 的实际命令和 Python 矩阵见 [测试工作流](.github/workflows/tests.yml)；本地通过不等于远端 CI 通过。
 - 本地未执行的 Docker 构建、其他平台测试或在线验证，应在交付中明确标注，不推断为成功。
 

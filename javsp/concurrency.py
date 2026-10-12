@@ -5,25 +5,6 @@ import time
 from concurrent.futures import ThreadPoolExecutor, wait
 
 
-def drain_threads(workers):
-    """done 由工作函数 finally 设置，不依赖被中断 join 的存活状态。"""
-    interruption = None
-    for thread, done in workers:
-        while not done.is_set():
-            try:
-                done.wait()
-            except (KeyboardInterrupt, SystemExit) as error:
-                interruption = error
-        while True:
-            try:
-                thread.join()
-                break
-            except (KeyboardInterrupt, SystemExit) as error:
-                interruption = error
-    if interruption:
-        raise interruption
-
-
 def finish_executor(executor, futures):
     """shutdown 被中断时，先等待 Future 完成，再回收线程并传播取消。"""
     interruption = None
@@ -70,15 +51,11 @@ def await_futures(futures):
 
 
 class BatchResources:
-    """批次专用线程池、站点冷却、剧照节流与停止信号。"""
+    """批次图片线程池、剧照节流与停止信号。"""
 
     def __init__(self, cfg):
         self.stopped = threading.Event()
-        self.crawlers = ThreadPoolExecutor(max_workers=cfg.concurrency.crawlers, thread_name_prefix="crawl")
         self.images = ThreadPoolExecutor(max_workers=cfg.concurrency.images, thread_name_prefix="image")
-        self.site_interval = cfg.crawler.sleep_after_scraping.total_seconds()
-        self._sites_lock = threading.Lock()
-        self._sites = {}
         self._fanart_lock = threading.Lock()
         self._next_fanart = 0.0
         self.translation_slots = threading.BoundedSemaphore(cfg.translator.runtime.parallel)
@@ -104,23 +81,6 @@ class BatchResources:
         future.add_done_callback(completed)
         return future
 
-    def site_task(self, site, function, started):
-        with self._sites_lock:
-            lock, next_start = self._sites.setdefault(site, (threading.Lock(), [0.0]))
-        while not lock.acquire(timeout=0.05):
-            self.check()
-        try:
-            self.pause(next_start[0] - time.monotonic())
-            self.check()
-            started[0] = time.monotonic()
-            try:
-                return function()
-            finally:
-                started[1] = time.monotonic()
-        finally:
-            next_start[0] = time.monotonic() + self.site_interval
-            lock.release()
-
     def fanart_start(self, interval):
         with self._fanart_lock:
             self.pause(self._next_fanart - time.monotonic())
@@ -128,14 +88,10 @@ class BatchResources:
 
     def close(self):
         """调用方先回收影片线程，再关闭子任务池。"""
-        interruption = None
-        for pool in (self.crawlers, self.images):
-            try:
-                with self._futures_lock:
-                    futures = list(self._futures)
-                finish_executor(pool, futures)
-            except (KeyboardInterrupt, SystemExit) as error:
-                self.stopped.set()
-                interruption = error
-        if interruption:
-            raise interruption
+        try:
+            with self._futures_lock:
+                futures = list(self._futures)
+            finish_executor(self.images, futures)
+        except (KeyboardInterrupt, SystemExit):
+            self.stopped.set()
+            raise

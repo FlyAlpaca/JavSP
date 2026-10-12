@@ -45,22 +45,6 @@ ENTITY_TABLES = (
     "derived_label",
     "derived_series",
 )
-MAPPABLE_FIELDS = (
-    "title",
-    "plot",
-    "cover",
-    "big_cover",
-    "genre",
-    "serial",
-    "actress",
-    "director",
-    "duration",
-    "producer",
-    "publisher",
-    "publish_date",
-    "preview_pics",
-    "preview_video",
-)
 _COPY = re.compile(r"^COPY public\.(\w+) \(([^)]+)\) FROM stdin;$")
 _ESCAPE = re.compile(r"\\([\\nrtbfv])")
 _ESCAPES = {"\\": "\\", "n": "\n", "r": "\r", "t": "\t", "b": "\b", "f": "\f", "v": "\v"}
@@ -313,8 +297,8 @@ def _ensure_entity_indexes(path):
         logger.warning("R18.dev 本地数据库查询索引更新失败，继续使用原数据库: %s", error)
 
 
-def prepare_database(path: Path, online_enabled: bool, *, session=None, proxy=None):
-    """本地库导入未满七天时跳过远端检查；失败时使用有效旧库或在线抓取。"""
+def prepare_database(path: Path, *, session=None, proxy=None) -> Path:
+    """本地库导入未满七天时跳过远端检查；失败时使用有效旧库，无有效库则终止。"""
     path = Path(path)
     usable = _valid(path)
     if path.exists() and not usable:
@@ -374,10 +358,7 @@ def prepare_database(path: Path, online_enabled: bool, *, session=None, proxy=No
         logger.warning("R18.dev 数据库更新失败: %s", error)
         if usable:
             return path
-        if online_enabled:
-            logger.warning("本次运行退回在线抓取")
-            return None
-        raise RuntimeError("R18.dev 数据库不可用，且在线抓取已关闭") from error
+        raise RuntimeError("R18.dev 数据库不可用，无法开始整理") from error
     finally:
         if session is None:
             client.close()
@@ -506,7 +487,3 @@ def lookup(path: Path, movie):
         info.publisher = entity("derived_label", "label_id")
         info.serial = entity("derived_series", "series_id")
         return info
-
-
-def needs_online(info):
-    return info is None or any(not getattr(info, field) for field in MAPPABLE_FIELDS)

@@ -47,7 +47,6 @@ COPY --from=builder /app/javsp /app/javsp
 # resource_path() 在可编辑安装下解析到 /app/
 # config_default.yml 放在 VOLUME 外作为种子，entrypoint 首次运行时拷贝为 config.yml
 COPY --from=builder /app/config_default.yml /app/config_default.yml
-COPY --from=builder /app/data /app/data
 COPY --from=builder /app/image /app/image
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 

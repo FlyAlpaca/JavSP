@@ -7,8 +7,8 @@ import pytest
 import requests
 from requests.structures import CaseInsensitiveDict
 
+from javsp import network as base
 from javsp.download import PART_SIZE, DownloadSpec, clear_parts, parts
-from javsp.web import base
 
 
 def test_download_uses_fixed_size_parts_and_separate_resume_names(tmp_path):

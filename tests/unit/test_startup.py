@@ -13,15 +13,13 @@ from javsp.runtime import RuntimeContext
 def test_startup_prepares_sources_before_model(tmp_path, monkeypatch):
     calls = []
     cfg = load_config()
-    cfg = cfg.model_copy(update={"scanner": cfg.scanner.model_copy(update={"input_directory": tmp_path}),
-                                 "r18dev": cfg.r18dev.model_copy(update={"enabled": True})})
+    cfg = cfg.model_copy(update={"scanner": cfg.scanner.model_copy(update={"input_directory": tmp_path})})
     monkeypatch.setattr(startup, "check_for_updates", lambda: calls.append("version"))
     monkeypatch.setattr(startup, "prepare_actor_mapping", lambda *a, **kw: calls.append("aliases"))
-    monkeypatch.setattr(startup, "prepare_database", lambda path, online, **kw: calls.append("database") or path)
-    monkeypatch.setattr(startup, "import_crawlers", lambda config: calls.append("crawlers"))
+    monkeypatch.setattr(startup, "prepare_database", lambda path, **kw: calls.append("database") or path)
 
     assert startup.prepare_startup(cfg, base_dir=tmp_path).root == tmp_path
-    assert calls == ["version", "aliases", "database", "crawlers"]
+    assert calls == ["version", "aliases", "database"]
 
 
 def test_missing_scan_directory_stops_before_network(tmp_path, monkeypatch):
@@ -96,3 +94,19 @@ def test_update_notice_and_offline_fallback(monkeypatch, caplog):
 def test_unknown_local_version_skips_network(monkeypatch):
     monkeypatch.setattr(startup, "get_version", lambda: "0.0.0")
     startup.check_for_updates(session=SimpleNamespace(get=lambda *_args, **_kwargs: pytest.fail("不应联网")))
+
+
+def test_database_failure_stops_before_model_and_scan(tmp_path, monkeypatch):
+    cfg = load_config([])
+    cfg = cfg.model_copy(update={'scanner': cfg.scanner.model_copy(update={'input_directory': tmp_path})})
+    monkeypatch.setattr(startup, 'check_for_updates', lambda: None)
+    monkeypatch.setattr(startup, 'prepare_actor_mapping', lambda *a, **kw: object())
+    def fail(path, **kwargs):
+        raise RuntimeError('R18.dev 数据库不可用') from OSError('download failed')
+    monkeypatch.setattr(startup, 'prepare_database', fail)
+    monkeypatch.setattr(startup, 'LocalTranslator', lambda *a, **kw: pytest.fail('数据库失败不能启动模型'))
+    with pytest.raises(startup.StartupError, match='数据库不可用') as error:
+        with startup.startup_context(cfg):
+            pytest.fail('启动失败不能扫描')
+    assert isinstance(error.value.__cause__, RuntimeError)
+    assert isinstance(error.value.__cause__.__cause__, OSError)

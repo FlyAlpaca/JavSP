@@ -33,7 +33,7 @@ def score_config(tmp_path):
         (8.5, "constructor", "8.5"),
         ("8.50", "constructor", "8.5"),
         (8.5, "json", "8.5"),
-        ("8.50", "crawler", "8.50"),
+        ("8.50", "assignment", "8.50"),
         (0.0, "constructor", "0"),
         (None, "constructor", "0"),
     ],
@@ -43,7 +43,7 @@ def test_score_in_names_and_nfo(tmp_path, score_config, score, source, expected)
         metadata = tmp_path / "metadata.json"
         metadata.write_text(json.dumps({"dvdid": "ABC-123", "title": "测试", "score": score}), encoding="utf-8")
         info = MovieInfo(from_file=str(metadata))
-    elif source == "crawler":
+    elif source == "assignment":
         info = MovieInfo("ABC-123", title="测试")
         info.score = score
     else:
@@ -63,5 +63,5 @@ def test_score_in_names_and_nfo(tmp_path, score_config, score, source, expected)
     xml = etree.parse(str(nfo_file))
     assert xml.xpath("/movie/tag/text()") == [f"评分：{expected}"]
     assert xml.xpath("/movie/rating/text()") == ([str(info.score)] if info.score else [])
-    if source != "crawler":
+    if source != "assignment":
         assert info.score == (float(score) if score is not None else None)

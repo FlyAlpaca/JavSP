@@ -1,7 +1,8 @@
 """组件结果隔离、显式配置及元数据来源。"""
 
-import sys
 from types import SimpleNamespace
+
+import pytest
 
 from javsp.config import load_config
 from javsp.crawl import dispatcher
@@ -27,35 +28,26 @@ def test_scan_results_are_independent(tmp_path):
 
 
 def test_crawler_returns_identity_without_mutating_input(monkeypatch):
-    cfg = SimpleNamespace(
-        crawler=SimpleNamespace(selection={"cid": ["testcid"], "normal": ["testnormal"]}),
-        network=SimpleNamespace(proxy_server=None, proxy_free={}, retry=1, timeout=SimpleNamespace(total_seconds=lambda: 1)),
-    )
-
-    def cid(info, *, context):
-        info.title = "CID title"
-
-    def normal(info, *, context):
-        info.title = "normal title"
-
-    for name, parser in (("testcid", cid), ("testnormal", normal)):
-        monkeypatch.setitem(sys.modules, f"javsp.web.{name}", SimpleNamespace(parse_data=parser))
+    cfg = load_config([])
+    runtime = SimpleNamespace(database_path="test.sqlite")
     movie = Movie(cid="abc00123")
     movie.dvdid, movie.data_src = "ABC-123", "cid"
-    result = dispatcher.CrawlerExecutor(cfg).crawl(movie)
-    assert result.dvdid is None and list(result.data) == ["testcid"]
-    assert movie.dvdid == "ABC-123"
+    source = MovieInfo(cid="abc00123", title="CID title")
+    monkeypatch.setattr(dispatcher, "lookup", lambda path, candidate: source)
+    result = dispatcher.CrawlerExecutor(cfg, runtime=runtime).crawl(movie)
+    assert result.dvdid == "ABC-123" and list(result.data) == ["r18dev"]
+    assert movie.dvdid == "ABC-123" and movie.info is None
 
 
 def test_merge_preserves_source_data_and_tracks_selected_cover():
     cfg = load_config().model_copy(deep=True)
-    cfg = cfg.model_copy(update={"crawler": cfg.crawler.model_copy(update={"normalize_actress_name": False})})
+    cfg = cfg.model_copy(update={"r18dev": cfg.r18dev.model_copy(update={"normalize_actress_name": False})})
     info = MovieInfo("ABC-123", title="title", cover="cover", genre=["original"])
-    result = CrawlResult({"javdb": info}, [], "ABC-123", None, "normal")
+    result = CrawlResult({"r18dev": info}, [], "ABC-123", None, "normal")
     movie = Movie("ABC-123")
     merged = MetadataMerger(cfg).merge(movie, result)
-    assert merged.field_sources["genre"] == "javdb"
-    assert merged.field_sources["cover"] == "javdb"
+    assert merged.field_sources["genre"] == "r18dev"
+    assert merged.field_sources["cover"] == "r18dev"
     assert info.genre == ["original"] and info.genre_norm is None
     assert movie.info is None
 
@@ -80,3 +72,18 @@ def test_empty_folder_ignore_list_scans_subdirectories(tmp_path):
     result = Scanner(cfg).scan(str(tmp_path))
     assert [movie.dvdid for movie in result.movies] == ['ABC-123']
     assert result.skipped == []
+
+
+@pytest.mark.parametrize('respect', [True, False])
+@pytest.mark.parametrize('cid_only', [True, False])
+def test_local_source_identity_rule_preserves_input(respect, cid_only):
+    cfg = load_config([])
+    cfg = cfg.model_copy(update={'r18dev': cfg.r18dev.model_copy(update={'respect_source_id': respect})})
+    movie = Movie(cid='abc123') if cid_only else Movie('ABC-123')
+    info = MovieInfo(dvdid='ABC-00123', cid='abc00123', title='title', cover='cover', genre=['分類'])
+    result = CrawlResult({'r18dev': info}, [], movie.dvdid, movie.cid, movie.data_src)
+    merged = MetadataMerger(cfg).merge(movie, result)
+    assert merged.dvdid == ('ABC-00123' if respect and not cid_only else movie.dvdid)
+    assert merged.cid == ('abc00123' if cid_only and respect else movie.cid)
+    assert info.dvdid == 'ABC-00123' and info.genre == ['分類']
+    assert movie.info is None

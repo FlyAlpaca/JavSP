@@ -1,6 +1,5 @@
 """批次资源限额、排队时间、共享池取消和翻译容量。"""
 
-import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -9,12 +8,9 @@ from unittest.mock import MagicMock
 
 import pytest
 from PIL import Image
-from pydantic_extra_types.pendulum_dt import Duration
 
-from javsp.concurrency import BatchCancelled, BatchResources
+from javsp.concurrency import BatchResources
 from javsp.config import Cfg, Concurrency, load_config
-from javsp.crawl.dispatcher import CrawlerExecutor
-from javsp.datatype import Movie
 from javsp.publish import media
 from javsp.translate import LocalTranslator
 from javsp.workflow.batch import _Translator
@@ -24,8 +20,6 @@ def configuration(**limits):
     cfg = load_config([])
     return cfg.model_copy(update={
         "concurrency": Concurrency(**limits),
-        "crawler": cfg.crawler.model_copy(update={"sleep_after_scraping": Duration(0), "online_enabled": True}),
-        "r18dev": cfg.r18dev.model_copy(update={"enabled": False}),
     })
 
 
@@ -33,87 +27,19 @@ def test_config_defaults_old_files_and_override_priority(tmp_path, monkeypatch):
     cfg = load_config([])
     data = cfg.model_dump()
     del data["concurrency"]
-    assert Cfg.model_validate(data).concurrency == Concurrency(movies=3, crawlers=6, images=3)
+    assert Cfg.model_validate(data).concurrency == Concurrency(movies=3, images=3)
     path = tmp_path / "config.yml"
     path.write_text("concurrency:\n  movies: 2\n  images: 4\n", encoding="utf-8")
     monkeypatch.setenv("JAVSP_CONCURRENCY__MOVIES", "4")
     cfg = load_config(["-c", str(path), "--oconcurrency.movies", "5"])
-    assert cfg.concurrency.movies == 5 and cfg.concurrency.images == 4 and cfg.concurrency.crawlers == 6
+    assert cfg.concurrency.movies == 5 and cfg.concurrency.images == 4
 
 
-@pytest.mark.parametrize("field", ["movies", "crawlers", "images"])
+@pytest.mark.parametrize("field", ["movies", "images"])
 @pytest.mark.parametrize("value", [0, -1, "bad"])
 def test_invalid_concurrency(field, value):
     with pytest.raises(ValueError):
         Concurrency.model_validate({field: value})
-
-
-def test_crawler_queue_time_does_not_consume_soft_deadline(monkeypatch):
-    cfg = configuration(crawlers=1)
-    cfg = cfg.model_copy(update={
-        "crawler": cfg.crawler.model_copy(update={"selection": {"normal": ["slow", "fast"]}}),
-        "network": cfg.network.model_copy(update={"retry": 1, "timeout": Duration(seconds=0.02)}),
-    })
-    started, release = threading.Event(), threading.Event()
-    workers = []
-
-    def slow(info, *, context):
-        workers.append(threading.current_thread())
-        started.set()
-        assert release.wait(5)
-        info.title = "late"
-
-    def fast(info, *, context):
-        workers.append(threading.current_thread())
-        info.title = "in time"
-
-    monkeypatch.setitem(sys.modules, "javsp.web.slow", SimpleNamespace(parse_data=slow))
-    monkeypatch.setitem(sys.modules, "javsp.web.fast", SimpleNamespace(parse_data=fast))
-    resources = BatchResources(cfg)
-    with ThreadPoolExecutor(max_workers=1) as caller:
-        future = caller.submit(CrawlerExecutor(cfg, resources=resources).crawl, Movie("ABC-123"))
-        try:
-            assert started.wait(5)
-            time.sleep(0.08)
-            assert not future.done()
-        finally:
-            release.set()
-        result = future.result(timeout=5)
-    resources.close()
-    assert list(result.data) == ["fast"]
-    assert ("slow", "抓取超时") in result.failures
-    assert len(set(workers)) == 1 and all(not worker.is_alive() for worker in workers)
-
-
-def test_site_tasks_serialize_and_cool_down():
-    cfg = configuration(crawlers=3)
-    interval = 0.03
-    cfg = cfg.model_copy(update={"crawler": cfg.crawler.model_copy(update={"sleep_after_scraping": Duration(seconds=interval)})})
-    resources = BatchResources(cfg)
-    started, release, other_done = threading.Event(), threading.Event(), threading.Event()
-    times = []
-
-    def first():
-        started.set()
-        assert release.wait(5)
-        times.append(time.monotonic())
-
-    def second():
-        times.append(time.monotonic())
-
-    first_future = resources.submit(resources.crawlers, resources.site_task, "same", first, [None, None])
-    assert started.wait(5)
-    second_started = [None, None]
-    second_future = resources.submit(resources.crawlers, resources.site_task, "same", second, second_started)
-    other = resources.submit(resources.crawlers, resources.site_task, "other", other_done.set, [None, None])
-    try:
-        assert other_done.wait(5) and second_started[0] is None
-    finally:
-        release.set()
-    for future in (first_future, second_future, other):
-        future.result(timeout=5)
-    resources.close()
-    assert times[1] - times[0] >= interval
 
 
 def test_shared_image_pool_limits_requests_and_is_reusable(tmp_path, monkeypatch):
@@ -148,25 +74,6 @@ def test_shared_image_pool_limits_requests_and_is_reusable(tmp_path, monkeypatch
     resources.close()
     assert maximum == 2 and len(threads) == 2 and all(not thread.is_alive() for thread in threads)
     assert not list(tmp_path.glob(".javsp-*"))
-
-
-def test_cancelled_queued_site_task_never_starts():
-    resources = BatchResources(configuration(crawlers=2))
-    started, release = threading.Event(), threading.Event()
-    def first():
-        started.set()
-        assert release.wait(5)
-    future = resources.submit(resources.crawlers, resources.site_task, "same", first, [None, None])
-    assert started.wait(5)
-    queued_started = [None, None]
-    queued = resources.submit(resources.crawlers, resources.site_task, "same", lambda: pytest.fail("应停止"), queued_started)
-    resources.stopped.set()
-    release.set()
-    future.result(timeout=5)
-    with pytest.raises(BatchCancelled):
-        queued.result(timeout=5)
-    resources.close()
-    assert queued_started[0] is None
 
 
 @pytest.mark.parametrize("parallel", [1, 2])

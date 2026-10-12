@@ -83,7 +83,7 @@ class JobRunner:
             working.dvdid, working.cid, working.data_src = result.dvdid, result.cid, result.data_src
             result.require_data()
             if result.failures:
-                logger.debug("部分抓取器失败: " + ", ".join(sorted({name for name, _ in result.failures})))
+                logger.debug("数据源查询失败: " + ", ".join(sorted({name for name, _ in result.failures})))
             emit(Stage.MERGE)
             working.info = self.merger.merge(working, result)
             from javsp.translate import translate_movie_info
@@ -151,9 +151,8 @@ class JobRunner:
             return ConcurrentBatch(self).run(movies, on_result)
         if self._custom_components:
             return self._run_serial(movies, on_result)
-        # 串行模式沿用成功影片之间的节流，子任务仍受批次线程额度限制。
+        # 串行影片仍复用受限图片池，并保留取消回收边界。
         resources = BatchResources(self.cfg)
-        resources.site_interval = 0
         previous = self.resources, self.crawler.resources, self.executor.resources
         self.resources = self.crawler.resources = self.executor.resources = resources
         try:
@@ -182,14 +181,6 @@ class JobRunner:
                 if job.interruption:
                     batch.error = JobError(movie.dvdid or movie.cid or "未知番号", Stage.DONE, job.interruption)
                 break
-            if job.success and index + 1 < len(movies):
-                try:
-                    self.crawler.throttle()
-                except BaseException as cause:
-                    batch.aborted = True
-                    batch.pending = movies[index + 1 :]
-                    batch.error = JobError(movie.dvdid or movie.cid or "未知番号", Stage.CRAWL, cause)
-                    break
         return batch
 
 
