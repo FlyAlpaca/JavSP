@@ -49,10 +49,18 @@ class Response:
 
 
 class Session:
-    def __init__(self, response=None, error=None):
+    def __init__(self, response=None, error=None, head_response=None):
         self.response = response or Response()
+        self.head_response = head_response or self.response
         self.error = error
         self.calls = []
+        self.head_calls = []
+
+    def head(self, url, **options):
+        self.head_calls.append((url, options))
+        if self.error:
+            raise self.error
+        return self.head_response
 
     def get(self, url, **options):
         self.calls.append((url, options))
@@ -123,17 +131,84 @@ def test_cache_update_and_conditional_check(tmp_path):
     stamp = path.stat().st_mtime_ns
     unchanged = Session(Response(status=304))
     assert prepare_actor_mapping(path, session=unchanged).resolve("橋本ありな") == "新ありな（新有菜）"
-    assert unchanged.calls[0][1]["headers"]["If-None-Match"] == '"v1"'
+    assert unchanged.head_calls[0][1]["headers"]["If-None-Match"] == '"v1"'
+    assert not unchanged.calls
     assert path.stat().st_mtime_ns == stamp
     new_body = XML.replace("新有菜".encode(), "新译名".encode())
     updated = Session(Response(new_body, etag='"v2"'))
     assert prepare_actor_mapping(path, session=updated).resolve("新ありな") == "新ありな（新译名）"
     assert path.read_bytes() == new_body
+    assert len(updated.head_calls) == 1 and len(updated.calls) == 1
+    assert json.loads(path.with_suffix(".json").read_text())["etag"] == '"v2"'
     assert not list(path.parent.glob(".actor-mapping-*"))
 
 
+@pytest.mark.parametrize("status", [200, 304])
+def test_matching_head_version_never_downloads_or_rewrites_cache(tmp_path, status):
+    path = tmp_path / "actor-mapping.xml"
+    prepare_actor_mapping(path, session=Session())
+    metadata_path = path.with_suffix(".json")
+    before = (path.stat().st_mtime_ns, metadata_path.stat().st_mtime_ns)
+    session = Session(Response(status=status))
+    assert prepare_actor_mapping(path, session=session, proxy="http://localhost:8080").row_count == 4
+    assert len(session.head_calls) == 1 and not session.calls
+    options = session.head_calls[0][1]
+    assert "Range" not in options["headers"]
+    assert options["headers"]["Accept-Encoding"] == "identity"
+    assert options["proxies"] == {"http": "http://localhost:8080", "https": "http://localhost:8080"}
+    assert (path.stat().st_mtime_ns, metadata_path.stat().st_mtime_ns) == before
+
+
+@pytest.mark.parametrize("head_status", [200, 405, 501])
+@pytest.mark.parametrize("get_status", [200, 206, 304])
+def test_head_without_validator_falls_back_to_get_and_skips_unchanged_body(tmp_path, head_status, get_status):
+    path = tmp_path / "actor-mapping.xml"
+    prepare_actor_mapping(path, session=Session())
+    head = Response(status=head_status)
+    head.headers.pop("ETag")
+    response = Response(status=get_status)
+
+    def no_read(_size):
+        pytest.fail("未更新的映射不应读取响应正文")
+
+    response.iter_content = no_read
+    session = Session(response, head_response=head)
+    assert prepare_actor_mapping(path, session=session).row_count == 4
+    assert len(session.head_calls) == 1 and len(session.calls) == 1
+    assert path.read_bytes() == XML
+
+
+@pytest.mark.parametrize("status", [405, 501])
+def test_unsupported_head_still_downloads_changed_mapping(tmp_path, status):
+    path = tmp_path / "actor-mapping.xml"
+    prepare_actor_mapping(path, session=Session())
+    body = XML.replace("新有菜".encode(), "新译名".encode())
+    session = Session(Response(body, etag='"v2"'), head_response=Response(status=status))
+    assert prepare_actor_mapping(path, session=session).resolve("新ありな") == "新ありな（新译名）"
+    assert path.read_bytes() == body
+
+
+def test_head_timeout_retries_without_downloading_unchanged_mapping(tmp_path):
+    path = tmp_path / "actor-mapping.xml"
+    prepare_actor_mapping(path, session=Session())
+    session = Session()
+    real_head = session.head
+    attempts = []
+
+    def flaky_head(*args, **kwargs):
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise requests.ReadTimeout("temporary timeout")
+        return real_head(*args, **kwargs)
+
+    session.head = flaky_head
+    assert prepare_actor_mapping(path, session=session).row_count == 4
+    assert len(attempts) == 2 and not session.calls
+
+
 @pytest.mark.parametrize(
-    "response", [Response(b"<html/>"), Response(status=503), Response(error=requests.ConnectionError("interrupted"))]
+    "response", [Response(b"<html/>", etag='"v2"'), Response(status=503),
+                 Response(etag='"v2"', error=requests.ConnectionError("interrupted"))]
 )
 def test_failed_update_preserves_valid_cache(tmp_path, response, caplog):
     path = tmp_path / "actor-mapping.xml"
@@ -162,10 +237,24 @@ def test_corrupt_cache_or_version_metadata_forces_full_request(tmp_path):
     repair = Session()
     prepare_actor_mapping(path, session=repair)
     assert "If-None-Match" not in repair.calls[0][1]["headers"]
-    path.with_suffix(".json").write_text('{"etag":"old","sha256":"mismatch"}')
+    assert not repair.head_calls
+    metadata = json.loads(path.with_suffix(".json").read_text())
+    metadata["sha256"] = "mismatch"
+    path.with_suffix(".json").write_text(json.dumps(metadata))
     refetch = Session()
     prepare_actor_mapping(path, session=refetch)
     assert "If-None-Match" not in refetch.calls[0][1]["headers"]
+    assert not refetch.head_calls
+
+
+def test_missing_version_metadata_requires_download(tmp_path):
+    path = tmp_path / "actor-mapping.xml"
+    path.write_bytes(XML)
+    session = Session()
+    assert prepare_actor_mapping(path, session=session).row_count == 4
+    assert not session.head_calls and len(session.calls) == 1
+    assert "If-None-Match" not in session.calls[0][1]["headers"]
+    assert path.with_suffix(".json").is_file()
 
 
 def test_atomic_publication_failure_keeps_old_mapping(tmp_path, monkeypatch):
@@ -177,7 +266,8 @@ def test_atomic_publication_failure_keeps_old_mapping(tmp_path, monkeypatch):
 
     monkeypatch.setattr(actors.os, "replace", denied)
     new_body = XML.replace("新有菜".encode(), "新译名".encode())
-    assert prepare_actor_mapping(path, session=Session(Response(new_body))).resolve("新ありな") == "新ありな（新有菜）"
+    result = prepare_actor_mapping(path, session=Session(Response(new_body, etag='"v2"')))
+    assert result.resolve("新ありな") == "新ありな（新有菜）"
     assert path.read_bytes() == XML
     assert not list(tmp_path.glob(".actor-mapping-*"))
 
@@ -185,12 +275,12 @@ def test_atomic_publication_failure_keeps_old_mapping(tmp_path, monkeypatch):
 def test_size_and_download_time_limits_preserve_cache(tmp_path, monkeypatch):
     path = tmp_path / "actor-mapping.xml"
     prepare_actor_mapping(path, session=Session())
-    large = Response()
+    large = Response(etag='"v2"')
     large.headers["Content-Length"] = str(actors.MAX_MAPPING_SIZE + 1)
     prepare_actor_mapping(path, session=Session(large))
     clock = iter([0, actors.DOWNLOAD_DEADLINE + 1])
     monkeypatch.setattr(actors.time, "monotonic", lambda: next(clock))
-    prepare_actor_mapping(path, session=Session())
+    prepare_actor_mapping(path, session=Session(Response(etag='"v2"')))
     assert path.read_bytes() == XML
 
 
@@ -277,11 +367,19 @@ def mapping_server(monkeypatch):
 
     from javsp import download
 
-    state = {"body": XML, "etag": '"test-v1"', "ranges": [], "fail": False, "ignore_range": False}
+    state = {"body": XML, "etag": '"test-v1"', "ranges": [], "heads": [], "fail": False, "ignore_range": False}
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_args):
             pass
+
+        def do_HEAD(self):
+            state["heads"].append(self.headers.get("If-None-Match"))
+            matched = self.headers.get("If-None-Match") == state["etag"]
+            self.send_response(304 if matched and not state.get("ignore_conditional") else 200)
+            self.send_header("ETag", state["etag"])
+            self.send_header("Content-Length", str(len(state["body"])))
+            self.end_headers()
 
         def do_GET(self):
             body = state["body"]
@@ -337,8 +435,33 @@ def test_mapping_parallel_download_and_conditional_cache(tmp_path, mapping_serve
     assert "bytes=128-255" in mapping_server["ranges"]
     assert not list(tmp_path.glob(".*-download-*"))
     before = path.stat().st_mtime_ns
+    ranges = list(mapping_server["ranges"])
     assert prepare_actor_mapping(path).row_count == 4
     assert path.stat().st_mtime_ns == before
+    assert mapping_server["heads"] == ['"test-v1"']
+    assert mapping_server["ranges"] == ranges
+
+
+def test_mapping_server_ignores_conditional_head_but_matching_etag_skips_get(tmp_path, mapping_server):
+    path = tmp_path / "actor-mapping.xml"
+    prepare_actor_mapping(path)
+    mapping_server["ignore_conditional"] = True
+    mapping_server["ranges"].clear()
+    assert prepare_actor_mapping(path).row_count == 4
+    assert mapping_server["heads"] == ['"test-v1"']
+    assert not mapping_server["ranges"]
+
+
+def test_mapping_server_changed_head_triggers_validated_download(tmp_path, mapping_server):
+    path = tmp_path / "actor-mapping.xml"
+    prepare_actor_mapping(path)
+    body = XML.replace("新有菜".encode(), "新译名".encode())
+    mapping_server.update(etag='"test-v2"', body=body)
+    mapping_server["ranges"].clear()
+    assert prepare_actor_mapping(path).resolve("新ありな") == "新ありな（新译名）"
+    assert mapping_server["heads"] == ['"test-v1"']
+    assert "bytes=128-255" in mapping_server["ranges"]
+    assert path.read_bytes() == body
 
 
 def test_mapping_interruption_keeps_cache_and_resumes_next_start(tmp_path, mapping_server, monkeypatch):
