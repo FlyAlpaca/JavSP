@@ -150,4 +150,4 @@ def generate_names(movie: Movie, cfg, *, base_dir=None):
         setattr(movie, key, value)
     for field, label in (("title", "标题"), ("rawtitle", "原始标题"), ("actress", "演员路径字段")):
         if values[field] != original[field]:
-            logger.info("自动截短%s为:\n%s", label, values[field])
+            logger.debug("自动截短%s为:\n%s", label, values[field])

@@ -308,7 +308,7 @@ def _ensure_entity_indexes(path):
                 db.execute(f"CREATE INDEX {table}_id ON {table} (id)")
             if not prefixes_present:
                 _build_cid_prefixes(db)
-        logger.info("R18.dev 本地数据库查询索引已更新")
+        logger.debug("R18.dev 本地数据库查询索引已更新")
     except (OSError, sqlite3.Error) as error:
         logger.warning("R18.dev 本地数据库查询索引更新失败，继续使用原数据库: %s", error)
 
@@ -328,7 +328,7 @@ def prepare_database(path: Path, online_enabled: bool, *, session=None, proxy=No
         _ensure_entity_indexes(path)
         age = datetime.now(UTC) - imported_at if imported_at is not None else None
         if old_etag and old_size and age is not None and timedelta(0) <= age < timedelta(days=7):
-            logger.info("R18.dev 本地数据库七天内已更新，跳过远端检查: %s", path)
+            logger.debug("R18.dev 本地数据库七天内已更新，跳过远端检查: %s", path)
             return path
     client = session or requests.Session()
     options = {"proxies": {"http": str(proxy), "https": str(proxy)}} if proxy is not None else {}
@@ -342,7 +342,7 @@ def prepare_database(path: Path, online_enabled: bool, *, session=None, proxy=No
                 old_date > source.dump_date
                 or (old_date == source.dump_date and old_etag == source.etag and old_size == source.size)
             ):
-                logger.info("R18.dev 本地数据库已是最新版本: %s", old_date)
+                logger.debug("R18.dev 本地数据库已是最新版本: %s", old_date)
                 return path
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary.unlink(missing_ok=True)

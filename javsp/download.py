@@ -244,7 +244,7 @@ def download_file(
             logger.warning("分片下载不可用，回退单连接: %s", range_error)
             ranged = False
     if not ranged:
-        logger.info("下载源不支持可靠分片，改用单连接")
+        logger.debug("下载源不支持可靠分片，改用单连接")
         single = Path(f"{spec.prefix}.single.part")
         with DownloadProgress(spec.size, _part_length(single, spec.size), label, logger) as progress:
             _download_single(spec, client, options, progress)

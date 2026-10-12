@@ -227,7 +227,7 @@ def prepare_actor_mapping(path: Path, *, session=requests, proxy=None) -> ActorM
                 logger.warning("演员映射检查或下载暂时失败，将重试（%s/%s）: %s", attempt + 1, DOWNLOAD_ATTEMPTS, error)
         if content is None:
             if cached is not None and etag:
-                logger.info("演员映射没有更新，复用缓存（%s 条）", cached.row_count)
+                logger.debug("演员映射没有更新，复用缓存（%s 条）", cached.row_count)
                 return cached
             raise ActorMappingError("演员映射返回 304 但没有对应有效缓存")
         updated = ActorMapping.from_xml(content)

@@ -55,7 +55,7 @@ def _scan_movies(root: str, cfg, result: ScanResult) -> list[Movie]:
 
                 if has_nfo:
                     result.skipped.append(target_path)
-                    logger.info(f"跳过已有NFO的文件夹: {name}")
+                    logger.debug(f"跳过已有NFO的文件夹: {name}")
                     continue
 
             filtered_dirs.append(name)
