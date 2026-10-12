@@ -1,4 +1,4 @@
-"""批次全部成功后核对转移与来源快照，事务清理历史残留及源目录。"""
+"""批次结束后保护失败影片目录，核对转移与来源快照并事务清理残留。"""
 
 import logging
 import os
@@ -257,7 +257,7 @@ class SourceCleanup:
             except (OSError, _UnsafeCleanup) as error:
                 self.warnings.append(f"删除空源目录失败，保留 {directory}: {error}")
         if not path.exists():
-            logger.info("批次成功，已清理源目录残留: %s", path)
+            logger.info("已清理源目录残留: %s", path)
 
     def _prepare(self, batch):
         self._check_ancestors(self.root)
@@ -270,8 +270,9 @@ class SourceCleanup:
                 self.protected.add(Path(os.path.abspath(job.output.movie.save_dir)))
                 self.protected.update(Path(os.path.abspath(file)) for file in job.output.artifacts)
                 self.protected.update(Path(os.path.abspath(target)) for _, target in job.output.moved_files)
-        if not self.source_files <= moved.keys():
-            raise _UnsafeCleanup("本轮影片缺少成功转移记录，跳过清理")
+        for source in self.source_files - moved.keys():
+            self.protected.add(source.parent)
+            self.warnings.append(f"保留失败或缺少成功转移记录的影片目录: {source.parent}")
         self._check_root_changes()
 
         files = {file: stamp for tree in self.trees.values() for file, stamp in tree.files.items()}
@@ -294,7 +295,7 @@ class SourceCleanup:
 
     def run(self, batch):
         if (not self.enabled or batch.aborted or batch.error or batch.pending or len(batch.jobs) != batch.total
-                or any(not job.success or job.cancelled or job.interruption for job in batch.jobs)):
+                or any(job.cancelled or job.interruption or (job.error and not job.error.recovered) for job in batch.jobs)):
             batch.warnings.extend(self.warnings)
             for warning in self.warnings:
                 logger.warning(warning)

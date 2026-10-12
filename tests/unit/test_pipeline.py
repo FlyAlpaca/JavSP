@@ -312,10 +312,14 @@ def test_pipeline_keeps_source_directory_with_unprocessed_files(scene, tmp_path,
         assert (group / "ABC-123.srt").read_bytes() == b"source subtitle"
 
 
-def test_pipeline_failure_prevents_all_source_cleanup(scene, monkeypatch):
+def test_pipeline_failure_protects_failed_directory_and_cleans_successful_sibling(scene, monkeypatch):
     cfg, source, _ = scene
     parent = source / "group"
     failed, completed = parent / "failed", parent / "completed"
+    historical = source / "historical"
+    historical.mkdir()
+    (historical / "old.nfo").write_bytes(b"old")
+    (source / "old.jpg").write_bytes(b"old")
     for directory, identity in ((failed, "ABC-123"), (completed, "ABC-124")):
         directory.mkdir(parents=True)
         (source / f"{identity}.mp4").rename(directory / f"{identity}.mp4")
@@ -328,8 +332,9 @@ def test_pipeline_failure_prevents_all_source_cleanup(scene, monkeypatch):
     monkeypatch.setattr(sys.modules["javsp.web.testlocal"], "parse_data", parse)
     batch = run_in_id_order(Pipeline(cfg, translator=object()), source)
     assert batch.exit_code == 1 and not batch.aborted
-    assert failed.is_dir() and parent.is_dir() and completed.is_dir()
-    assert (completed / "notes.txt").read_bytes() == b"notes"
+    assert failed.is_dir() and parent.is_dir() and not completed.exists()
+    assert (failed / "notes.txt").read_bytes() == b"notes"
+    assert not historical.exists() and not (source / "old.jpg").exists()
 
 
 def test_cancelled_pipeline_retains_completed_source_directory(scene, monkeypatch):
