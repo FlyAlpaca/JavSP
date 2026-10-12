@@ -15,8 +15,10 @@ import os
 import re
 from pathlib import Path
 
-__all__ = ["get_id", "get_cid", "guess_av_type", "normalize_id"]
+__all__ = ["get_id", "get_cid", "guess_av_type", "normalize_id", "dvd_id_candidates", "cid_candidates"]
 
+_SERIAL_ID = re.compile(r"([A-Z]{2,10})[-_\s]*([0-9]{1,5})", re.I)
+_SPECIAL_PREFIXES = {"HEYZO", "RED", "SKY", "EX"}
 
 
 # =============================================================================
@@ -27,21 +29,46 @@ def normalize_id(avid: str) -> str:
 
     示例:
         IPZ-380 / ipz380 / ipz00380 → IPZ-380
-        FC2-123456 / fc2123456 → FC2-123456
+        特殊番号只转换大小写，不推断其数字含义。
     """
     if not avid:
         return ""
-    d = avid.upper()
-    # 带分隔符的标准格式: LETTERS-DIGITS
-    m = re.match(r"^([A-Z]+)-(\d+)$", d)
+    d = avid.strip().upper()
+    m = _serial_id(d)
     if m:
-        return f"{m.group(1)}-{int(m.group(2))}"
-    # 无分隔符格式: LETTERSDIGITS
-    m = re.match(r"^([A-Z]+)(\d+)$", d)
-    if m:
-        return f"{m.group(1)}-{int(m.group(2))}"
-    # FC2 等特殊格式已经带分隔符，直接返回
+        prefix, number = m
+        return f"{prefix}-{number.lstrip('0') or '0'}"
     return d
+
+
+def _serial_id(avid: str) -> tuple[str, str] | None:
+    """只拆分普通英字前缀番号，排除有独立规则的编号体系。"""
+    match = _SERIAL_ID.fullmatch(avid.strip())
+    if match and match.group(1).upper() not in _SPECIAL_PREFIXES:
+        return match.group(1).upper(), match.group(2)
+    return None
+
+
+def dvd_id_candidates(avid: str) -> tuple[str, ...]:
+    """供索引查询使用的 DVD 编号写法；候选不是厂家规范番号。"""
+    exact = re.sub(r"[-\s]", "", avid).upper()
+    parts = _serial_id(avid)
+    if parts is None:
+        return (exact,)
+    prefix, number = parts
+    serial = number.lstrip("0") or "0"
+    return tuple(dict.fromkeys((exact, *(prefix + serial.zfill(width) for width in range(1, 6)))))
+
+
+def cid_candidates(avid: str) -> tuple[str, ...]:
+    """普通番号的 CID 回退：保留未补零、五位补零优先级，不猜测厂商前缀。"""
+    parts = _serial_id(avid)
+    if parts is None:
+        return ()
+    prefix, number = parts
+    serial = number.lstrip("0") or "0"
+    numbers = (serial, serial.zfill(5), number, *(serial.zfill(width) for width in range(2, 5)))
+    return tuple(dict.fromkeys(prefix.lower() + item for item in numbers))
 
 
 # =============================================================================
@@ -132,7 +159,7 @@ _PATTERN_RULES: list[_PatternRule] = [
     ),
     # 普通番号，带分隔符（如 ABC-123）
     _PatternRule(
-        r"([A-Z]{2,10})[-_](\d{2,5})",
+        r"([A-Z]{2,10})[-_]([0-9]{2,5})(?![0-9])",
         lambda m: m.group(1) + "-" + m.group(2),
     ),
     # 东热 red, sky, ex 系列（不带分隔符，已停止更新，限制数字范围降低误匹配）
@@ -142,7 +169,7 @@ _PATTERN_RULES: list[_PatternRule] = [
     ),
     # 普通番号，缺失分隔符（如 ABC123）
     _PatternRule(
-        r"([A-Z]{2,})(\d{2,5})",
+        r"([A-Z]{2,})([0-9]{2,5})(?![0-9])",
         lambda m: _format_no_sep(m),
     ),
     # TMA 影片（如 T28-557，番号很乱）
@@ -171,14 +198,13 @@ _PATTERN_RULES: list[_PatternRule] = [
 
 
 def _format_no_sep(m):
-    """处理无分隔符的普通番号，去除多余前导零"""
+    """兼容普通五位 CID 写法，三位以内及不确定的厂家位数保持原样。"""
     prefix = m.group(1)
     num = m.group(2)
-    # 当数字部分超过3位且有前导零时，去除多余的前导零
-    # （如 bbi00177 → BBI-177），但保留3位以内的前导零
-    # （如 XVSR060 → XVSR-060，060 中的 0 是番号的一部分）
-    if len(num) > 3 and num.startswith("0"):
-        num = num.lstrip("0") or "0"
+    # R18.dev 的 URE-013 / ure00013 示例；五位 00xxx 写法回退为至少三位。
+    # 四位及五位非 00 开头可能就是厂家编号，不能按整数格式化。
+    if prefix not in _SPECIAL_PREFIXES and len(num) == 5 and num.startswith("00"):
+        num = (num.lstrip("0") or "0").zfill(3)
     return prefix + "-" + num
 
 

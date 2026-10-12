@@ -17,6 +17,7 @@ import requests
 
 from javsp.datatype import MovieInfo
 from javsp.download import DownloadError, DownloadSpec, clear_parts, download_file
+from javsp.scan.avid import cid_candidates, dvd_id_candidates
 
 logger = logging.getLogger(__name__)
 BUCKET_URL = "https://r18dotdev.s3.eu-west-1.wasabisys.com/"
@@ -397,31 +398,38 @@ def _name(db, table, relation, entity, content_id, fields):
     return db.execute(query, (content_id,)).fetchall()
 
 
+def _lookup_dvd(db, dvdid):
+    """精确 DVD 匹配优先；等价写法必须唯一，CID 回退不得跨番号。"""
+    candidates = dvd_id_candidates(dvdid)
+    dvd_expression = "UPPER(REPLACE(REPLACE(dvd_id, '-', ''), ' ', ''))"
+    rows = db.execute(f"SELECT * FROM derived_video WHERE {dvd_expression} = ? LIMIT 2", (candidates[0],)).fetchall()
+    if rows:
+        return rows
+    placeholders = ", ".join("?" for _ in candidates)
+    rows = db.execute(
+        f"SELECT * FROM derived_video WHERE {dvd_expression} IN ({placeholders}) LIMIT 2", candidates
+    ).fetchall()
+    if rows:
+        return rows
+    for candidate in cid_candidates(dvdid):
+        rows = db.execute(
+            "SELECT * FROM derived_video WHERE content_id = ? AND "
+            f"(dvd_id IS NULL OR dvd_id = '' OR {dvd_expression} IN ({placeholders})) LIMIT 2",
+            (candidate, *candidates),
+        ).fetchall()
+        if rows:
+            return rows
+    return []
+
+
 def lookup(path: Path, movie):
-    """优先匹配 DVD 番号；缺失时依次尝试未补零和补零的 CID。"""
+    """精确查询 CID 或 DVD 番号；DVD 未命中时安全尝试补零等价写法。"""
     with closing(_connect(Path(path))) as db:
         db.row_factory = sqlite3.Row
         if movie.cid and (movie.data_src == "cid" or not movie.dvdid):
             rows = db.execute("SELECT * FROM derived_video WHERE content_id = ? LIMIT 2", (movie.cid,)).fetchall()
         elif movie.dvdid:
-            normalized = re.sub(r"[-\s]", "", movie.dvdid).upper()
-            rows = db.execute(
-                "SELECT * FROM derived_video WHERE UPPER(REPLACE(REPLACE(dvd_id, '-', ''), ' ', '')) = ? LIMIT 2", (normalized,)
-            ).fetchall()
-            if not rows:
-                match = re.fullmatch(r"([A-Za-z]+)[-\s]*(\d+)", movie.dvdid)
-                if match:
-                    prefix, number = match.groups()
-                    number = number.lstrip("0") or "0"
-                    for candidate in dict.fromkeys((prefix.lower() + number, prefix.lower() + number.zfill(5))):
-                        rows = db.execute(
-                            "SELECT * FROM derived_video WHERE content_id = ? AND "
-                            "(dvd_id IS NULL OR dvd_id = '' OR "
-                            "UPPER(REPLACE(REPLACE(dvd_id, '-', ''), ' ', '')) = ?) LIMIT 2",
-                            (candidate, normalized),
-                        ).fetchall()
-                        if rows:
-                            break
+            rows = _lookup_dvd(db, movie.dvdid)
         else:
             return None
         if len(rows) != 1:
