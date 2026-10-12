@@ -64,6 +64,23 @@ MAPPABLE_FIELDS = (
 _COPY = re.compile(r"^COPY public\.(\w+) \(([^)]+)\) FROM stdin;$")
 _ESCAPE = re.compile(r"\\([\\nrtbfv])")
 _ESCAPES = {"\\": "\\", "n": "\n", "r": "\r", "t": "\t", "b": "\b", "f": "\f", "v": "\v"}
+_CID_PARTS = re.compile(r"([0-9]+|h_[0-9]+)?([a-z]+)([0-9]{1,5})", re.ASCII)
+_DVD_EXPRESSION = "UPPER(REPLACE(REPLACE(dvd_id, '-', ''), ' ', ''))"
+
+
+def _build_cid_prefixes(db):
+    """从转储实际 CID 构建系列前缀表；只接受无版本后缀的普通数字编号。"""
+    db.execute(
+        "CREATE TABLE video_cid_prefix (series TEXT NOT NULL, prefix TEXT NOT NULL, PRIMARY KEY (series, prefix))"
+    )
+    cursor = db.execute("SELECT content_id FROM derived_video WHERE content_id IS NOT NULL")
+    while rows := cursor.fetchmany(1000):
+        prefixes = set()
+        for (cid,) in rows:
+            match = _CID_PARTS.fullmatch(cid)
+            if match and match[1]:
+                prefixes.add((match[2], match[1]))
+        db.executemany("INSERT OR IGNORE INTO video_cid_prefix VALUES (?, ?)", sorted(prefixes))
 
 
 @dataclass(frozen=True)
@@ -262,6 +279,7 @@ def _import_dump(stream, path, source: DumpObject):
             raise ValueError("R18.dev 转储没有影片数据")
         db.execute("CREATE INDEX video_dvd ON derived_video (UPPER(REPLACE(REPLACE(dvd_id, '-', ''), ' ', '')))")
         db.execute("CREATE INDEX video_cid ON derived_video (content_id)")
+        _build_cid_prefixes(db)
         for table in ("derived_video_actress", "derived_video_category", "derived_video_director"):
             db.execute(f"CREATE INDEX {table}_cid ON {table} (content_id)")
         # 关联名称及制作信息按实体 id 查询；这些表在转储中没有主键。
@@ -277,16 +295,19 @@ def _import_dump(stream, path, source: DumpObject):
 
 
 def _ensure_entity_indexes(path):
-    """为旧版已导入的数据库补建查询索引；失败时仍保留可用旧库。"""
+    """为旧库补建实体索引和 CID 前缀表；失败时仍保留可用旧库。"""
     try:
         with sqlite3.connect(path) as db:
             present = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='index'")}
             missing = [table for table in ENTITY_TABLES if f"{table}_id" not in present]
-            if not missing:
+            prefixes_present = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='video_cid_prefix'").fetchone()
+            if not missing and prefixes_present:
                 return
             db.execute("BEGIN")
             for table in missing:
                 db.execute(f"CREATE INDEX {table}_id ON {table} (id)")
+            if not prefixes_present:
+                _build_cid_prefixes(db)
         logger.info("R18.dev 本地数据库查询索引已更新")
     except (OSError, sqlite3.Error) as error:
         logger.warning("R18.dev 本地数据库查询索引更新失败，继续使用原数据库: %s", error)
@@ -399,44 +420,57 @@ def _name(db, table, relation, entity, content_id, fields):
 
 
 def _lookup_dvd(db, dvdid):
-    """精确 DVD 匹配优先；等价写法必须唯一，CID 回退不得跨番号。"""
+    """精确 DVD 优先，同等级按 CID 升序取一条；CID 回退不得跨番号。"""
     candidates = dvd_id_candidates(dvdid)
-    dvd_expression = "UPPER(REPLACE(REPLACE(dvd_id, '-', ''), ' ', ''))"
-    rows = db.execute(f"SELECT * FROM derived_video WHERE {dvd_expression} = ? LIMIT 2", (candidates[0],)).fetchall()
-    if rows:
-        return rows
+    row = db.execute(
+        f"SELECT * FROM derived_video WHERE {_DVD_EXPRESSION} = ? ORDER BY content_id, rowid LIMIT 1", (candidates[0],)
+    ).fetchone()
+    if row is not None:
+        return row
     placeholders = ", ".join("?" for _ in candidates)
-    rows = db.execute(
-        f"SELECT * FROM derived_video WHERE {dvd_expression} IN ({placeholders}) LIMIT 2", candidates
-    ).fetchall()
-    if rows:
-        return rows
-    for candidate in cid_candidates(dvdid):
-        rows = db.execute(
-            "SELECT * FROM derived_video WHERE content_id = ? AND "
-            f"(dvd_id IS NULL OR dvd_id = '' OR {dvd_expression} IN ({placeholders})) LIMIT 2",
-            (candidate, *candidates),
-        ).fetchall()
-        if rows:
-            return rows
-    return []
+    if len(candidates) > 1:
+        row = db.execute(
+            f"SELECT * FROM derived_video WHERE {_DVD_EXPRESSION} IN ({placeholders}) "
+            "ORDER BY content_id, rowid LIMIT 1", candidates
+        ).fetchone()
+        if row is not None:
+            return row
+    cids = cid_candidates(dvdid)
+    if not cids:
+        return None
+    # 旧库在启动时补建；直接只读查询旧库时仍可使用原有无厂商前缀候选。
+    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='video_cid_prefix'").fetchone():
+        series = re.match(r"[a-z]+", cids[0])[0]
+        prefixes = tuple(row[0] for row in db.execute(
+            "SELECT prefix FROM video_cid_prefix WHERE series = ? ORDER BY prefix", (series,)
+        ))
+        cids = cid_candidates(dvdid, prefixes=prefixes)
+    # 候选合并查询，每个 CID 走既有索引；优先级显式携带，不依赖返回/插入顺序。
+    values = ", ".join("(?, ?)" for _ in cids)
+    parameters = tuple(value for priority, cid in enumerate(cids) for value in (cid, priority))
+    return db.execute(
+        f"WITH candidates(cid, priority) AS (VALUES {values}) "
+        "SELECT v.* FROM candidates AS c JOIN derived_video AS v ON v.content_id = c.cid "
+        f"WHERE (dvd_id IS NULL OR dvd_id = '' OR {_DVD_EXPRESSION} IN ({placeholders})) "
+        "ORDER BY c.priority, v.content_id, v.rowid LIMIT 1",
+        (*parameters, *candidates),
+    ).fetchone()
 
 
 def lookup(path: Path, movie):
-    """精确查询 CID 或 DVD 番号；DVD 未命中时安全尝试补零等价写法。"""
+    """精确 CID 或 DVD 优先；DVD 多条命中按 CID 升序选取一条。"""
     with closing(_connect(Path(path))) as db:
         db.row_factory = sqlite3.Row
         if movie.cid and (movie.data_src == "cid" or not movie.dvdid):
-            rows = db.execute("SELECT * FROM derived_video WHERE content_id = ? LIMIT 2", (movie.cid,)).fetchall()
+            row = db.execute(
+                "SELECT * FROM derived_video WHERE content_id = ? ORDER BY rowid LIMIT 1", (movie.cid,)
+            ).fetchone()
         elif movie.dvdid:
-            rows = _lookup_dvd(db, movie.dvdid)
+            row = _lookup_dvd(db, movie.dvdid)
         else:
             return None
-        if len(rows) != 1:
-            if rows:
-                logger.warning("R18.dev 本地库番号有多条记录: %s", movie.dvdid or movie.cid)
+        if row is None:
             return None
-        row = rows[0]
         cid = row["content_id"]
         actress_rows = _name(
             db, "derived_actress", "derived_video_actress", "actress", cid, "e.name_kanji, e.name_romaji, e.image_url"
