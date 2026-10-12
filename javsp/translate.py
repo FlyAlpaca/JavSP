@@ -15,6 +15,7 @@ import requests
 from javsp.config import Translator
 from javsp.datatype import MovieInfo
 from javsp.download import DownloadError, DownloadSpec, clear_parts, download_file, parts
+from javsp.model_logging import ModelLogReader
 
 logger = logging.getLogger(__name__)
 _JAPANESE = re.compile(r"[\u3041-\u3096\u30a1-\u30fa\u30fd-\u30fe\uff66-\uff9d]")
@@ -125,6 +126,7 @@ class LocalTranslator:
         self._slots = threading.BoundedSemaphore(cfg.runtime.parallel if self._own_session else 1)
         self.session.trust_env = False
         self.process = None
+        self._logs = ModelLogReader()
 
     @property
     def base_url(self):
@@ -136,6 +138,7 @@ class LocalTranslator:
             if not self.binary:
                 raise TranslateError("找不到 llama-server；请使用包含 llama.cpp 的镜像")
             runtime = self.cfg.runtime
+            logger.info("启动本地翻译服务: %s（等待就绪，最长 %s 秒）", path.name, runtime.startup_timeout)
             command = [
                 self.binary,
                 "--model",
@@ -161,8 +164,14 @@ class LocalTranslator:
                 str(runtime.parallel),
                 "--n-gpu-layers",
                 str(runtime.n_gpu_layers),
+                "--log-jsonl",
+                "--log-verbosity",
+                "3",
             ]
-            self.process = subprocess.Popen(command)
+            self.process = subprocess.Popen(
+                command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace"
+            )
+            self._logs.start(self.process.stdout)
             deadline = time.monotonic() + runtime.startup_timeout
             while time.monotonic() < deadline:
                 if self.process.poll() is not None:
@@ -170,7 +179,7 @@ class LocalTranslator:
                 try:
                     response = self.session.get(f"{self.base_url}/health", timeout=2)
                     if response.ok and response.json().get("status") == "ok":
-                        logger.debug("本地翻译服务已就绪")
+                        logger.info("本地翻译服务已就绪")
                         return self
                 except (requests.RequestException, ValueError):
                     pass
@@ -179,8 +188,10 @@ class LocalTranslator:
         except OSError as error:
             self.close()
             raise TranslateError(f"启动 llama-server 失败: {error}") from error
-        except BaseException:
+        except BaseException as error:
             self.close()
+            if isinstance(error, TranslateError) and self._logs.diagnostic:
+                raise TranslateError(f"{error}；模型日志末尾: {self._logs.diagnostic}") from error
             raise
 
     def close(self):
@@ -193,6 +204,7 @@ class LocalTranslator:
                     self.process.kill()
                     self.process.wait()
             self.process = None
+        self._logs.close()
         if self._own_session:
             self.session.close()
 

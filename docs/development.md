@@ -219,6 +219,11 @@ wheel 保留运行时资源，避免移动 `data/`、`image/` 或默认配置导
 入口通过 `load_config()` 加载配置；`Cfg` 只定义冻结模型，导入时不读取用户文件、不解析命令行。
 各次加载独立，覆盖顺序为默认模板、用户文件、环境变量、CLI 参数。
 `RuntimeContext` 持有单批次的绝对根路径、数据库位置、演员映射和翻译器，配置对象不再保存运行资源。
+`LocalTranslator` 合并收集模型进程的 stdout/stderr；`ModelLogReader` 使用单个读取线程持续排空管道，
+将 llama.cpp JSONL 的 INFO/DEBUG 映射为应用 DEBUG，保留 WARNING/ERROR，纯文本诊断也按级别转发。
+模型原生日志阈值固定为 INFO，`other.debug` 控制应用端的明细可见性；不启用原生 verbose 或提示词日志。
+停止时先 terminate，超时则 kill 并等待进程退出，再等待读取线程完成、关闭管道和自有 HTTP 会话。
+启动失败在清理完成后附加有界的日志末尾；模型未就绪时仍不得扫描媒体。
 独立组件通过参数接收配置；需要演员信息归一化时，向 `MetadataMerger` 显式传入映射或运行上下文。
 站点解析接口为 `parse_data(info, *, context)`，清洗接口同样接收上下文；调用者使用 `with SiteContext(cfg, site)` 管理会话。
 每个站点任务拥有独立请求头、Cookie、动态域名和登录候选，重试复用会话，任务结束后关闭。
