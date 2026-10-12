@@ -3,7 +3,7 @@ import os
 import pytest
 
 from javsp.config import load_config
-from javsp.scan.avid import get_cid, get_id
+from javsp.scan.avid import get_cid, get_id, normalize_id
 
 file_dir = os.path.dirname(__file__)
 
@@ -30,6 +30,41 @@ def test_normal():
     assert "ABC-12" == get_id("ABC-12_01.mkv", cfg=load_config())
     assert "ABC-123" == get_id("Sky Angel Vol.6 月丘うさぎ(ABC-123).avi", cfg=load_config())
     assert "ABCD-123" == get_id("ABCD-123.mp4", cfg=load_config())
+
+
+@pytest.mark.parametrize(
+    ("filename", "expected"),
+    [
+        ("ure00013.mp4", "URE-013"),
+        ("xvsr00060.mp4", "XVSR-060"),
+        ("bbi00177.mp4", "BBI-177"),
+        ("abc00000.mp4", "ABC-000"),
+        ("ABC-00013.mp4", "ABC-00013"),
+        ("abc0013.mp4", "ABC-0013"),
+        ("abc01234.mp4", "ABC-01234"),
+        ("hodv20260.mp4", "HODV-20260"),
+        ("STARS-1234.mp4", "STARS-1234"),
+        ("HEYZO-0001.mp4", "HEYZO-0001"),
+        ("n0001.mp4", "N0001"),
+        ("ex0001.mp4", "EX0001"),
+        ("FC2-PPV-1234567.mp4", "FC2-1234567"),
+        ("062620-001.mp4", "062620-001"),
+        ("abc123456.mp4", ""),
+        ("ABC-123456.mp4", ""),
+    ],
+)
+def test_number_padding_preserves_display_and_special_ids(filename, expected):
+    assert get_id(filename, cfg=load_config()) == expected
+
+
+@pytest.mark.parametrize("avid", ["URE-013", "ure13", "ure00013", " ure_013 ", "URE 013"])
+def test_normalize_serial_padding(avid):
+    assert normalize_id(avid) == "URE-13"
+
+
+@pytest.mark.parametrize("avid", ["FC2-1234567", "062620-001", "HEYDOUGA-4017-023", "N0001", "EX0001", "HEYZO-0001"])
+def test_normalize_special_ids_does_not_strip_zeros(avid):
+    assert normalize_id(avid.lower()) == avid
 
 
 def test_cid_valid():

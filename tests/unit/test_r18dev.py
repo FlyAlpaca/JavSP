@@ -304,6 +304,67 @@ def test_dvd_id_falls_back_to_unpadded_then_padded_cid(tmp_path):
     assert lookup(path, Movie("IPZZ-798")).title == "番号匹配版"
 
 
+@pytest.mark.parametrize("avid", ["URE-13", "URE-013", "ure00013", "URE-0013", "URE_013"])
+def test_dvd_padding_variants_resolve_authoritative_id(tmp_path, avid):
+    path = tmp_path / "r18dev.sqlite"
+    prepare_database(path, False, session=Session(url("2026-10-06"), dump()))
+    with sqlite3.connect(path) as db:
+        db.execute(
+            "INSERT INTO derived_video (content_id, dvd_id, title_ja) VALUES (?, ?, ?)",
+            ("ure00013", "URE-013", "三位番号"),
+        )
+    info = lookup(path, Movie(avid))
+    assert info.dvdid == "URE-013"
+    assert info.cid == "ure00013"
+
+
+def test_dvd_padding_ambiguity_does_not_fall_back_to_cid(tmp_path):
+    path = tmp_path / "r18dev.sqlite"
+    prepare_database(path, False, session=Session(url("2026-10-06"), dump()))
+    with sqlite3.connect(path) as db:
+        db.executemany(
+            "INSERT INTO derived_video (content_id, dvd_id, title_ja) VALUES (?, ?, ?)",
+            [("other1", "URE-013", "三位版"), ("other2", "URE-0013", "四位版"), ("ure13", None, "CID版")],
+        )
+    assert lookup(path, Movie("URE-13")) is None
+    assert lookup(path, Movie("URE-013")).title == "三位版"
+    assert lookup(path, Movie("URE-0013")).title == "四位版"
+
+
+def test_cid_padding_fallback_preserves_priority_and_rejects_conflicts(tmp_path):
+    path = tmp_path / "r18dev.sqlite"
+    prepare_database(path, False, session=Session(url("2026-10-06"), dump()))
+    with sqlite3.connect(path) as db:
+        db.executemany(
+            "INSERT INTO derived_video (content_id, dvd_id, title_ja) VALUES (?, ?, ?)",
+            [
+                ("ure013", None, "三位CID"),
+                ("test0013", None, "四位CID"),
+                ("guard013", "OTHER-013", "冲突"),
+                ("prefer013", None, "三位CID"),
+                ("prefer00013", None, "五位CID"),
+            ],
+        )
+    assert lookup(path, Movie("URE-13")).cid == "ure013"
+    assert lookup(path, Movie("TEST-13")).cid == "test0013"
+    assert lookup(path, Movie("GUARD-13")) is None
+    assert lookup(path, Movie("PREFER-013")).cid == "prefer00013"
+    # 指定 CID 具有独立身份，不能因其数字相同而匹配另一个 CID。
+    assert lookup(path, Movie(cid="ure00013")) is None
+    assert lookup(path, Movie(cid="ure013")).cid == "ure013"
+
+
+def test_special_ids_do_not_use_generic_padding_fallback(tmp_path):
+    path = tmp_path / "r18dev.sqlite"
+    prepare_database(path, False, session=Session(url("2026-10-06"), dump()))
+    with sqlite3.connect(path) as db:
+        db.execute(
+            "INSERT INTO derived_video (content_id, dvd_id, title_ja) VALUES (?, ?, ?)",
+            ("heyzo00001", None, "不能猜测"),
+        )
+    assert lookup(path, Movie("HEYZO-0001")) is None
+
+
 def test_list_pagination_and_newest_valid_date(tmp_path, wasabi_server):
     path = tmp_path / "r18dev.sqlite"
     session = Session(url("2026-10-06"), dump("最新标题"))

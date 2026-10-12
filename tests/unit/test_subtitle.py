@@ -107,6 +107,18 @@ def test_rename_files_fuzzy_zero_padding(tmp_path):
     assert not (src / "ipz00380.srt").exists()
 
 
+def test_rename_files_low_serial_zero_padding(tmp_path):
+    src, dst = _setup_scene(tmp_path, "URE-013.mp4", "ure00013.srt")
+    movie = Movie("URE-013")
+    movie.files = [str(src / "URE-013.mp4")]
+    movie.save_dir = str(dst)
+    movie.basename = "URE-013"
+    OutputExecutor(load_config()).execute_files(movie)
+
+    assert (dst / "URE-013.srt").exists()
+    assert not (src / "ure00013.srt").exists()
+
+
 def test_rename_files_different_dvdid_not_match(tmp_path):
     """ABC-123.srt 不应匹配 IPZ-380 的视频"""
     src, dst = _setup_scene(tmp_path, "IPZ-380.mp4", "ABC-123.srt")
