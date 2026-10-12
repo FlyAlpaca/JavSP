@@ -2,6 +2,7 @@
 
 import os
 
+import pytest
 from lxml import etree
 
 from javsp import config
@@ -70,7 +71,7 @@ def test_genre_mapping_is_reused_across_movies(monkeypatch):
         summarizer._genre_map_for_source.cache_clear()
 
 
-def test_scan_unreadable_child_continues(tmp_path, monkeypatch):
+def test_scan_unreadable_child_stops(tmp_path, monkeypatch):
     inaccessible = tmp_path / "inaccessible"
     inaccessible.mkdir()
     movie_file = tmp_path / "ABC-123.mp4"
@@ -84,7 +85,9 @@ def test_scan_unreadable_child_continues(tmp_path, monkeypatch):
         return original_listdir(path)
 
     monkeypatch.setattr(file.os, "listdir", listdir)
-    assert [movie.dvdid for movie in file.Scanner(config.load_config()).scan(str(tmp_path)).movies] == ["ABC-123"]
+    with pytest.raises(PermissionError, match="denied"):
+        file.Scanner(config.load_config()).scan(str(tmp_path))
+    assert movie_file.exists()
 
 
 def test_nfo_site_categories_are_tags(tmp_path, monkeypatch):

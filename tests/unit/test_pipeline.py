@@ -292,7 +292,12 @@ def test_pipeline_keeps_source_directory_with_unprocessed_files(scene, tmp_path,
         destination.mkdir(parents=True)
         (destination / "ABC-123.srt").write_bytes(b"existing subtitle")
     batch = Pipeline(cfg, translator=object()).run(source)
-    assert group.is_dir() and (group / "notes.txt").read_bytes() == b"keep"
+    if blocker in ("duplicate", "failed"):
+        assert group.is_dir() and (group / "notes.txt").read_bytes() == b"keep"
+    elif blocker == "conflict_subtitle":
+        assert group.is_dir() and not (group / "notes.txt").exists()
+    else:
+        assert not group.exists()
     if blocker == "unrecognized":
         assert batch.scan.unrecognized
     elif blocker == "small":
@@ -307,7 +312,7 @@ def test_pipeline_keeps_source_directory_with_unprocessed_files(scene, tmp_path,
         assert (group / "ABC-123.srt").read_bytes() == b"source subtitle"
 
 
-def test_pipeline_cleans_successful_sibling_despite_failure_and_retains_parent(scene, monkeypatch):
+def test_pipeline_failure_prevents_all_source_cleanup(scene, monkeypatch):
     cfg, source, _ = scene
     parent = source / "group"
     failed, completed = parent / "failed", parent / "completed"
@@ -323,7 +328,8 @@ def test_pipeline_cleans_successful_sibling_despite_failure_and_retains_parent(s
     monkeypatch.setattr(sys.modules["javsp.web.testlocal"], "parse_data", parse)
     batch = run_in_id_order(Pipeline(cfg, translator=object()), source)
     assert batch.exit_code == 1 and not batch.aborted
-    assert failed.is_dir() and parent.is_dir() and not completed.exists()
+    assert failed.is_dir() and parent.is_dir() and completed.is_dir()
+    assert (completed / "notes.txt").read_bytes() == b"notes"
 
 
 def test_cancelled_pipeline_retains_completed_source_directory(scene, monkeypatch):
@@ -664,3 +670,52 @@ def test_stop_arriving_at_commit_boundary_keeps_job_pending(scene, monkeypatch, 
     batch = run_in_id_order(Pipeline(cfg, translator=object()), source)
     assert batch.aborted and not batch.jobs and len(batch.pending) == 2
     assert len(list(source.glob("*.mp4"))) == 2 and not list(tmp_path.rglob(".javsp-*"))
+
+
+def test_empty_pipeline_reaches_cleanup_and_review_without_processing(scene):
+    from javsp.cli import ProgressDisplay
+    from javsp.scan.file import Scanner
+
+    cfg, source, _ = scene
+    for video in source.glob("*.mp4"):
+        video.unlink()
+    historical = source / "historical"
+    historical.mkdir()
+    (historical / "old.nfo").write_bytes(b"old")
+    (source / "poster.jpg").write_bytes(b"old")
+    cfg = cfg.model_copy(update={"scanner": cfg.scanner.model_copy(update={"skip_nfo_dir": True})})
+    scan = Scanner(cfg).scan(source)
+    assert not scan.movies and (historical / "old.nfo").exists()
+    with ProgressDisplay() as display:
+        batch = Pipeline(cfg, translator=object()).run(source, review=display.review)
+    assert batch.total == 0 and not batch.jobs and batch.exit_code == 0
+    assert list(source.iterdir()) == []
+
+
+@pytest.mark.parametrize("failure", ["walk", "nfo"])
+def test_scan_error_prevents_end_cleanup(scene, monkeypatch, failure):
+    import os
+
+    from javsp.scan import file as scanner_file
+
+    cfg, source, _ = scene
+    historical = source / "historical"
+    historical.mkdir()
+    (historical / "old.nfo").write_bytes(b"keep")
+    if failure == "walk":
+        def fail_walk(root, *, onerror):
+            onerror(PermissionError("unreadable scan"))
+            return iter(())
+        monkeypatch.setattr(scanner_file.os, "walk", fail_walk)
+    else:
+        cfg = cfg.model_copy(update={"scanner": cfg.scanner.model_copy(update={"skip_nfo_dir": True})})
+        listdir = os.listdir
+        def fail_listdir(path):
+            if Path(path) == historical:
+                raise PermissionError("unreadable nfo directory")
+            return listdir(path)
+        monkeypatch.setattr(scanner_file.os, "listdir", fail_listdir)
+    with pytest.raises(PermissionError):
+        Pipeline(cfg, translator=object()).run(source)
+    assert (historical / "old.nfo").read_bytes() == b"keep"
+    assert (source / "ABC-123.mp4").exists()

@@ -38,7 +38,10 @@ def _scan_movies(root: str, cfg, result: ScanResult) -> list[Movie]:
     ignore_folder_name_pattern = re.compile("|".join(patterns)) if patterns else None
     skip_nfo = cfg.scanner.skip_nfo_dir
 
-    for dirpath, dirnames, filenames in os.walk(root):
+    def scan_error(error):
+        raise error
+
+    for dirpath, dirnames, filenames in os.walk(root, onerror=scan_error):
         filtered_dirs = []
         for name in dirnames:
             if ignore_folder_name_pattern and ignore_folder_name_pattern.match(name):
@@ -50,8 +53,8 @@ def _scan_movies(root: str, cfg, result: ScanResult) -> list[Movie]:
                 try:
                     has_nfo = any(f.lower().endswith(".nfo") for f in os.listdir(target_path))
                 except OSError as e:
-                    logger.debug(f"无法访问文件夹，已跳过: {target_path} ({e})")
-                    has_nfo = False
+                    logger.debug(f"无法访问文件夹，终止扫描: {target_path} ({e})")
+                    raise
 
                 if has_nfo:
                     result.skipped.append(target_path)
