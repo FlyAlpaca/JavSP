@@ -116,10 +116,8 @@ class ProgressDisplay:
         self.terminal = bool(sys.stderr and sys.stderr.isatty())
 
     def review(self, movies, root):
-        from javsp.startup import StartupError
-
         if not movies:
-            raise StartupError("未找到影片文件")
+            logger.info("未找到待处理影片，将检查历史残留")
         self.outer = tqdm(total=len(movies), desc="整理影片", ascii=True, leave=False, disable=not self.terminal)
 
     def on_event(self, event):
