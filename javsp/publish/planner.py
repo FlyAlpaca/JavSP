@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from javsp.datatype import Movie, MovieInfo
-from javsp.publish.naming import generate_names
+from javsp.publish.naming import generate_names, validate_output_paths
 from javsp.publish.transaction import _key, _stamp
 from javsp.scan.avid import get_id, normalize_id
 
@@ -112,6 +112,7 @@ class OutputPlanner:
         folder = os.path.join(planned.save_dir, "folder.jpg")
         if _key(folder) not in {_key(planned.fanart_file), _key(planned.poster_file)}:
             artifacts.append(folder)
+        validate_output_paths([op.target for op in operations if not op.skip] + artifacts, self.cfg)
         _validate_targets(operations, artifacts, planned.files)
         for path in artifacts:
             if os.path.lexists(path) and (not os.path.isfile(path) or os.path.islink(path)):

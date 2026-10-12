@@ -132,9 +132,9 @@ summarizer:
     output_folder_pattern: "#整理完成/{actress}/[{num}] {title}"
     # 影片、封面、nfo信息文件等的文件名将基于下面的规则来创建
     basename_pattern: "{num}"
-    # 允许的最长文件路径（路径过长时将据此自动截短标题）
+    # 允许的最长输出路径，影片/字幕后缀及全部产物均计入；超限时缩短路径中的标题或演员字段
     length_maximum: 250
-    # 是否以字节数来计算文件路径长度
+    # 是否以字节数计算上述路径预算；文件系统的单个目录/文件名限制始终独立检查
     length_by_byte: true
     # 路径中的{actress}字段最多包含多少名女优？
     max_actress_count: 10

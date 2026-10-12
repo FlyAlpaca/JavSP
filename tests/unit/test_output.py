@@ -69,6 +69,45 @@ def test_success_commits_all_artifacts(scene, tmp_path):
     assert result.movie.files == [str(target / "ABC-123.mp4")]
 
 
+def test_long_names_commit_and_preserve_full_nfo_metadata(scene, tmp_path):
+    from lxml import etree
+
+    movie, info, cfg = scene
+    title = "完整的中文标题🌟" * 50
+    actors = [f"演员{i}（" + "很长的中文译名" * 2 + "）" for i in range(10)]
+    info.title, info.actress = title, actors
+    paths = cfg.summarizer.path.model_copy(update={"output_folder_pattern": str(tmp_path / "out/{actress}/[{num}] {title}")})
+    cfg = cfg.model_copy(update={"summarizer": cfg.summarizer.model_copy(update={"path": paths})})
+    plan = OutputPlanner(cfg).plan(movie, info)
+    result = OutputExecutor(cfg).execute(plan)
+
+    assert Path(result.movie.files[0]).read_bytes() == b"video content"
+    assert Path(result.movie.save_dir, "ABC-123.srt").read_bytes() == b"subtitle content"
+    assert not Path(movie.files[0]).exists()
+    for path in result.movie.files + result.artifacts:
+        assert len(path.encode("utf-8")) <= cfg.summarizer.path.length_maximum
+        assert max(len(part.encode("utf-8")) for part in Path(path).parts) <= 255
+    tree = etree.parse(result.movie.nfo_file)
+    assert tree.xpath("/movie/title/text()") == ["ABC-123 " + title]
+    assert tree.xpath("/movie/actor/name/text()") == actors
+    assert info.title == title and info.actress == actors
+    assert not list(tmp_path.rglob(".javsp-*"))
+
+
+def test_long_literal_rejected_before_preparing_artifacts(scene, tmp_path, monkeypatch):
+    movie, info, cfg = scene
+    paths = cfg.summarizer.path.model_copy(update={
+        "output_folder_pattern": str(tmp_path / "out" / ("长" * 100)), "length_maximum": 4095,
+    })
+    cfg = cfg.model_copy(update={"summarizer": cfg.summarizer.model_copy(update={"path": paths})})
+    before = files_under(tmp_path)
+    monkeypatch.setattr(output, "download_cover", lambda *args, **kwargs: pytest.fail("规划失败不能下载或准备产物"))
+    with pytest.raises(ValueError, match="单个目录或文件名超过文件系统限制"):
+        OutputExecutor(cfg).execute(OutputPlanner(cfg).plan(movie, info))
+    assert files_under(tmp_path) == before
+    assert not list(tmp_path.rglob(".javsp-*"))
+
+
 @pytest.mark.parametrize("phase", ["prepare", "publish", "cancel"])
 def test_failure_restores_original_files_and_existing_outputs(scene, tmp_path, monkeypatch, phase):
     movie, info, cfg = scene
