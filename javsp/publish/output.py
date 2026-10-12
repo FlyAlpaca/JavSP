@@ -203,7 +203,7 @@ class OutputExecutor:
         for warning in cleanup_warnings:
             logger.warning(warning)
         for source, target in moved:
-            logger.info(f"重命名文件: '{source}' -> '{target}'")
+            logger.debug(f"重命名文件: '{source}' -> '{target}'")
             filemove_logger.debug(f'移动（重命名）文件: \n  原路径: "{source}"\n  新路径: "{target}"')
         parents = {str(Path(source).parent) for source, _ in moved} if self.cleanup_empty_dirs else set()
         for parent in parents:

@@ -81,7 +81,7 @@ def ensure_model(cfg: Translator, session=None, *, proxy=None) -> Path:
         raise TranslateError(f"无法创建模型缓存目录 {model_dir}: {error}") from error
     path = model_dir / spec.filename
     if _valid_model(path, spec):
-        logger.info("本地翻译模型校验通过: %s", path)
+        logger.debug("本地翻译模型校验通过: %s", path)
         return path
     if not cfg.auto_download:
         raise TranslateError(f"模型缺失或校验失败: {path}；请放入官方 GGUF 或启用 auto_download")
@@ -170,7 +170,7 @@ class LocalTranslator:
                 try:
                     response = self.session.get(f"{self.base_url}/health", timeout=2)
                     if response.ok and response.json().get("status") == "ok":
-                        logger.info("本地翻译服务已就绪")
+                        logger.debug("本地翻译服务已就绪")
                         return self
                 except (requests.RequestException, ValueError):
                     pass

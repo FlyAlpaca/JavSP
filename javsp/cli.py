@@ -129,7 +129,8 @@ class ProgressDisplay:
             else:
                 self.active[event.task_id] = (event.movie_id, event.detail or str(event.stage))
             if not self.terminal:
-                logger.info("任务 %s [%s] %s", event.task_id, event.movie_id, event.detail or event.stage)
+                log = logger.debug if event.detail else logger.info
+                log("任务 %s [%s] %s", event.task_id, event.movie_id, event.detail or event.stage)
             self._refresh()
             return
         if event.stage == Stage.CRAWL and not event.detail:

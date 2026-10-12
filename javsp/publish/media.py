@@ -113,7 +113,7 @@ def download_cover(covers, fanart_path, big_covers=None, movie_id="", *, cfg, re
                 if result is not None:
                     url, pic_path, detail = result
                     if highres:
-                        logger.info(f"已下载高清封面: {detail}")
+                        logger.debug(f"已下载高清封面: {detail}")
                     else:
                         logger.debug(f"已下载封面: '{url}'")
                     return url, pic_path
@@ -178,7 +178,7 @@ def download_extra_fanarts(movie: Movie, scrape_interval: float, tqdm_bar=None, 
             speed = get_fmt_size(info["rate"]) + "/s"
             pic_path = get_pic_path(os.path.join(destination_dir, str(idx)), temp_path)
             os.replace(temp_path, pic_path)
-            logger.info(f"已下载剧照{url} {os.path.basename(pic_path)}: {width}x{height}, {filesize} [{elapsed}, {speed}]")
+            logger.debug(f"已下载剧照{url} {os.path.basename(pic_path)}: {width}x{height}, {filesize} [{elapsed}, {speed}]")
         except Exception as e:
             warning = f"下载剧照{idx}失败: {url}, {e}"
             warnings.append(warning)

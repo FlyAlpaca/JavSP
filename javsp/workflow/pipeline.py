@@ -83,7 +83,7 @@ class JobRunner:
             working.dvdid, working.cid, working.data_src = result.dvdid, result.cid, result.data_src
             result.require_data()
             if result.failures:
-                logger.info("部分抓取器失败: " + ", ".join(sorted({name for name, _ in result.failures})))
+                logger.debug("部分抓取器失败: " + ", ".join(sorted({name for name, _ in result.failures})))
             emit(Stage.MERGE)
             working.info = self.merger.merge(working, result)
             from javsp.translate import translate_movie_info

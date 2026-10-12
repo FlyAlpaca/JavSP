@@ -37,7 +37,7 @@ def check_for_updates(*, session=requests):
     current = get_version()
     logger.info("JavSP 当前版本: %s", current)
     if _version_key(current) is None or current == "0.0.0":
-        logger.info("无法确定当前发布版本，跳过更新检查")
+        logger.debug("无法确定当前发布版本，跳过更新检查")
         return
     try:
         response = session.get(LATEST_RELEASE_URL, timeout=(2, 3))
@@ -51,7 +51,7 @@ def check_for_updates(*, session=requests):
     if _version_key(latest) > _version_key(current):
         logger.warning("发现 JavSP 新版本 %s（当前 %s），请在批处理结束后更新镜像或安装包", latest, current)
     else:
-        logger.info("JavSP 已是最新稳定版本")
+        logger.debug("JavSP 已是最新稳定版本")
 
 
 def prepare_startup(cfg, *, base_dir=None):
