@@ -56,7 +56,7 @@ SCHEMA = {
 }
 
 
-def dump(title="本地标题", *, duplicate=False, broken=False, blank_preview=False):
+def dump(title="本地标题", *, duplicate=False, broken=False, blank_preview=False, videos=()):
     rows = {table: [] for table in TABLES}
     video = [
         "abc00123",
@@ -79,6 +79,7 @@ def dump(title="本地标题", *, duplicate=False, broken=False, blank_preview=F
     rows["derived_video"].append(video)
     if duplicate:
         rows["derived_video"].append(["abc00124", *video[1:]])
+    rows["derived_video"].extend([cid, dvdid if dvdid is not None else r"\N", name, *video[3:]] for cid, dvdid, name in videos)
     rows["derived_actress"].append(["1", "女優", r"\N", "https://example.test/actor.jpg"])
     rows["derived_video_actress"].append(["abc00123", "1", "1"])
     rows["derived_category"].append(["1", "分類", r"\N"])
@@ -318,17 +319,24 @@ def test_dvd_padding_variants_resolve_authoritative_id(tmp_path, avid):
     assert info.cid == "ure00013"
 
 
-def test_dvd_padding_ambiguity_does_not_fall_back_to_cid(tmp_path):
+@pytest.mark.parametrize("reverse", [False, True])
+def test_dvd_multiple_matches_select_smallest_cid_and_preserve_exact_priority(tmp_path, reverse):
     path = tmp_path / "r18dev.sqlite"
     prepare_database(path, False, session=Session(url("2026-10-06"), dump()))
+    records = [
+        ("other1", "URE-013", "三位版"),
+        ("z-variant", "URE-0013", "四位版"),
+        ("a-variant", "URE-0013", "最小CID版"),
+        ("ure13", None, "CID版"),
+    ]
     with sqlite3.connect(path) as db:
         db.executemany(
             "INSERT INTO derived_video (content_id, dvd_id, title_ja) VALUES (?, ?, ?)",
-            [("other1", "URE-013", "三位版"), ("other2", "URE-0013", "四位版"), ("ure13", None, "CID版")],
+            list(reversed(records)) if reverse else records,
         )
-    assert lookup(path, Movie("URE-13")) is None
+    assert lookup(path, Movie("URE-13")).cid == "a-variant"
     assert lookup(path, Movie("URE-013")).title == "三位版"
-    assert lookup(path, Movie("URE-0013")).title == "四位版"
+    assert lookup(path, Movie("URE-0013")).title == "最小CID版"
 
 
 def test_cid_padding_fallback_preserves_priority_and_rejects_conflicts(tmp_path):
@@ -363,6 +371,94 @@ def test_special_ids_do_not_use_generic_padding_fallback(tmp_path):
             ("heyzo00001", None, "不能猜测"),
         )
     assert lookup(path, Movie("HEYZO-0001")) is None
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_exact_dvd_duplicate_selection_is_independent_of_dump_order(tmp_path, reverse):
+    videos = [("ipx00658", "IPX-658", "无厂商前缀"), ("118ipx00658", "IPX-658", "字典序最小CID")]
+    path = tmp_path / "r18dev.sqlite"
+    prepare_database(path, False, session=Session(url("2026-10-06"), dump(videos=videos[::-1] if reverse else videos)))
+    assert lookup(path, Movie("IPX-658")).cid == "118ipx00658"
+    assert lookup(path, Movie("IPX-658")).title == "字典序最小CID"
+    assert lookup(path, Movie(cid="ipx00658")).title == "无厂商前缀"
+
+
+def test_imported_prefixes_enable_indexed_batch_cid_lookup(tmp_path, monkeypatch):
+    videos = [
+        ("1start00538", None, "SOD"),
+        ("1start538", None, "SOD三位CID"),
+        ("118ipx00658", None, "IPX"),
+        ("h_086fsdss00615", None, "FSDSS"),
+        ("h_086fsdss00615r", None, "不同版本"),
+        ("1guard00123", "OTHER-123", "冲突"),
+    ]
+    path = tmp_path / "r18dev.sqlite"
+    prepare_database(path, False, session=Session(url("2026-10-06"), dump(videos=videos)))
+    with sqlite3.connect(path) as db:
+        prefixes = db.execute("SELECT series, prefix FROM video_cid_prefix ORDER BY series, prefix").fetchall()
+        assert prefixes == [("fsdss", "h_086"), ("guard", "1"), ("ipx", "118"), ("start", "1")]
+    statements = []
+    connect = r18dev._connect
+
+    def traced_connect(filename):
+        connection = connect(filename)
+        connection.set_trace_callback(statements.append)
+        return connection
+
+    monkeypatch.setattr(r18dev, "_connect", traced_connect)
+    before = path.read_bytes()
+    assert lookup(path, Movie("START-538")).cid == "1start00538"
+    candidate_queries = [sql for sql in statements if sql.startswith("WITH candidates")]
+    assert len(candidate_queries) == 1
+    with sqlite3.connect(path) as db:
+        plan = db.execute("EXPLAIN QUERY PLAN " + candidate_queries[0]).fetchall()
+        assert any("USING INDEX video_cid" in row[3] for row in plan)
+        assert not any("SCAN v" in row[3] for row in plan)
+    assert lookup(path, Movie("IPX-658")).cid == "118ipx00658"
+    assert lookup(path, Movie("FSDSS-615")).cid == "h_086fsdss00615"
+    assert lookup(path, Movie("GUARD-123")) is None
+    assert lookup(path, Movie(cid="1start538")).title == "SOD三位CID"
+    assert lookup(path, Movie(cid="1start000538")) is None
+    assert path.read_bytes() == before
+
+
+def test_legacy_prefix_table_is_built_once_without_download(tmp_path):
+    path = tmp_path / "r18dev.sqlite"
+    source_url = url("2026-10-06")
+    prepare_database(path, False, session=Session(source_url, dump(videos=[("1start00538", None, "SOD")])))
+    with sqlite3.connect(path) as db:
+        db.execute("DROP TABLE video_cid_prefix")
+    assert lookup(path, Movie("ABC-123")).title == "本地标题"
+    assert lookup(path, Movie("START-538")) is None
+    session = Session(source_url, b"not a dump")
+    assert prepare_database(path, False, session=session) == path
+    assert session.calls == 0
+    assert lookup(path, Movie("START-538")).cid == "1start00538"
+    # 已有表不在每次启动扫描影片表重建。
+    with sqlite3.connect(path) as db:
+        db.execute("INSERT INTO video_cid_prefix VALUES ('marker', '1')")
+    prepare_database(path, False, session=session)
+    with sqlite3.connect(path) as db:
+        assert db.execute("SELECT 1 FROM video_cid_prefix WHERE series = 'marker'").fetchone()
+
+
+def test_failed_prefix_migration_rolls_back_and_preserves_old_lookup(tmp_path, monkeypatch):
+    path = tmp_path / "r18dev.sqlite"
+    source_url = url("2026-10-06")
+    prepare_database(path, False, session=Session(source_url, dump()))
+    with sqlite3.connect(path) as db:
+        db.execute("DROP TABLE video_cid_prefix")
+    build = r18dev._build_cid_prefixes
+
+    def fail(db):
+        build(db)
+        raise sqlite3.OperationalError("injected migration failure")
+
+    monkeypatch.setattr(r18dev, "_build_cid_prefixes", fail)
+    assert prepare_database(path, False, session=Session(source_url, b"not a dump")) == path
+    assert lookup(path, Movie("ABC-123")).cid == "abc00123"
+    with sqlite3.connect(path) as db:
+        assert db.execute("SELECT 1 FROM sqlite_master WHERE name = 'video_cid_prefix'").fetchone() is None
 
 
 def test_list_pagination_and_newest_valid_date(tmp_path, wasabi_server):
@@ -509,14 +605,14 @@ def test_existing_database_gets_indexed_entity_lookups(tmp_path):
     assert lookup(path, Movie("ABC-123")).actress == ["女優"]
 
 
-def test_first_download_failure_and_ambiguous_id(tmp_path):
+def test_first_download_failure_and_multiple_dvd_matches(tmp_path):
     path = tmp_path / "config/r18dev.sqlite"
     bad = Session(url("2026-10-06"), b"bad gzip")
     assert prepare_database(path, True, session=bad) is None
     with pytest.raises(RuntimeError, match="在线抓取已关闭"):
         prepare_database(path, False, session=bad)
     prepare_database(path, True, session=Session(url("2026-10-06"), dump(duplicate=True)))
-    assert lookup(path, Movie("ABC-123")) is None
+    assert lookup(path, Movie("ABC-123")).cid == "abc00123"
     assert lookup(path, Movie(cid="abc00123")) is not None
 
 
@@ -601,7 +697,7 @@ def test_offline_local_miss_reports_reason(tmp_path, monkeypatch):
     result = CrawlerExecutor(cfg, runtime=runtime).crawl(Movie("ABC-999"))
     with pytest.raises(ValueError, match="未获取到影片数据.*ABC-999") as error:
         result.require_data()
-    assert "r18dev: 本地数据库未找到唯一匹配的影片记录" in str(error.value)
+    assert "r18dev: 本地数据库未找到匹配的影片记录" in str(error.value)
     assert "在线抓取已关闭" in str(error.value)
 
 

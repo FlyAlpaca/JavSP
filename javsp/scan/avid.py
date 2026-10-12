@@ -60,15 +60,20 @@ def dvd_id_candidates(avid: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys((exact, *(prefix + serial.zfill(width) for width in range(1, 6)))))
 
 
-def cid_candidates(avid: str) -> tuple[str, ...]:
-    """普通番号的 CID 回退：保留未补零、五位补零优先级，不猜测厂商前缀。"""
+def cid_candidates(avid: str, *, prefixes: tuple[str, ...] = ()) -> tuple[str, ...]:
+    """普通番号的 CID 回退，厂商前缀由调用方提供本地库中的实际观测值。"""
     parts = _serial_id(avid)
     if parts is None:
         return ()
     prefix, number = parts
     serial = number.lstrip("0") or "0"
     numbers = (serial, serial.zfill(5), number, *(serial.zfill(width) for width in range(2, 5)))
-    return tuple(dict.fromkeys(prefix.lower() + item for item in numbers))
+    series = prefix.lower()
+    candidates = [series + item for item in numbers]
+    for maker in prefixes:
+        # 已知厂商前缀先尝试常见五位、三位格式，其余写法保留兼容回退。
+        candidates.extend(maker + series + item for item in (serial.zfill(5), serial.zfill(3), *numbers))
+    return tuple(dict.fromkeys(candidates))
 
 
 # =============================================================================
