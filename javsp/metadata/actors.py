@@ -106,13 +106,28 @@ def _atomic_write(path: Path, content: bytes):
 
 
 def _mapping_content(path, session, headers, options):
-    """探测未压缩对象；强 ETag 与准确范围响应才允许复用分片。"""
+    """先检查缓存版本，再探测下载；强 ETag 与准确范围响应才允许复用分片。"""
+    cached_etag = headers.get("If-None-Match")
+    if cached_etag:
+        with session.head(
+            MAPPING_URL, headers={**headers, "Accept-Encoding": "identity"},
+            allow_redirects=True, timeout=(30, 120), **options
+        ) as response:
+            if response.status_code == 304:
+                return None, None
+            # 部分服务器忽略条件请求；有效缓存与远端 ETag 相同仍可直接复用。
+            if response.status_code == 200 and response.headers.get("ETag") == cached_etag:
+                return None, None
+            if response.status_code not in (405, 501):
+                response.raise_for_status()
     request_headers = {**headers, "Accept-Encoding": "identity", "Range": "bytes=0-0"}
     with session.get(MAPPING_URL, headers=request_headers, stream=True, timeout=(30, 120), **options) as response:
         if response.status_code == 304:
             return None, None
         response.raise_for_status()
         new_etag = response.headers.get("ETag")
+        if response.status_code in (200, 206) and cached_etag and new_etag == cached_etag:
+            return None, None
         match = re.fullmatch(r"bytes 0-0/(\d+)", response.headers.get("Content-Range", ""))
         if response.status_code == 206 and match and new_etag and not new_etag.startswith("W/"):
             size = int(match.group(1))
@@ -209,7 +224,7 @@ def prepare_actor_mapping(path: Path, *, session=requests, proxy=None) -> ActorM
             except (requests.RequestException, DownloadError) as error:
                 if attempt + 1 == DOWNLOAD_ATTEMPTS:
                     raise
-                logger.warning("演员映射下载暂时失败，将重试（%s/%s）: %s", attempt + 1, DOWNLOAD_ATTEMPTS, error)
+                logger.warning("演员映射检查或下载暂时失败，将重试（%s/%s）: %s", attempt + 1, DOWNLOAD_ATTEMPTS, error)
         if content is None:
             if cached is not None and etag:
                 logger.info("演员映射没有更新，复用缓存（%s 条）", cached.row_count)

@@ -119,7 +119,7 @@ docker run --rm \
 
 ### 女优名称与别名
 
-女优名称使用 [Jav Actors Mapping](https://github.com/li-peifeng/Jav-Actors-Mapping) 的 `actor-mapping.xml`，不再使用内置 JSON 表。每次启动都会检查 GitHub 更新；有更新时先下载并校验，再开始整理。缓存固定保存在**启动工作目录**的 `config/actor-mapping.xml`，Docker 中为 `/app/config/actor-mapping.xml`；版本信息保存在同目录的 `actor-mapping.json`。请持久化 `/app/config`。下载支持 `network.proxy_server` 和环境代理。服务器支持可靠范围请求且提供强 ETag 时，使用 1 MiB 分片、最多四连接下载；连接/读取超时分别为 30/120 秒，网络失败最多尝试三次，并保留分片供同版本续传，远端版本变化时清理旧分片。不支持可靠范围请求时回退单连接。完整下载通过 XML 校验后才替换缓存。更新失败时告警并使用有效旧缓存；首次无法获取映射且没有有效缓存时终止启动。
+女优名称使用 [Jav Actors Mapping](https://github.com/li-peifeng/Jav-Actors-Mapping) 的 `actor-mapping.xml`，不再使用内置 JSON 表。每次启动都会检查 GitHub 更新：已有有效缓存和匹配的版本元数据时，先通过 HEAD 请求检查 ETag，返回 304 或 ETag 相同则直接复用缓存，不下载 XML；确认版本变化后才下载并校验，再开始整理。服务器不支持 HEAD 时回退条件 GET 检查。缓存或版本元数据缺失、损坏时重新获取。缓存固定保存在**启动工作目录**的 `config/actor-mapping.xml`，Docker 中为 `/app/config/actor-mapping.xml`；版本信息保存在同目录的 `actor-mapping.json`。请持久化 `/app/config`。下载支持 `network.proxy_server` 和环境代理。服务器支持可靠范围请求且提供强 ETag 时，使用 1 MiB 分片、最多四连接下载；连接/读取超时分别为 30/120 秒，网络失败最多尝试三次，并保留分片供同版本续传，远端版本变化时清理旧分片。不支持可靠范围请求时回退单连接。完整下载通过 XML 校验后才替换缓存。更新失败时告警并使用有效旧缓存；首次无法获取映射且没有有效缓存时终止启动。
 
 名称统一展示为 `原名（中文译名）`，例如 `新ありな（新有菜）`；中文优先使用简体，其次使用繁体。没有中文译名或名称相同时只展示原名。该格式始终生效；`crawler.normalize_actress_name` 仅控制是否把 `keyword` 别名归到主名，默认开启。关闭时别名仍查表并格式化，但保留抓取到的别名，例如 `橋本ありな（新有菜）`。上游没有逐个别名的中文译名字段，因此别名采用所属条目的中文名。
 
