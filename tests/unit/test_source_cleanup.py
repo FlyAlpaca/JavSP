@@ -278,17 +278,14 @@ def test_target_modified_during_staging_restores_residuals(scene, tmp_path, monk
     assert not list(root.glob(".javsp-*"))
 
 
-@pytest.mark.parametrize("state", ["failed", "pending", "error", "missing_job", "cancelled", "interrupted"])
+@pytest.mark.parametrize("state", ["pending", "error", "missing_job", "cancelled", "interrupted", "unrecovered"])
 def test_any_incomplete_batch_prevents_all_cleanup(scene, tmp_path, state):
     cfg, root, folder, movie = scene
     historical = root / "historical.nfo"
     historical.write_bytes(b"keep")
     cleanup = SourceCleanup(root, cfg, ScanResult(movies=[movie]))
     batch = committed_batch(movie, tmp_path / "out")
-    if state == "failed":
-        batch.jobs.append(JobResult(Movie("ABC-124")))
-        batch.total += 1
-    elif state == "pending":
+    if state == "pending":
         batch.pending = [Movie("ABC-124")]
     elif state == "error":
         batch.error = object()
@@ -296,6 +293,10 @@ def test_any_incomplete_batch_prevents_all_cleanup(scene, tmp_path, state):
         batch.total += 1
     elif state == "cancelled":
         batch.jobs[0].cancelled = True
+    elif state == "unrecovered":
+        from javsp.workflow.models import JobError
+
+        batch.jobs[0].error = JobError("ABC-123", Stage.COMMIT, OSError("rollback incomplete"), False)
     else:
         batch.jobs[0].interruption = KeyboardInterrupt()
     cleanup.run(batch)
@@ -424,7 +425,7 @@ def test_new_root_video_during_staging_rolls_back_and_stops_cleanup(scene, monke
     assert batch.warnings and not batch.aborted and not list(root.glob(".javsp-*"))
 
 
-def test_missing_transfer_records_prevent_even_historical_cleanup(scene):
+def test_missing_transfer_records_protect_source_but_allow_historical_cleanup(scene):
     cfg, root, folder, movie = scene
     historical = root / "old.nfo"
     historical.write_bytes(b"old")
@@ -432,7 +433,7 @@ def test_missing_transfer_records_prevent_even_historical_cleanup(scene):
     movie.save_dir = str(root / "#整理完成")
     batch = BatchResult(1, jobs=[JobResult(movie, OutputResult(movie))])
     cleanup.run(batch)
-    assert historical.read_bytes() == b"old" and (folder / "notes.txt").exists()
+    assert not historical.exists() and (folder / "notes.txt").exists()
     assert batch.warnings
 
 
@@ -468,3 +469,40 @@ def test_recovery_file_prefix_is_protected_in_nested_directory(scene):
     SourceCleanup(root, cfg, ScanResult()).run(batch)
     assert evidence.read_bytes() == b"recovery" and not (folder / "notes.txt").exists()
     assert batch.warnings
+
+
+@pytest.mark.parametrize("shared_directory", [False, True])
+@pytest.mark.parametrize("removed_failed_video", [False, True])
+def test_failure_protects_original_directory_but_cleans_other_residuals(
+    scene, tmp_path, shared_directory, removed_failed_video,
+):
+    from javsp.workflow.models import JobError
+
+    cfg, root, folder, movie = scene
+    failed_dir = folder if shared_directory else root / "failed"
+    failed_dir.mkdir(exist_ok=True)
+    failed_file = failed_dir / "ABC-124.mp4"
+    failed_file.write_bytes(b"video")
+    (failed_dir / "poster.jpg").write_bytes(b"keep image")
+    companion = failed_dir / "pictures"
+    companion.mkdir()
+    (companion / "small.mp4").write_bytes(b"small")
+    failed_movie = Movie("ABC-124")
+    failed_movie.files = [str(failed_file)]
+    historical = root / "historical"
+    historical.mkdir()
+    (historical / "old.nfo").write_bytes(b"old")
+    (root / "old.jpg").write_bytes(b"old")
+    cleanup = SourceCleanup(root, cfg, ScanResult(movies=[movie, failed_movie]))
+    batch = committed_batch(movie, tmp_path / "out")
+    batch.total = 2
+    batch.jobs.append(JobResult(failed_movie, error=JobError("ABC-124", Stage.CRAWL, OSError("crawl failed"))))
+    if removed_failed_video:
+        failed_file.unlink()
+    cleanup.run(batch)
+    assert batch.exit_code == 1 and not batch.aborted
+    assert (failed_dir / "poster.jpg").read_bytes() == b"keep image"
+    assert (companion / "small.mp4").read_bytes() == b"small"
+    assert folder.exists() == shared_directory
+    assert not historical.exists() and not (root / "old.jpg").exists()
+    assert Path(movie.files[0]).read_bytes() == b"video" and batch.warnings
