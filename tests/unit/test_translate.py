@@ -269,7 +269,7 @@ def test_runtime_starts_local_server_and_closes(tmp_path, small_model, monkeypat
     (tmp_path / spec.filename).write_bytes(content)
     process = MagicMock()
     process.poll.return_value = None
-    monkeypatch.setattr("javsp.translate.subprocess.Popen", lambda command: process)
+    monkeypatch.setattr("javsp.translate.subprocess.Popen", lambda command, **kwargs: process)
     session = MagicMock()
     session.get.return_value.ok = True
     session.get.return_value.json.return_value = {"status": "ok"}
