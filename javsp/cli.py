@@ -9,6 +9,34 @@ from tqdm import tqdm
 from javsp.workflow.models import Stage
 
 logger = logging.getLogger(__name__)
+_FAILURE_SUMMARY_LIMIT = 240
+
+
+def _failure_summary(movie_id, reason):
+    """仅精简展示文本；保留阶段、数据源、错误原因和超长文本的首尾。"""
+    text = reason.removeprefix(f"[{movie_id}] ")
+    stage = ""
+    for candidate in Stage:
+        prefix = f"{candidate}: "
+        if text.startswith(prefix):
+            stage, text = str(candidate), text[len(prefix):]
+            break
+    wrapper = f"未获取到影片数据 ({movie_id}):"
+    if text.startswith(wrapper):
+        text = text[len(wrapper):].strip() or "未获取到影片数据"
+    text = text.removeprefix("无法生成符合长度限制的输出路径，请缩短输出目录或命名模板；")
+    lines = [line.strip().removeprefix("- ") for line in text.splitlines() if line.strip()]
+    text = "；".join(lines)
+    text = text.replace(
+        "本地数据库未找到唯一匹配的影片记录（可能未收录、番号不匹配或存在重复记录）；在线抓取已关闭",
+        "本地库无唯一匹配（未收录/番号不符/多条记录）；在线抓取关闭",
+    )
+    summary = f"{stage}：{text}" if stage else text
+    if len(summary) > _FAILURE_SUMMARY_LIMIT:
+        head = _FAILURE_SUMMARY_LIMIT * 3 // 4
+        tail = _FAILURE_SUMMARY_LIMIT - head - 3
+        summary = summary[:head] + " … " + summary[-tail:]
+    return summary
 
 
 def summarize_batch(batch, filemove_log=False):
@@ -57,9 +85,7 @@ def print_summary(stats):
         print("-" * width)
         print("  失败详情:")
         for movie_id, reason in stats["failed_list"]:
-            # 截断过长的原因
-            short_reason = reason if len(reason) <= 60 else reason[:57] + "..."
-            print(f"    {movie_id}: {short_reason}")
+            print(f"    {movie_id}: {_failure_summary(movie_id, reason)}")
     if stats["filemove_list"]:
         print("-" * width)
         print("  文件移动详情:")

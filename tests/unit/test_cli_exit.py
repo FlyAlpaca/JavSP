@@ -9,7 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from javsp import __main__ as cli
-from javsp.cli import summarize_batch
+from javsp.cli import print_summary, summarize_batch
 from javsp.config import Cfg, load_config
 from javsp.datatype import Movie, MovieInfo
 from javsp.workflow.models import BatchResult, JobError, JobResult, OutputResult, Stage
@@ -124,3 +124,63 @@ def test_batch_continues_and_counts_failure(monkeypatch):
     assert successful == [movies[1]]
     assert stats["total"] == 2 and stats["failed"] == 1 and stats["success"] == 1
     assert "move failed" in stats["failed_list"][0][1]
+
+
+def failure_stats(cause, stage=Stage.CRAWL):
+    movie = Movie("IPX-658")
+    error = JobError(movie.dvdid, stage, cause)
+    batch = BatchResult(1, jobs=[JobResult(movie, error=error)])
+    return summarize_batch(batch)[1], str(error)
+
+
+def test_failure_summary_removes_wrappers_and_keeps_full_reason(capsys):
+    cause = ValueError(
+        "未获取到影片数据 (IPX-658):\n"
+        "  - r18dev: 本地数据库未找到唯一匹配的影片记录（可能未收录、番号不匹配或存在重复记录）；在线抓取已关闭"
+    )
+    stats, original = failure_stats(cause)
+    print_summary(stats)
+    output = capsys.readouterr().out
+    assert "IPX-658: 抓取数据：r18dev: 本地库无唯一匹配（未收录/番号不符/多条记录）；在线抓取关闭" in output
+    assert output.count("IPX-658") == 1
+    assert "未获取到影片数据" not in output
+    assert stats["failed_list"] == [("IPX-658", original)]
+
+
+def test_failure_summary_keeps_multiple_sources_on_one_line(capsys):
+    cause = ValueError("未获取到影片数据 (IPX-658):\n  - r18dev: 未收录\n  - javbus: 网络超时")
+    stats, _ = failure_stats(cause)
+    print_summary(stats)
+    assert "IPX-658: 抓取数据：r18dev: 未收录；javbus: 网络超时" in capsys.readouterr().out
+
+
+def test_failure_summary_displays_reason_longer_than_old_limit(capsys):
+    reason = "单个目录或文件名超过文件系统限制 255: " + "中文目录" * 30
+    stats, original = failure_stats(ValueError("无法生成符合长度限制的输出路径，请缩短输出目录或命名模板；" + reason), Stage.PLAN)
+    print_summary(stats)
+    output = capsys.readouterr().out
+    assert "IPX-658: 规划输出：" + reason in output
+    assert "请缩短输出目录或命名模板" not in output
+    assert stats["failed_list"][0][1] == original
+
+
+def test_failure_summary_bounds_long_paths_and_preserves_filename(capsys):
+    filename = "IPX-658-poster.webp"
+    path = "/media/" + "长目录/" * 100 + filename
+    stats, original = failure_stats(OSError(36, "File name too long", path), Stage.PREPARE)
+    print_summary(stats)
+    line = next(line.strip() for line in capsys.readouterr().out.splitlines() if line.strip().startswith("IPX-658:"))
+    summary = line.removeprefix("IPX-658: ")
+    assert len(summary) == 240
+    assert summary.startswith("准备产物：[Errno 36] File name too long: '/media/")
+    assert " … " in summary
+    assert summary.endswith(filename + "'")
+    assert stats["failed_list"][0][1] == original
+
+
+def test_failure_summary_does_not_hide_crawl_error_without_source_details(capsys):
+    stats, _ = failure_stats(ValueError("未获取到影片数据 (IPX-658):\n"))
+    print_summary(stats)
+    output = capsys.readouterr().out
+    assert "IPX-658: 抓取数据：未获取到影片数据" in output
+    assert output.count("IPX-658") == 1
