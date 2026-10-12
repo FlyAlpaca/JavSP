@@ -15,6 +15,10 @@ def forbidden(name):
         or path.name in {'config.yml', 'recovery.json', 'actor-mapping.xml', 'actor-mapping.json'}
         or any(suffix in path.name for suffix in ('.sqlite', '.gguf'))
         or path.suffix in {'.part', '.log', '.pyc'}
+        or ('javsp', 'web') == path.parts[:2]
+        or path.as_posix() == 'javsp/chromium.py'
+        or path.name in {'call_crawler.py', 'check_genre.py'}
+        or (path.name.startswith('genre_') and path.suffix == '.csv')
     )
 
 
@@ -28,7 +32,7 @@ def check_archive(artifact):
     required = {'config_default.yml'}
     required.update(
         str(path.relative_to(ROOT).as_posix())
-        for folder in ('data', 'image') for path in (ROOT / folder).iterdir() if path.is_file()
+        for folder in ('image',) for path in (ROOT / folder).iterdir() if path.is_file()
     )
     missing = required - names
     prohibited = sorted(name for name in names if forbidden(name))

@@ -1,6 +1,5 @@
 """定义数据类型和一些通用性的对数据类型的操作"""
 
-import csv
 import json
 import logging
 import os
@@ -8,7 +7,7 @@ from functools import cached_property
 
 from pydantic import BaseModel, ConfigDict, PrivateAttr, model_validator
 
-from javsp.lib import detect_special_attr, resource_path
+from javsp.lib import detect_special_attr
 
 logger = logging.getLogger(__name__)
 filemove_logger = logging.getLogger("filemove")
@@ -82,10 +81,9 @@ class MovieInfo(BaseModel):
     big_covers: list[str] | None = None
     title_break: list[str] | None = None
     ori_title_break: list[str] | None = None
-    field_sources: dict[str, str] | None = None  # 字段级数据来源追踪，如 {"title": "javbus", "actress": "javdb"}
+    field_sources: dict[str, str] | None = None  # 字段级数据来源追踪，如 {"title": "r18dev", "actress": "r18dev"}
 
     # 私有属性（不参与序列化和 model_fields）
-    _success: bool = PrivateAttr(default=False)
     _cover_sources: dict[str, str] = PrivateAttr(default_factory=dict)
 
     @model_validator(mode="before")
@@ -143,15 +141,11 @@ class MovieInfo(BaseModel):
             expression = f"('cid={self.cid}')"
         return self.__class__.__name__ + expression
 
-    def dump(self, filepath=None, crawler=None) -> None:
+    def dump(self, filepath=None) -> None:
         """将影片信息序列化到 JSON 文件"""
         if not filepath:
             id = self.dvdid if self.dvdid else self.cid
-            if crawler:
-                filepath = f"../tests/data/{id} ({crawler}).json"
-                filepath = os.path.join(os.path.dirname(__file__), filepath)
-            else:
-                filepath = id + ".json"
+            filepath = id + ".json"
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(self.model_dump_json(indent=2))
 
@@ -205,7 +199,7 @@ class Movie:
         self.dvdid = dvdid  # DVD ID，即通常的番号
         self.cid = cid  # DMM Content ID
         self.files = []  # 关联到此番号的所有影片文件的列表（用于管理带有多个分片的影片）
-        self.data_src = "normal"  # 数据源：不同的数据源将使用不同的爬虫
+        self.data_src = "normal"  # 番号类型：用于本地数据库的 DVD/CID 查询
         self.info: MovieInfo = None  # 抓取到的影片信息
         self.save_dir = None  # 存放影片、封面、NFO的文件夹路径
         self.basename = None  # 按照命名模板生成的不包含路径和扩展名的basename
@@ -240,37 +234,3 @@ class Movie:
         else:
             expression = f"('{self.dvdid}')"
         return __class__.__name__ + expression
-
-
-class GenreMap(dict):
-    """genre的映射表"""
-
-    def __init__(self, file):
-        genres = {}
-        with open(resource_path(file), newline="", encoding="utf-8-sig") as csvfile:
-            reader = csv.DictReader(csvfile)
-            try:
-                for row in reader:
-                    # 优先使用 zh_cn 作为翻译结果，否则回退 translate 列
-                    translate = row.get("zh_cn") or row.get("translate")
-                    if translate is None:
-                        continue
-                    # 支持多列作为映射键（id、繁中、日文等），zh_cn 仅作为翻译输出不作为键
-                    for key in ("id", "zh_tw", "ja"):
-                        if row.get(key):
-                            for value in row[key].split(","):
-                                value = value.strip()
-                                if value:
-                                    genres[value] = translate
-            except UnicodeDecodeError:
-                logger.error("CSV file must be saved as UTF-8-BOM to edit is in Excel")
-            except KeyError:
-                logger.error("The columns 'id' and 'translate' must exist in the csv file")
-        self.update(genres)
-
-    def map(self, ls):
-        """将列表ls按照内置的映射进行替换：保留映射表中不存在的键，删除值为空的键"""
-        mapped = [self.get(i, i) for i in ls]
-        cleaned = [i for i in mapped if i]  # 译文为空表示此genre应当被删除
-        # 保持顺序去重
-        return list(dict.fromkeys(cleaned))

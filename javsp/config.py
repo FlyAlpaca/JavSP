@@ -39,7 +39,6 @@ def _user_config_source(path):
 
 class Concurrency(BaseConfig):
     movies: PositiveInt = 3
-    crawlers: PositiveInt = 6
     images: PositiveInt = 3
 
 
@@ -52,81 +51,10 @@ class Scanner(BaseConfig):
     skip_nfo_dir: bool
 
 
-class CrawlerID(StrEnum):
-    avsox = "avsox"
-    avwiki = "avwiki"
-    dl_getchu = "dl_getchu"
-    fanza = "fanza"
-    fc2 = "fc2"
-    fc2fan = "fc2fan"
-    fc2ppvdb = "fc2ppvdb"
-    gyutto = "gyutto"
-    jav321 = "jav321"
-    javbus = "javbus"
-    javdb = "javdb"
-    javlib = "javlib"
-    javmenu = "javmenu"
-    mgstage = "mgstage"
-    njav = "njav"
-    prestige = "prestige"
-
-
 class Network(BaseConfig):
     proxy_server: Url | None
     retry: NonNegativeInt = 3
     timeout: Duration
-    proxy_free: dict[str, Url]
-
-    @model_validator(mode="before")
-    @classmethod
-    def filter_invalid_proxy_free(cls, data):
-        valid_keys = {e.value for e in CrawlerID}
-        if isinstance(data, dict):
-            proxy_free = data.get("proxy_free", {})
-            invalid_keys = [k for k in proxy_free if k not in valid_keys]
-            if invalid_keys:
-                _logger.warning(f"配置的免代理站点无效，已自动忽略: {', '.join(invalid_keys)}")
-                data["proxy_free"] = {k: v for k, v in proxy_free.items() if k in valid_keys}
-        return data
-
-
-class CrawlerSelect(BaseConfig):
-    normal: list[str]
-    fc2: list[str]
-    cid: list[str]
-    getchu: list[str]
-    gyutto: list[str]
-
-    @model_validator(mode="before")
-    @classmethod
-    def filter_invalid_crawlers(cls, data):
-        valid_ids = {e.value for e in CrawlerID}
-        all_invalid = []
-        if isinstance(data, dict):
-            for attr in ("normal", "fc2", "cid", "getchu", "gyutto"):
-                original = data.get(attr, [])
-                valid = [c for c in original if c in valid_ids]
-                invalid = [c for c in original if c not in valid_ids]
-                if invalid:
-                    all_invalid.extend(invalid)
-                data[attr] = valid
-            if all_invalid:
-                _logger.warning(f"配置的抓取器无效，已自动忽略: {', '.join(all_invalid)}")
-        return data
-
-    def items(self) -> list[tuple[str, list[str]]]:
-        return [
-            ("normal", self.normal),
-            ("fc2", self.fc2),
-            ("cid", self.cid),
-            ("getchu", self.getchu),
-            ("gyutto", self.gyutto),
-        ]
-
-    def __getitem__(self, index) -> list[str]:
-        if index in ("normal", "fc2", "cid", "getchu", "gyutto"):
-            return getattr(self, index)
-        raise Exception("Unknown crawler type")
 
 
 class MovieInfoField(StrEnum):
@@ -156,26 +84,10 @@ class MovieInfoField(StrEnum):
     preview_video = "preview_video"
 
 
-class UseJavDBCover(StrEnum):
-    yes = "yes"
-    no = "no"
-    fallback = "fallback"
-
-
-class Crawler(BaseConfig):
-    selection: CrawlerSelect
-    online_enabled: bool = True
-    required_keys: list[MovieInfoField]
-    hardworking: bool
-    respect_site_avid: bool
-    fc2fan_local_path: Path | None
-    sleep_after_scraping: Duration
-    use_javdb_cover: UseJavDBCover
-    normalize_actress_name: bool
-
-
 class R18Dev(BaseConfig):
-    enabled: bool = False
+    required_keys: list[MovieInfoField] = Field(default_factory=lambda: [MovieInfoField.cover, MovieInfoField.title])
+    normalize_actress_name: bool = True
+    respect_source_id: bool = True
 
 
 class MovieDefault(BaseConfig):
@@ -316,7 +228,7 @@ def _find_user_config() -> str | None:
 def get_config_source(argv=None):
     """显式构建默认、用户、环境与 CLI 配置源，每次调用互相独立。"""
     argv = list(sys.argv[1:] if argv is None else argv)
-    parser = ArgumentParser(prog="JavSP", description="汇总多站点数据的AV元数据刮削器",
+    parser = ArgumentParser(prog="JavSP", description="使用 R18.dev 本地数据库的影片元数据整理工具",
                             formatter_class=RawTextHelpFormatter, allow_abbrev=False)
     parser.add_argument("-c", "--config", help="使用指定的配置文件")
     args, _ = parser.parse_known_args(argv)
@@ -350,13 +262,29 @@ class Cfg(BaseConfig):
     concurrency: Concurrency = Field(default_factory=Concurrency)
     scanner: Scanner
     network: Network
-    crawler: Crawler
-    r18dev: R18Dev
+    r18dev: R18Dev = Field(default_factory=R18Dev)
     summarizer: Summarizer
     translator: Translator
     other: Other
-    @model_validator(mode="after")
-    def require_data_source(self):
-        if not self.r18dev.enabled and not self.crawler.online_enabled:
-            raise ValueError("本地数据库与在线抓取不能同时关闭")
-        return self
+
+    @model_validator(mode="before")
+    @classmethod
+    def ignore_removed_scraping_options(cls, data):
+        """忽略旧抓取配置，只提示键名，不输出可能含凭据的配置值。"""
+        if not isinstance(data, dict):
+            return data
+        data = dict(data)
+        if "crawler" in data:
+            data.pop("crawler")
+            _logger.warning(
+                "crawler 配置已移除并忽略；通用规则请手动迁移到 r18dev.required_keys、"
+                "r18dev.normalize_actress_name、r18dev.respect_source_id，旧值不会自动继承"
+            )
+        for section, key in (("r18dev", "enabled"), ("network", "proxy_free"), ("concurrency", "crawlers")):
+            values = data.get(section)
+            if isinstance(values, dict) and key in values:
+                values = dict(values)
+                values.pop(key)
+                data[section] = values
+                _logger.warning("%s.%s 配置已移除并忽略，请删除该键；影片元数据始终查询 R18.dev 本地库", section, key)
+        return data

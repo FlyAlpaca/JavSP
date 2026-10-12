@@ -28,8 +28,8 @@ def _failure_summary(movie_id, reason):
     lines = [line.strip().removeprefix("- ") for line in text.splitlines() if line.strip()]
     text = "；".join(lines)
     text = text.replace(
-        "本地数据库未找到唯一匹配的影片记录（可能未收录、番号不匹配或存在重复记录）；在线抓取已关闭",
-        "本地库无唯一匹配（未收录/番号不符/多条记录）；在线抓取关闭",
+        "本地数据库未找到匹配的影片记录（可能未收录或番号不匹配）",
+        "本地库未命中（未收录/番号不符）",
     )
     summary = f"{stage}：{text}" if stage else text
     if len(summary) > _FAILURE_SUMMARY_LIMIT:

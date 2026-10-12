@@ -1,4 +1,4 @@
-"""R18.dev 本地转储、更新与在线补缺的离线验证。"""
+"""R18.dev 本地转储、更新与查询的离线验证。"""
 
 import gzip
 import hashlib
@@ -19,11 +19,10 @@ from javsp.config import Cfg, load_config
 from javsp.crawl import r18dev
 from javsp.crawl.dispatcher import CrawlerExecutor
 from javsp.crawl.r18dev import TABLES, lookup, prepare_database
-from javsp.datatype import Movie, MovieInfo
+from javsp.datatype import Movie
 from javsp.metadata.actors import ActorMapping
 from javsp.metadata.summarizer import MetadataMerger
 from javsp.runtime import RuntimeContext
-from javsp.workflow.models import CrawlResult
 
 SCHEMA = {
     "derived_video": [
@@ -213,7 +212,7 @@ class Session(requests.Session):
 def test_database_download_progress(tmp_path, caplog):
     caplog.set_level("INFO", logger="javsp.crawl.r18dev")
     body = dump()
-    prepare_database(tmp_path / "r18dev.sqlite", False, session=Session(url("2026-10-06"), body))
+    prepare_database(tmp_path / "r18dev.sqlite", session=Session(url("2026-10-06"), body))
     assert "下载 R18.dev 数据库: 100%" in caplog.text
 
 
@@ -231,29 +230,29 @@ def expire_database(path):
 
 def test_recent_database_skips_remote_check(tmp_path):
     path = tmp_path / "r18dev.sqlite"
-    prepare_database(path, False, session=Session(url("2026-10-06"), dump("旧版")))
+    prepare_database(path, session=Session(url("2026-10-06"), dump("旧版")))
     newer = Session(url("2026-10-13"), dump("新版"))
-    assert prepare_database(path, False, session=newer) == path
+    assert prepare_database(path, session=newer) == path
     assert newer.calls == 0
     assert lookup(path, Movie("ABC-123")).title == "旧版"
 
     expire_database(path)
-    assert prepare_database(path, False, session=newer) == path
+    assert prepare_database(path, session=newer) == path
     assert newer.calls > 0
     assert lookup(path, Movie("ABC-123")).title == "新版"
 
 
 def test_existing_database_uses_file_time_for_first_seven_day_check(tmp_path):
     path = tmp_path / "r18dev.sqlite"
-    prepare_database(path, False, session=Session(url("2026-10-06"), dump("旧版")))
+    prepare_database(path, session=Session(url("2026-10-06"), dump("旧版")))
     with sqlite3.connect(path) as db:
         db.execute("ALTER TABLE dump_meta DROP COLUMN imported_at")
     newer = Session(url("2026-10-13"), dump("新版"))
-    assert prepare_database(path, False, session=newer) == path
+    assert prepare_database(path, session=newer) == path
     assert newer.calls == 0
     old_time = (datetime.now(UTC) - timedelta(days=8)).timestamp()
     os.utime(path, (old_time, old_time))
-    assert prepare_database(path, False, session=newer) == path
+    assert prepare_database(path, session=newer) == path
     assert newer.calls > 0
     assert lookup(path, Movie("ABC-123")).title == "新版"
 
@@ -261,25 +260,25 @@ def test_existing_database_uses_file_time_for_first_seven_day_check(tmp_path):
 def test_download_update_and_keep_old_on_failure(tmp_path):
     path = tmp_path / "config/r18dev.sqlite"
     first = Session(url("2026-10-06"), dump())
-    assert prepare_database(path, False, session=first) == path
+    assert prepare_database(path, session=first) == path
     assert lookup(path, Movie("abc123")).title == "本地标题"
     assert lookup(path, Movie(cid="abc00123")).title == "本地标题"
     assert lookup(path, Movie("ABC-123")).actress_pics["女優"] == "https://example.test/actor.jpg"
     expire_database(path)
-    assert prepare_database(path, False, session=Session(first.url, b"invalid")) == path
+    assert prepare_database(path, session=Session(first.url, b"invalid")) == path
     assert lookup(path, Movie("ABC-123")).title == "本地标题"
     second = Session(url("2026-10-13"), dump("更新标题"))
-    assert prepare_database(path, False, session=second) == path
+    assert prepare_database(path, session=second) == path
     assert lookup(path, Movie("ABC-123")).title == "更新标题"
     expire_database(path)
-    assert prepare_database(path, False, session=Session(url("2026-10-20"), dump(broken=True))) == path
+    assert prepare_database(path, session=Session(url("2026-10-20"), dump(broken=True))) == path
     assert lookup(path, Movie("ABC-123")).title == "更新标题"
     assert not path.with_name(path.name + ".tmp").exists()
 
 
 def test_dvd_id_falls_back_to_unpadded_then_padded_cid(tmp_path):
     path = tmp_path / "r18dev.sqlite"
-    prepare_database(path, False, session=Session(url("2026-10-06"), dump()))
+    prepare_database(path, session=Session(url("2026-10-06"), dump()))
     with sqlite3.connect(path) as db:
         db.executemany(
             "INSERT INTO derived_video (content_id, dvd_id, title_ja) VALUES (?, ?, ?)",
@@ -308,7 +307,7 @@ def test_dvd_id_falls_back_to_unpadded_then_padded_cid(tmp_path):
 @pytest.mark.parametrize("avid", ["URE-13", "URE-013", "ure00013", "URE-0013", "URE_013"])
 def test_dvd_padding_variants_resolve_authoritative_id(tmp_path, avid):
     path = tmp_path / "r18dev.sqlite"
-    prepare_database(path, False, session=Session(url("2026-10-06"), dump()))
+    prepare_database(path, session=Session(url("2026-10-06"), dump()))
     with sqlite3.connect(path) as db:
         db.execute(
             "INSERT INTO derived_video (content_id, dvd_id, title_ja) VALUES (?, ?, ?)",
@@ -322,7 +321,7 @@ def test_dvd_padding_variants_resolve_authoritative_id(tmp_path, avid):
 @pytest.mark.parametrize("reverse", [False, True])
 def test_dvd_multiple_matches_select_smallest_cid_and_preserve_exact_priority(tmp_path, reverse):
     path = tmp_path / "r18dev.sqlite"
-    prepare_database(path, False, session=Session(url("2026-10-06"), dump()))
+    prepare_database(path, session=Session(url("2026-10-06"), dump()))
     records = [
         ("other1", "URE-013", "三位版"),
         ("z-variant", "URE-0013", "四位版"),
@@ -341,7 +340,7 @@ def test_dvd_multiple_matches_select_smallest_cid_and_preserve_exact_priority(tm
 
 def test_cid_padding_fallback_preserves_priority_and_rejects_conflicts(tmp_path):
     path = tmp_path / "r18dev.sqlite"
-    prepare_database(path, False, session=Session(url("2026-10-06"), dump()))
+    prepare_database(path, session=Session(url("2026-10-06"), dump()))
     with sqlite3.connect(path) as db:
         db.executemany(
             "INSERT INTO derived_video (content_id, dvd_id, title_ja) VALUES (?, ?, ?)",
@@ -364,7 +363,7 @@ def test_cid_padding_fallback_preserves_priority_and_rejects_conflicts(tmp_path)
 
 def test_special_ids_do_not_use_generic_padding_fallback(tmp_path):
     path = tmp_path / "r18dev.sqlite"
-    prepare_database(path, False, session=Session(url("2026-10-06"), dump()))
+    prepare_database(path, session=Session(url("2026-10-06"), dump()))
     with sqlite3.connect(path) as db:
         db.execute(
             "INSERT INTO derived_video (content_id, dvd_id, title_ja) VALUES (?, ?, ?)",
@@ -377,7 +376,7 @@ def test_special_ids_do_not_use_generic_padding_fallback(tmp_path):
 def test_exact_dvd_duplicate_selection_is_independent_of_dump_order(tmp_path, reverse):
     videos = [("ipx00658", "IPX-658", "无厂商前缀"), ("118ipx00658", "IPX-658", "字典序最小CID")]
     path = tmp_path / "r18dev.sqlite"
-    prepare_database(path, False, session=Session(url("2026-10-06"), dump(videos=videos[::-1] if reverse else videos)))
+    prepare_database(path, session=Session(url("2026-10-06"), dump(videos=videos[::-1] if reverse else videos)))
     assert lookup(path, Movie("IPX-658")).cid == "118ipx00658"
     assert lookup(path, Movie("IPX-658")).title == "字典序最小CID"
     assert lookup(path, Movie(cid="ipx00658")).title == "无厂商前缀"
@@ -393,7 +392,7 @@ def test_imported_prefixes_enable_indexed_batch_cid_lookup(tmp_path, monkeypatch
         ("1guard00123", "OTHER-123", "冲突"),
     ]
     path = tmp_path / "r18dev.sqlite"
-    prepare_database(path, False, session=Session(url("2026-10-06"), dump(videos=videos)))
+    prepare_database(path, session=Session(url("2026-10-06"), dump(videos=videos)))
     with sqlite3.connect(path) as db:
         prefixes = db.execute("SELECT series, prefix FROM video_cid_prefix ORDER BY series, prefix").fetchall()
         assert prefixes == [("fsdss", "h_086"), ("guard", "1"), ("ipx", "118"), ("start", "1")]
@@ -425,19 +424,19 @@ def test_imported_prefixes_enable_indexed_batch_cid_lookup(tmp_path, monkeypatch
 def test_legacy_prefix_table_is_built_once_without_download(tmp_path):
     path = tmp_path / "r18dev.sqlite"
     source_url = url("2026-10-06")
-    prepare_database(path, False, session=Session(source_url, dump(videos=[("1start00538", None, "SOD")])))
+    prepare_database(path, session=Session(source_url, dump(videos=[("1start00538", None, "SOD")])))
     with sqlite3.connect(path) as db:
         db.execute("DROP TABLE video_cid_prefix")
     assert lookup(path, Movie("ABC-123")).title == "本地标题"
     assert lookup(path, Movie("START-538")) is None
     session = Session(source_url, b"not a dump")
-    assert prepare_database(path, False, session=session) == path
+    assert prepare_database(path, session=session) == path
     assert session.calls == 0
     assert lookup(path, Movie("START-538")).cid == "1start00538"
     # 已有表不在每次启动扫描影片表重建。
     with sqlite3.connect(path) as db:
         db.execute("INSERT INTO video_cid_prefix VALUES ('marker', '1')")
-    prepare_database(path, False, session=session)
+    prepare_database(path, session=session)
     with sqlite3.connect(path) as db:
         assert db.execute("SELECT 1 FROM video_cid_prefix WHERE series = 'marker'").fetchone()
 
@@ -445,7 +444,7 @@ def test_legacy_prefix_table_is_built_once_without_download(tmp_path):
 def test_failed_prefix_migration_rolls_back_and_preserves_old_lookup(tmp_path, monkeypatch):
     path = tmp_path / "r18dev.sqlite"
     source_url = url("2026-10-06")
-    prepare_database(path, False, session=Session(source_url, dump()))
+    prepare_database(path, session=Session(source_url, dump()))
     with sqlite3.connect(path) as db:
         db.execute("DROP TABLE video_cid_prefix")
     build = r18dev._build_cid_prefixes
@@ -455,7 +454,7 @@ def test_failed_prefix_migration_rolls_back_and_preserves_old_lookup(tmp_path, m
         raise sqlite3.OperationalError("injected migration failure")
 
     monkeypatch.setattr(r18dev, "_build_cid_prefixes", fail)
-    assert prepare_database(path, False, session=Session(source_url, b"not a dump")) == path
+    assert prepare_database(path, session=Session(source_url, b"not a dump")) == path
     assert lookup(path, Movie("ABC-123")).cid == "abc00123"
     with sqlite3.connect(path) as db:
         assert db.execute("SELECT 1 FROM sqlite_master WHERE name = 'video_cid_prefix'").fetchone() is None
@@ -468,7 +467,7 @@ def test_list_pagination_and_newest_valid_date(tmp_path, wasabi_server):
     wasabi_server.objects["dumps/r18dotdev_dump_2026-99-99.sql.gz"] = dump("无效日期")
     wasabi_server.objects["dumps/r18dotdev_dump_2026-10-20.sql.gz"] = b""
     wasabi_server.page_size = 1
-    assert prepare_database(path, False, session=session) == path
+    assert prepare_database(path, session=session) == path
     assert lookup(path, Movie("ABC-123")).title == "最新标题"
     assert session.calls >= 3
 
@@ -477,21 +476,21 @@ def test_same_date_etag_change_and_no_downgrade(tmp_path, wasabi_server):
     path = tmp_path / "r18dev.sqlite"
     source_url = url("2026-10-06")
     first = Session(source_url, dump("初版"))
-    prepare_database(path, False, session=first)
+    prepare_database(path, session=first)
     expire_database(path)
     with sqlite3.connect(path) as db:
         assert db.execute("SELECT dump_date, etag, size FROM dump_meta").fetchone()[0] == "2026-10-06"
     unchanged = Session(source_url, dump("初版"))
     before = len(wasabi_server.requests)
-    prepare_database(path, False, session=unchanged)
+    prepare_database(path, session=unchanged)
     assert len(wasabi_server.requests) == before
     assert unchanged.calls == 1
     changed = Session(source_url, dump("修订版"))
-    prepare_database(path, False, session=changed)
+    prepare_database(path, session=changed)
     assert lookup(path, Movie("ABC-123")).title == "修订版"
     expire_database(path)
     older = Session(url("2026-09-29"), dump("旧日期"))
-    prepare_database(path, False, session=older)
+    prepare_database(path, session=older)
     assert older.calls == 1
     assert lookup(path, Movie("ABC-123")).title == "修订版"
 
@@ -499,14 +498,14 @@ def test_same_date_etag_change_and_no_downgrade(tmp_path, wasabi_server):
 def test_legacy_database_reimports_same_date_once(tmp_path):
     path = tmp_path / "r18dev.sqlite"
     source_url = url("2026-10-06")
-    prepare_database(path, False, session=Session(source_url, dump("旧版")))
+    prepare_database(path, session=Session(source_url, dump("旧版")))
     with sqlite3.connect(path) as db:
         db.execute("ALTER TABLE dump_meta RENAME TO old_dump_meta")
         db.execute("CREATE TABLE dump_meta (source_url TEXT NOT NULL)")
         db.execute("INSERT INTO dump_meta SELECT source_url FROM old_dump_meta")
         db.execute("DROP TABLE old_dump_meta")
     upgraded = Session(source_url, dump("同日新内容"))
-    prepare_database(path, False, session=upgraded)
+    prepare_database(path, session=upgraded)
     assert upgraded.calls > 1
     assert lookup(path, Movie("ABC-123")).title == "同日新内容"
     with sqlite3.connect(path) as db:
@@ -519,10 +518,11 @@ def test_database_resumes_partial_segment(tmp_path, wasabi_server, monkeypatch):
     monkeypatch.setattr("javsp.download.CHUNK_SIZE", 16)
     monkeypatch.setattr("javsp.download.PART_SIZE", 256)
     wasabi_server.fail_once = True
-    assert prepare_database(path, True, session=session) is None
+    with pytest.raises(RuntimeError, match="数据库不可用"):
+        prepare_database(path, session=session)
     assert any(part.stat().st_size for part in tmp_path.glob("*.part*"))
     before = len(wasabi_server.requests)
-    prepare_database(path, False, session=session)
+    prepare_database(path, session=session)
     starts = set(range(0, len(dump()), 256))
     assert any(
         request and request != "bytes=0-0" and int(request[6:].split("-")[0]) not in starts
@@ -537,9 +537,10 @@ def test_database_single_connection_resume(tmp_path, wasabi_server, monkeypatch)
     monkeypatch.setattr("javsp.download.CHUNK_SIZE", 16)
     wasabi_server.probe_ignored = True
     wasabi_server.fail_once = True
-    assert prepare_database(path, True, session=session) is None
+    with pytest.raises(RuntimeError, match="数据库不可用"):
+        prepare_database(path, session=session)
     before = len(wasabi_server.requests)
-    prepare_database(path, False, session=session)
+    prepare_database(path, session=session)
     assert any(request and request != "bytes=0-0" for _, request, _ in wasabi_server.requests[before:])
     assert not list(tmp_path.glob("*.part*"))
 
@@ -550,35 +551,35 @@ def test_database_range_fallback(tmp_path, wasabi_server, mode, monkeypatch):
     session = Session(url("2026-10-06"), dump())
     setattr(wasabi_server, mode, True)
     path = tmp_path / "r18dev.sqlite"
-    assert prepare_database(path, False, session=session) == path
+    assert prepare_database(path, session=session) == path
     assert any(request is None for _, request, _ in wasabi_server.requests)
 
 
 def test_object_changes_during_download_preserves_old(tmp_path, wasabi_server):
     path = tmp_path / "r18dev.sqlite"
-    prepare_database(path, False, session=Session(url("2026-10-06"), dump("旧版")))
+    prepare_database(path, session=Session(url("2026-10-06"), dump("旧版")))
     session = Session(url("2026-10-13"), dump("新版"))
     wasabi_server.change_after_probe = True
     expire_database(path)
-    assert prepare_database(path, False, session=session) == path
+    assert prepare_database(path, session=session) == path
     assert lookup(path, Movie("ABC-123")).title == "旧版"
     assert not list(tmp_path.glob("*.part*"))
 
 
 def test_listing_failure_preserves_old(tmp_path, wasabi_server):
     path = tmp_path / "r18dev.sqlite"
-    prepare_database(path, False, session=Session(url("2026-10-06"), dump()))
+    prepare_database(path, session=Session(url("2026-10-06"), dump()))
     session = Session(url("2026-10-13"), dump("新版"))
     wasabi_server.list_error = True
     expire_database(path)
-    assert prepare_database(path, False, session=session) == path
+    assert prepare_database(path, session=session) == path
     assert lookup(path, Movie("ABC-123")).title == "本地标题"
 
 
 def test_existing_database_gets_indexed_entity_lookups(tmp_path):
     path = tmp_path / "config/r18dev.sqlite"
     source_url = url("2026-10-06")
-    prepare_database(path, False, session=Session(source_url, dump()))
+    prepare_database(path, session=Session(source_url, dump()))
     with sqlite3.connect(path) as db:
         for table in (
             "derived_actress",
@@ -592,7 +593,7 @@ def test_existing_database_gets_indexed_entity_lookups(tmp_path):
         plan = db.execute("EXPLAIN QUERY PLAN SELECT name_ja FROM derived_maker WHERE id = ?", ("1",)).fetchall()
         assert any("SCAN derived_maker" in row[3] for row in plan)
 
-    prepare_database(path, False, session=Session(source_url, b"not a dump"))
+    prepare_database(path, session=Session(source_url, b"not a dump"))
     with sqlite3.connect(path) as db:
         plan = db.execute("EXPLAIN QUERY PLAN SELECT name_ja FROM derived_maker WHERE id = ?", ("1",)).fetchall()
         assert any("USING INDEX derived_maker_id" in row[3] for row in plan)
@@ -608,97 +609,43 @@ def test_existing_database_gets_indexed_entity_lookups(tmp_path):
 def test_first_download_failure_and_multiple_dvd_matches(tmp_path):
     path = tmp_path / "config/r18dev.sqlite"
     bad = Session(url("2026-10-06"), b"bad gzip")
-    assert prepare_database(path, True, session=bad) is None
-    with pytest.raises(RuntimeError, match="在线抓取已关闭"):
-        prepare_database(path, False, session=bad)
-    prepare_database(path, True, session=Session(url("2026-10-06"), dump(duplicate=True)))
+    with pytest.raises(RuntimeError, match="数据库不可用"):
+        prepare_database(path, session=bad)
+    prepare_database(path, session=Session(url("2026-10-06"), dump(duplicate=True)))
     assert lookup(path, Movie("ABC-123")).cid == "abc00123"
     assert lookup(path, Movie(cid="abc00123")) is not None
 
 
-def test_local_priority_online_gap_and_source_tracking(tmp_path, monkeypatch):
+def test_local_gap_and_source_tracking_without_network(tmp_path, monkeypatch):
     path = tmp_path / "config/r18dev.sqlite"
-    prepare_database(path, True, session=Session(url("2026-10-06"), dump(blank_preview=True)))
-    cfg = load_config().model_copy(deep=True)
+    prepare_database(path, session=Session(url("2026-10-06"), dump(blank_preview=True)))
+    cfg = load_config([])
     runtime = RuntimeContext.create(cfg)
     runtime.database_path = path
-    cfg = cfg.model_copy(
-        update={
-            "r18dev": cfg.r18dev.model_copy(update={"enabled": True}),
-            "crawler": cfg.crawler.model_copy(update={"normalize_actress_name": False, "online_enabled": True}),
-        }
-    )
-    calls = []
-
-    def online(movie, config, progress, *, resources=None):
-        calls.append(movie.dvdid)
-        return CrawlResult(
-            {"javdb": MovieInfo(movie, title="在线标题", score=8.0, genre=["在线分类"], cover="https://example.test/online.jpg")},
-            [],
-            movie.dvdid,
-            movie.cid,
-            movie.data_src,
-        )
-
-    monkeypatch.setattr("javsp.crawl.dispatcher._crawl", online)
+    monkeypatch.setattr(requests.sessions.Session, "request", lambda *a, **kw: pytest.fail("本地查询不应联网"))
     movie = Movie("ABC-123")
     result = CrawlerExecutor(cfg, runtime=runtime).crawl(movie)
     merged = MetadataMerger(cfg, aliases=ActorMapping()).merge(movie, result)
-    assert calls == ["ABC-123"]
-    assert list(result.data) == ["r18dev", "javdb"]
+    assert list(result.data) == ["r18dev"]
     assert merged.title == "本地标题" and merged.genre == ["分類"]
-    assert merged.score == 8.0 and merged.field_sources["score"] == "javdb"
-    assert merged.field_sources["cover"] == "r18dev"
-    assert merged.field_sources["genre"] == "r18dev"
-    assert merged.cover != "https://example.test/online.jpg"
-    cfg = cfg.model_copy(update={"crawler": cfg.crawler.model_copy(update={"online_enabled": False})})
-    assert list(CrawlerExecutor(cfg, runtime=runtime).crawl(movie).data) == ["r18dev"]
-    assert calls == ["ABC-123"]
+    assert merged.preview_video is None and merged.score is None
+    assert merged.field_sources["cover"] == merged.field_sources["genre"] == "r18dev"
+    assert movie.info is None
 
 
-def test_complete_local_hit_skips_online_and_miss_uses_online(tmp_path, monkeypatch):
+def test_local_hit_and_miss_never_request_network(tmp_path, monkeypatch):
     path = tmp_path / "config/r18dev.sqlite"
-    prepare_database(path, True, session=Session(url("2026-10-06"), dump()))
-    cfg = load_config().model_copy(deep=True)
+    prepare_database(path, session=Session(url("2026-10-06"), dump()))
+    cfg = load_config([])
     runtime = RuntimeContext.create(cfg)
     runtime.database_path = path
-    cfg = cfg.model_copy(
-        update={
-            "r18dev": cfg.r18dev.model_copy(update={"enabled": True}),
-            "crawler": cfg.crawler.model_copy(update={"online_enabled": True}),
-        }
-    )
-    calls = []
-
-    def online(movie, config, progress, *, resources=None):
-        calls.append(movie.dvdid)
-        return CrawlResult({"javbus": MovieInfo(movie, title="在线标题")}, [], movie.dvdid, movie.cid, movie.data_src)
-
-    monkeypatch.setattr("javsp.crawl.dispatcher._crawl", online)
-    assert list(CrawlerExecutor(cfg, runtime=runtime).crawl(Movie("ABC-123")).data) == ["r18dev"]
-    assert list(CrawlerExecutor(cfg, runtime=runtime).crawl(Movie("ABC-999")).data) == ["javbus"]
-    assert calls == ["ABC-999"]
-
-
-def test_offline_local_miss_reports_reason(tmp_path, monkeypatch):
-    path = tmp_path / "config/r18dev.sqlite"
-    prepare_database(path, False, session=Session(url("2026-10-06"), dump()))
-    cfg = load_config().model_copy(deep=True)
-    runtime = RuntimeContext.create(cfg)
-    runtime.database_path = path
-    cfg = cfg.model_copy(
-        update={
-            "r18dev": cfg.r18dev.model_copy(update={"enabled": True}),
-            "crawler": cfg.crawler.model_copy(update={"online_enabled": False}),
-        }
-    )
-    monkeypatch.setattr("javsp.crawl.dispatcher._crawl", lambda *args: pytest.fail("不应访问在线抓取器"))
-
-    result = CrawlerExecutor(cfg, runtime=runtime).crawl(Movie("ABC-999"))
+    monkeypatch.setattr(requests.sessions.Session, "request", lambda *a, **kw: pytest.fail("本地查询不应联网"))
+    executor = CrawlerExecutor(cfg, runtime=runtime)
+    assert list(executor.crawl(Movie("ABC-123")).data) == ["r18dev"]
+    result = executor.crawl(Movie("ABC-999"))
     with pytest.raises(ValueError, match="未获取到影片数据.*ABC-999") as error:
         result.require_data()
     assert "r18dev: 本地数据库未找到匹配的影片记录" in str(error.value)
-    assert "在线抓取已关闭" in str(error.value)
 
 
 def test_fixed_database_path_survives_working_directory_change(tmp_path, monkeypatch):
@@ -713,10 +660,24 @@ def test_fixed_database_path_survives_working_directory_change(tmp_path, monkeyp
     assert "path" not in type(runtime.cfg.r18dev).model_fields
 
 
-def test_disabled_sources_are_rejected():
-    cfg = load_config()
-    data = cfg.model_dump()
+def test_old_source_switches_cannot_disable_database(caplog):
+    data = load_config([]).model_dump()
     data["r18dev"]["enabled"] = False
-    data["crawler"]["online_enabled"] = False
-    with pytest.raises(ValueError, match="不能同时关闭"):
-        Cfg.model_validate(data)
+    data["crawler"] = {"online_enabled": True}
+    cfg = Cfg.model_validate(data)
+    assert not hasattr(cfg.r18dev, "enabled") and not hasattr(cfg, "crawler")
+    assert "r18dev.enabled" in caplog.text and "crawler" in caplog.text
+
+
+def test_query_error_and_missing_runtime_are_failures(tmp_path):
+    cfg = load_config([])
+    result = CrawlerExecutor(cfg).crawl(Movie("ABC-123"))
+    assert not result.data and "未初始化" in result.failures[0][1]
+    broken = tmp_path / "broken.sqlite"
+    broken.write_bytes(b"not sqlite")
+    runtime = RuntimeContext.create(cfg)
+    runtime.database_path = broken
+    result = CrawlerExecutor(cfg, runtime=runtime).crawl(Movie("ABC-123"))
+    assert not result.data and result.failures[0][0] == "r18dev"
+    with pytest.raises(ValueError):
+        result.require_data()

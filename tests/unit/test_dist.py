@@ -11,7 +11,7 @@ def test_distribution_rejects_database(tmp_path):
     wheel = tmp_path / 'test.whl'
     with ZipFile(wheel, 'w') as archive:
         archive.writestr('config_default.yml', '')
-        for folder in ('data', 'image'):
+        for folder in ('image',):
             for path in (ROOT / folder).iterdir():
                 if path.is_file():
                     archive.writestr(path.relative_to(ROOT).as_posix(), '')

@@ -8,7 +8,6 @@ from pathlib import Path
 import requests
 
 from javsp.__version__ import get_version
-from javsp.crawl.dispatcher import import_crawlers
 from javsp.crawl.r18dev import prepare_database
 from javsp.func import get_scan_dir
 from javsp.metadata.actors import ActorMappingError, prepare_actor_mapping
@@ -67,11 +66,10 @@ def prepare_startup(cfg, *, base_dir=None):
         runtime.actor_mapping = prepare_actor_mapping(runtime.actor_mapping_path, proxy=cfg.network.proxy_server)
     except ActorMappingError as error:
         raise StartupError(str(error)) from error
-    if cfg.r18dev.enabled:
-        runtime.database_path = prepare_database(
-            runtime.database_cache_path, cfg.crawler.online_enabled, proxy=cfg.network.proxy_server
-        )
-    import_crawlers(cfg)
+    try:
+        runtime.database_path = prepare_database(runtime.database_cache_path, proxy=cfg.network.proxy_server)
+    except RuntimeError as error:
+        raise StartupError(str(error)) from error
     return runtime
 
 

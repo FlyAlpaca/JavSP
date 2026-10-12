@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "javsp"
-description = "汇总多站点数据的AV元数据刮削器"
+description = "使用 R18.dev 本地数据库的影片元数据整理工具"
 readme = "README.md"
 license = "GPL-3.0-only"
 authors = [
@@ -13,13 +13,10 @@ authors = [
 requires-python = ">=3.11,<3.16"
 dynamic = ["version"]
 dependencies = [
-    "curl_cffi>=0.15",
     "pillow>=12.0",
     "requests[socks]>=2.32",
     "tqdm>=4.67",
-    "cryptography>=48.0",
-    "pycryptodome>=3.20.0",
-    "lxml[html-clean]>=6.0",
+    "lxml>=6.0",
     "confz>=2.0.1",
     "pydantic-extra-types>=2.9.0",
     "pendulum>=3.2.0",
@@ -56,7 +53,6 @@ packages = ["javsp"]
 # config.yml 为用户配置文件，Docker 中通过 /app/config 挂载
 [tool.hatch.build.targets.wheel.force-include]
 "image" = "image"
-"data" = "data"
 "config_default.yml" = "config_default.yml"
 
 # 源码包只收录开发和构建所需文件，不根据本地未跟踪文件自动扩展范围。
@@ -67,7 +63,6 @@ exclude = ["**/*.sqlite", "**/*.sqlite-*", "**/*.gguf", "**/*.part", "**/*.log",
 # sdist 也包含这些静态资源，保证源码包完整
 [tool.hatch.build.targets.sdist.force-include]
 "image" = "image"
-"data" = "data"
 "config_default.yml" = "config_default.yml"
 
 # ----- uv 解析配置 -----
@@ -81,7 +76,6 @@ exclude = ["**/*.sqlite", "**/*.sqlite-*", "**/*.gguf", "**/*.part", "**/*.log",
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
-markers = ["integration: 依赖在线站点的集成测试"]
 
 [tool.ruff]
 target-version = "py311"

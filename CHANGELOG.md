@@ -1,9 +1,19 @@
 # Changelog
 
+## 2.1.0 (2026-10-12)
+
+### Changed
+- R18.dev 本地数据库成为唯一影片元数据来源，始终启用；有效旧库可在更新失败时继续使用，无有效库则终止启动。
+- 通用规则迁至 `r18dev.required_keys`、`r18dev.normalize_actress_name`、`r18dev.respect_source_id`；旧配置忽略并提示迁移，不自动继承。
+- 图片下载抽为通用网络模块，保留图片、影片和翻译并发，以及串行提交、取消回收和事务恢复。
+
+### Removed
+- 完全移除在线多站点刮削、字段补抓、站点选择、动态域名、浏览器 Cookie 提取及相关配置、依赖、工具、测试和站点资源。
+
 ## Unreleased
 
 ### Changed
-- 女优映射改用 GitHub Jav Actors Mapping，每次启动检查更新并保留有效缓存；名称统一使用原名（中文译名），别名归一继续由 `crawler.normalize_actress_name` 控制。
+- 女优映射改用 GitHub Jav Actors Mapping，每次启动检查更新并保留有效缓存；名称统一使用原名（中文译名），别名归一由 `r18dev.normalize_actress_name` 控制。
 - 数据库与翻译模型改用固定 4 MiB 小片下载，最多同时使用四个连接；旧版四等分分片不会被当作新分片续传。
 
 ## 2.0.2 (2026-10-10)

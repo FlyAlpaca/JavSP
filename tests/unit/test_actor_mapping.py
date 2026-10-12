@@ -287,10 +287,9 @@ def test_size_and_download_time_limits_preserve_cache(tmp_path, monkeypatch):
 def test_startup_loads_snapshot_even_with_alias_switch_off(tmp_path, monkeypatch):
     cfg = load_config()
     cfg = cfg.model_copy(update={"scanner": cfg.scanner.model_copy(update={"input_directory": tmp_path}),
-                                 "crawler": cfg.crawler.model_copy(update={"normalize_actress_name": False})})
+                                 "r18dev": cfg.r18dev.model_copy(update={"normalize_actress_name": False})})
     monkeypatch.setattr(startup, "check_for_updates", lambda: None)
-    monkeypatch.setattr(startup, "import_crawlers", lambda cfg: None)
-    monkeypatch.setattr(startup, "prepare_database", lambda *args, **kw: None)
+    monkeypatch.setattr(startup, "prepare_database", lambda path, **kw: path)
     session = Session()
     monkeypatch.setattr(startup, "prepare_actor_mapping",
                         lambda path, proxy: prepare_actor_mapping(path, session=session, proxy=proxy))
@@ -317,7 +316,7 @@ def test_alias_helper_and_merger_use_explicit_snapshot():
 def test_merged_names_consistent_in_paths_nfo_and_thumbnails(tmp_path, normalize):
     cfg = load_config().model_copy(deep=True)
     mapping = ActorMapping.from_xml(XML)
-    cfg = cfg.model_copy(update={"crawler": cfg.crawler.model_copy(update={"normalize_actress_name": normalize})})
+    cfg = cfg.model_copy(update={"r18dev": cfg.r18dev.model_copy(update={"normalize_actress_name": normalize})})
     movie = Movie("ABC-123")
     movie.files = [str(tmp_path / "ABC-123.mp4")]
     source = MovieInfo(

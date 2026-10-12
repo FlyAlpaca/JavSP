@@ -7,17 +7,15 @@
 | `javsp/` | 容器命令入口、配置、基础数据类型和公共辅助模块 |
 | `javsp/workflow/` | 流水线编排、阶段事件与结果契约 |
 | `javsp/scan/` | 番号识别与本地文件扫描 |
-| `javsp/crawl/` | 抓取调度与 R18.dev 本地数据源 |
-| `javsp/web/` | 动态加载的站点抓取器与网络请求 |
+| `javsp/crawl/` | R18.dev 本地查询与数据库准备 |
+| `javsp/network.py` | 通用图片请求与下载 |
 | `javsp/metadata/` | 来源合并、字段选择与元数据整理 |
 | `javsp/publish/` | 路径规划、图片及 NFO 生成、文件提交和恢复 |
 | `javsp/cropper/` | 海报裁剪后端 |
-| `data/` | 运行时分类映射和演员别名，随安装包发布 |
 | `image/` | 运行时水印 |
 | `tests/unit/` | 本地测试，网络请求由 mock 或本地 HTTP 服务提供 |
-| `tests/integration/` | 在线站点测试 |
-| `tests/data/` | JSON 样本及番号识别数据，不随 wheel 发布 |
-| `tools/` | 抓取样本、更新分类表和查询版本的维护脚本 |
+| `tests/data/` | 番号识别样本，不随 wheel 发布 |
+| `tools/` | 版本查询和构建检查脚本 |
 | `docker/` | 容器构建和入口脚本 |
 | `docs/` | 开发文档 |
 
@@ -35,8 +33,8 @@
 | 组件 | 接口 | 边界 |
 | --- | --- | --- |
 | Scanner | `scan(root) -> ScanResult` | 独立返回影片、无法识别、重复和跳过条目 |
-| CrawlerExecutor | `crawl(movie, progress=None) -> CrawlResult` | 站点并发、重试、软截止、线程回收；返回最终数据源身份 |
-| MetadataMerger | `merge(movie, result) -> MovieInfo` | 分类归一化、字段优先级、必需字段、演员别名及来源；不修改输入来源 |
+| CrawlerExecutor | `crawl(movie, progress=None) -> CrawlResult` | 仅查询 R18.dev 本地库；返回元数据与失败原因 |
+| MetadataMerger | `merge(movie, result) -> MovieInfo` | 本地字段整理、必需字段、演员别名及来源；不修改输入来源 |
 | OutputPlanner | `plan(movie, info) -> OutputPlan` | 在影片副本上只读规划路径与影片/字幕操作 |
 | OutputExecutor | `prepare(plan)` / `commit(prepared)` / `discard(prepared)`；`execute(plan)` 组合入口 | 暂存、校验、提交、备份与逆序回滚 |
 | JobRunner / Pipeline | `run(movie)` / `run(root)` | 任务状态、阶段错误、批次停止及未处理列表 |
@@ -89,15 +87,13 @@ JavSP 不引入外部固定前缀清单，而是在导入时从本地 CID 提取
 
 ### 批次并发与资源生命周期
 
-`concurrency.movies/crawlers/images` 默认分别为 3/6/3，模型并发沿用 `translator.runtime.parallel`。
-`BatchResources` 显式传入单片组件，持有批次共享抓取池、图片池、停止信号、站点冷却与剧照启动节流。
+`concurrency.movies/images` 默认分别为 3/3，模型并发沿用 `translator.runtime.parallel`。
+`BatchResources` 显式传入单片组件，持有批次共享图片池、停止信号与剧照启动节流。
 影片线程池与子任务池独立，最多保持影片额度内的任务；准备完成但尚未提交的影片也占用额度。
 剧照按有界窗口派发，完成任务的 Future 从资源登记中移除，避免整批任务历史持续累积。
 
 每部影片独立创建抓取器、合并器、规划器和输出执行器；R18.dev 查询各自打开只读连接，启动构建的演员索引只读共享。
-站点身份显式传入任务，不依赖线程池工作线程名称；同一站点串行执行并在任务完成后冷却。
-抓取截止从获得站点额度并实际开始任务时计算，超时仍等待请求结束并舍弃晚到结果。
-`movies: 1` 使用串行编排与成功影片之间的节流，子任务池仍共享并限制线程数。
+`movies: 1` 使用串行影片编排，子任务池仍共享并限制线程数。
 独立 `JobRunner` 注入自定义处理组件时沿用串行批次行为，避免复制或跨线程共享外部组件的可变状态。
 
 `PreparedOutput` 持有规划副本、文件事务、暂存产物与目标状态；准备阶段不移动影片、不替换正式产物。
@@ -169,41 +165,25 @@ uv run --locked --extra dev pytest
 uv build
 ```
 
-默认运行本地测试，并跳过集成测试。也可单独运行 `pytest tests/unit`。
+默认运行离线单元测试。也可显式运行 `pytest tests/unit`。
 
 GitHub Actions 的 `Tests` 工作流在分支推送及 PR 时运行 Python 3.11、3.14 的 Ruff 检查和全部离线单元测试，
 使用 `uv.lock` 锁定依赖。Docker 发布工作流（标签推送及手动发布）复用同一测试工作流；
 全部检查通过后才允许构建和推送镜像。若需限制 PR 合并，仓库管理员还需在分支保护中将测试检查设为必需。
 
-## 集成测试
-
-```bash
-# 仅运行指定站点的在线样本比较
-uv run --locked --extra dev pytest tests/integration/test_crawlers.py --run-integration --only javbus
-
-# 测试免代理域名发现
-uv run --locked --extra dev pytest tests/integration/test_proxyfree.py --run-integration
-```
-
-集成测试依赖外部站点或凭据。
-在线抓取器测试在本地比较失败时仍会更新对应 JSON 样本，运行后应检查 Git 差异。
-各站点的样本即使内容相同，也保留独立文件以覆盖各自抓取器。
-
 ## 维护工具
 
 ```bash
-uv run --locked --extra dev python tools/call_crawler.py ABC-123
-uv run --locked --extra dev python tools/check_genre.py
 uv run --locked --extra dev python tools/version.py
 ```
 
-工具按自身文件位置定位仓库；从其他目录调用时可使用脚本的绝对路径。
-抓取样本写入 `tests/data/`；分类表写入 `data/`，更新后应人工检查。
+测试使用临时 SQLite 数据库、本地查询替身和本地 HTTP 服务，不运行真实媒体库整理。
+在线站点测试、抓取样本更新和分类表生成工具已移除。
 
 ## 构建与清理
 
 Docker 构建上下文排除测试、开发文档、虚拟环境、缓存和本地构建产物。
-wheel 保留运行时资源，避免移动 `data/`、`image/` 或默认配置导致资源查找失败。
+wheel 保留运行时资源，保留 `image/` 和默认配置的资源查找路径。
 `__pycache__/`、`.pytest_cache/`、`.ruff_cache/` 均为可重新生成的缓存，不应提交。
 
 
@@ -235,14 +215,19 @@ wheel 保留运行时资源，避免移动 `data/`、`image/` 或默认配置导
 停止时先 terminate，超时则 kill 并等待进程退出，再等待读取线程完成、关闭管道和自有 HTTP 会话。
 启动失败在清理完成后附加有界的日志末尾；模型未就绪时仍不得扫描媒体。
 独立组件通过参数接收配置；需要演员信息归一化时，向 `MetadataMerger` 显式传入映射或运行上下文。
-站点解析接口为 `parse_data(info, *, context)`，清洗接口同样接收上下文；调用者使用 `with SiteContext(cfg, site)` 管理会话。
-每个站点任务拥有独立请求头、Cookie、动态域名和登录候选，重试复用会话，任务结束后关闭。
-站点模块不再提供直接执行示例；手动抓取使用 `tools/call_crawler.py`。
+`CrawlerExecutor` 仅调用 R18.dev 本地查询，不创建站点会话或抓取线程。
+`prepare_database(path, *, session=None, proxy=None) -> Path` 返回经过校验的数据库路径；
+更新失败可返回有效旧库，无有效库则抛出异常，启动层将其作为前置条件失败处理。
+`r18dev.required_keys/normalize_actress_name/respect_source_id` 控制元数据规则，本地库始终启用。
+旧 `crawler` 段、`r18dev.enabled`、`network.proxy_free` 和 `concurrency.crawlers` 在合并配置后被移除并提醒；
+不继承旧通用规则，也不输出旧键的值。覆盖顺序保持默认模板、用户文件、环境变量、CLI。
+图片下载使用独立的 `javsp.network`；数据库、映射和模型继续复用范围下载器。
+
 
 
 ## 内部接口迁移
 
-配置键、Docker 挂载和批处理退出规则保持既有含义；内部 Python 接口采用显式配置与结构化结果。
+Docker 挂载和批处理退出规则保持既有含义；配置迁移见上文。内部 Python 接口采用显式配置与结构化结果。
 
 | 原调用 | 新调用 |
 | --- | --- |
