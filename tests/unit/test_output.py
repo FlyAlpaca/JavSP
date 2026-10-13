@@ -69,6 +69,109 @@ def test_success_commits_all_artifacts(scene, tmp_path):
     assert result.movie.files == [str(target / "ABC-123.mp4")]
 
 
+def test_dmm_original_images_and_local_actor_are_committed(scene, tmp_path, monkeypatch):
+    from lxml import etree
+
+    movie, info, cfg = scene
+    original = "https://pics.dmm.co.jp/mono/movie/adult/jur752/jur752ps.jpg"
+    actor = "https://pics.dmm.co.jp/mono/actjpgs/satuki_mei3.jpg"
+    info.cover = info.big_cover = original
+    info.covers = info.big_covers = [original]
+    info.actress = ["さつき芽衣"]
+    info.actress_pics = {"さつき芽衣": actor}
+    high, _, _, portrait = media.dmm_cover_candidates([original], [original])
+    calls = []
+
+    def download(url, path, **kwargs):
+        calls.append(url)
+        size = (2184, 1468) if url == high else (1032, 1468) if url == portrait else (125, 125)
+        Image.new("RGB", size, "blue").save(path, format="JPEG")
+        return {"elapsed": 1, "rate": 100}
+
+    monkeypatch.setattr(media, "download", download)
+    result = OutputExecutor(cfg).execute(OutputPlanner(cfg).plan(movie, info))
+    with Image.open(result.movie.fanart_file) as image:
+        assert image.size == (2184, 1468)
+    with Image.open(result.movie.poster_file) as image:
+        assert image.size == (1032, 1468)
+    with Image.open(tmp_path / "out" / "folder.jpg") as image:
+        assert image.size == (1032, 1468)
+    thumb = etree.parse(result.movie.nfo_file).xpath("/movie/actor/thumb/text()")[0]
+    assert thumb.startswith(".actors/")
+    assert (tmp_path / "out" / thumb).is_file()
+    assert calls == [high, portrait, actor]
+
+
+def test_missing_dmm_portrait_falls_back_to_cropped_cover(scene, monkeypatch):
+    movie, info, cfg = scene
+    original = "https://pics.dmm.co.jp/mono/movie/adult/jur752/jur752ps.jpg"
+    info.cover = info.big_cover = original
+    info.covers = info.big_covers = [original]
+    high, _, _, portrait = media.dmm_cover_candidates([original], [original])
+
+    def download(url, path, **kwargs):
+        if url == portrait:
+            from requests import HTTPError, Response
+
+            response = Response()
+            response.status_code = 404
+            raise HTTPError(response=response)
+        assert url == high
+        Image.new("RGB", (2184, 1468), "blue").save(path, format="JPEG")
+        return {"elapsed": 1, "rate": 100}
+
+    monkeypatch.setattr(media, "download", download)
+    result = OutputExecutor(cfg).execute(OutputPlanner(cfg).plan(movie, info))
+    assert any("竖版原图不可用" in warning for warning in result.warnings)
+    with Image.open(result.movie.poster_file) as image:
+        assert image.height == 1468
+
+
+def test_actor_download_failure_keeps_movie_and_remote_thumb(scene, monkeypatch):
+    from lxml import etree
+
+    movie, info, cfg = scene
+    info.actress = ["女優"]
+    info.actress_pics = {"女優": "https://example.test/actor.jpg"}
+    original_download = media.download
+
+    def download(url, path, **kwargs):
+        if url.startswith("https://"):
+            raise OSError("unavailable")
+        return original_download(url, path, **kwargs)
+
+    monkeypatch.setattr(media, "download", download)
+    result = OutputExecutor(cfg).execute(OutputPlanner(cfg).plan(movie, info))
+    assert any("女优头像不可用" in warning for warning in result.warnings)
+    assert etree.parse(result.movie.nfo_file).xpath("/movie/actor/thumb/text()") == ["https://example.test/actor.jpg"]
+
+
+def test_actor_image_is_restored_when_commit_fails(scene, tmp_path, monkeypatch):
+    from javsp.publish.media import actor_image_path
+
+    movie, info, cfg = scene
+    actor_source = tmp_path / "actor.jpg"
+    Image.new("RGB", (125, 125), "red").save(actor_source)
+    info.actress = ["女優"]
+    info.actress_pics = {"女優": str(actor_source)}
+    target = Path(actor_image_path(str(tmp_path / "out"), "女優"))
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"original actor")
+    original_publish = output.FileTransaction.publish
+
+    def fail_at_nfo(self, staged, destination, expected):
+        if destination.endswith("movie.nfo"):
+            raise OSError("publish failed")
+        return original_publish(self, staged, destination, expected)
+
+    monkeypatch.setattr(output.FileTransaction, "publish", fail_at_nfo)
+    with pytest.raises(OSError, match="publish failed"):
+        OutputExecutor(cfg).execute(OutputPlanner(cfg).plan(movie, info))
+    assert target.read_bytes() == b"original actor"
+    assert Path(movie.files[0]).exists()
+    assert not list(tmp_path.rglob(".javsp-*"))
+
+
 def test_long_names_commit_and_preserve_full_nfo_metadata(scene, tmp_path):
     from lxml import etree
 
@@ -155,7 +258,7 @@ def test_actual_format_and_folder_alias(scene, tmp_path):
     assert result.movie.poster_file.endswith("folder.png")
     assert result.movie.fanart_file.endswith("fanart.png")
     with Image.open(tmp_path / "out" / "folder.jpg") as image:
-        assert image.width <= 300 and image.height <= 450
+        assert image.size == (422, 600)
 
 
 def test_jpeg_folder_alias_is_full_size(scene, tmp_path):

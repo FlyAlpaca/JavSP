@@ -1,5 +1,6 @@
 """封面与剧照下载、海报裁剪及标签生成。"""
 
+import hashlib
 import logging
 import os
 import re
@@ -27,9 +28,53 @@ UNCENSORED_MARK_FILE = Image.open(os.path.abspath(resource_path("image/unc_mark.
 SUBTITLE_MARK_FILE.load()
 UNCENSORED_MARK_FILE.load()
 
+_DMM_COVER = re.compile(
+    r"^https://pics\.dmm\.co\.jp/(digital/video|mono/movie/adult)/([^/]+)/([^/]+)p[sl]\.jpg$", re.I
+)
+_DMM_PLACEHOLDER = "efea457c7fc0fae1eb0ec93f4f719189e38b0679cac47c11b829740d9b5675d8"
 
-def download_cover(covers, fanart_path, big_covers=None, movie_id="", *, cfg, resources=None):
+
+def dmm_cover_candidates(covers, big_covers):
+    """从已知 DMM 地址推导同一 CID 的原图、大图和缩略图，按清晰度排列。"""
+    for url in [*(big_covers or []), *(covers or [])]:
+        match = _DMM_COVER.fullmatch(url)
+        if match and match[2].lower() == match[3].lower():
+            section, cid, stem = match.groups()
+            section = section.replace("mono/movie/adult", "mono/movie")
+            high = f"https://awsimgsrc.dmm.co.jp/pics_dig/{section}/{cid}/{stem}pl.jpg"
+            ordinary = f"https://pics.dmm.co.jp/{match[1]}/{cid}/{stem}pl.jpg"
+            thumbnail = f"https://pics.dmm.co.jp/{match[1]}/{cid}/{stem}ps.jpg"
+            portrait = f"https://awsimgsrc.dmm.co.jp/pics_dig/{section}/{cid}/{stem}ps.jpg"
+            return high, ordinary, thumbnail, portrait
+    return None
+
+
+def actor_image_path(save_dir, name):
+    return os.path.join(save_dir, ".actors", hashlib.sha256(name.encode("utf-8")).hexdigest()[:16] + ".jpg")
+
+
+def download_actor(url, target, *, cfg, resources=None):
+    """下载并校验头像；DMM 返回的 200 占位图不能作为演员照片。"""
+    if resources:
+        resources.check()
+    download(url, target, network=cfg.network)
+    if resources:
+        resources.check()
+    if not valid_pic(target):
+        raise ValueError("头像图片无效")
+    if "dmm.co.jp/" in url:
+        with open(target, "rb") as image_file:
+            if hashlib.file_digest(image_file, "sha256").hexdigest() == _DMM_PLACEHOLDER:
+                raise ValueError("头像是 DMM 占位图")
+    with Image.open(target) as image:
+        image.convert("RGB").save(target, format="JPEG")
+
+
+def download_cover(covers, fanart_path, big_covers=None, movie_id="", *, cfg, resources=None, optional=False):
     """使用批次图片额度（独立调用最多三线程），高清全部失败后才尝试普通封面。"""
+    dmm = dmm_cover_candidates(covers, big_covers) if big_covers else None
+    if dmm:
+        big_covers, covers = dmm[:2], [dmm[2]]
     failed_reasons = []
     retry = cfg.network.retry
     temp_dir = os.path.dirname(os.path.abspath(fanart_path))
@@ -65,6 +110,11 @@ def download_cover(covers, fanart_path, big_covers=None, movie_id="", *, cfg, re
                         if not valid_pic(temp_path):
                             failed_reasons.append(f"{label} {url}: 图片无效或已损坏")
                             return None
+                        if "dmm.co.jp/" in url:
+                            with open(temp_path, "rb") as image_file:
+                                if hashlib.file_digest(image_file, "sha256").hexdigest() == _DMM_PLACEHOLDER:
+                                    failed_reasons.append(f"{label} {url}: DMM 占位图")
+                                    return None
                         detail = ""
                         if highres:
                             filesize = get_fmt_size(temp_path)
@@ -106,17 +156,20 @@ def download_cover(covers, fanart_path, big_covers=None, movie_id="", *, cfg, re
         )
         futures = []
         try:
-            for url in urls:
-                futures.append(resources.submit(executor, fetch, url) if resources else executor.submit(fetch, url))
-            for future in as_completed(futures):
-                result = future.result()
-                if result is not None:
-                    url, pic_path, detail = result
-                    if highres:
-                        logger.debug(f"已下载高清封面: {detail}")
-                    else:
-                        logger.debug(f"已下载封面: '{url}'")
-                    return url, pic_path
+            batches = ([url] for url in urls) if dmm else [urls]
+            for batch in batches:
+                current = [resources.submit(executor, fetch, url) if resources else executor.submit(fetch, url)
+                           for url in batch]
+                futures.extend(current)
+                for future in as_completed(current):
+                    result = future.result()
+                    if result is not None:
+                        url, pic_path, detail = result
+                        if highres:
+                            logger.debug(f"已下载高清封面: {detail}")
+                        else:
+                            logger.debug(f"已下载封面: '{url}'")
+                        return url, pic_path
         finally:
             stopped.set()
             # 回收在途请求和临时文件后再返回，避免批量运行时后台线程累积。
@@ -134,7 +187,8 @@ def download_cover(covers, fanart_path, big_covers=None, movie_id="", *, cfg, re
     if result is not None:
         return result
     reason_detail = "; ".join(failed_reasons) if failed_reasons else "无可用封面地址"
-    logger.error(f"下载封面图片失败: {movie_id}: {reason_detail}")
+    if not optional:
+        logger.error(f"下载封面图片失败: {movie_id}: {reason_detail}")
     return None, reason_detail
 
 
@@ -237,8 +291,8 @@ def get_pic_path(fanart_path, image_path):
     return fanart_base + extension
 
 
-def process_poster(movie: Movie, cfg, folder_cover_path=None, generate_folder_cover=True):
-    """处理封面图片：裁剪、添加标签，并生成文件夹封面缩略图"""
+def process_poster(movie: Movie, cfg, folder_cover_path=None, generate_folder_cover=True, portrait_path=None):
+    """优先使用独立竖版原图，再添加标签并生成同清晰度文件夹封面。"""
 
 
     def should_use_ai_crop_match(label):
@@ -251,20 +305,26 @@ def process_poster(movie: Movie, cfg, folder_cover_path=None, generate_folder_co
     if movie.info.uncensored or movie.data_src == "fc2" or should_use_ai_crop_match(movie.info.label.upper()):
         crop_engine = cfg.summarizer.cover.crop.engine
     cropper = get_cropper(crop_engine)
-    with Image.open(movie.fanart_file) as fanart_image:
-        fanart_cropped = cropper.crop(fanart_image)
+    if portrait_path and crop_engine is None:
+        with Image.open(portrait_path) as portrait_image:
+            fanart_cropped = portrait_image.copy()
+    else:
+        with Image.open(movie.fanart_file) as fanart_image:
+            fanart_cropped = cropper.crop(fanart_image)
 
     if cfg.summarizer.cover.add_label:
         if movie.hard_sub:
             fanart_cropped = add_label_to_poster(fanart_cropped, SUBTITLE_MARK_FILE, LabelPosition.BOTTOM_RIGHT)
         if movie.uncensored:
             fanart_cropped = add_label_to_poster(fanart_cropped, UNCENSORED_MARK_FILE, LabelPosition.BOTTOM_LEFT)
-    fanart_cropped.save(movie.poster_file)
+    if os.path.splitext(movie.poster_file)[1].lower() in (".jpg", ".jpeg"):
+        fanart_cropped.save(movie.poster_file, quality=95, subsampling=0)
+    else:
+        fanart_cropped.save(movie.poster_file)
 
     folder_cover = folder_cover_path or os.path.join(movie.save_dir, "folder.jpg")
     # 自定义命名已使用 folder.jpg 时保留原图，避免缩略图覆盖海报或横版封面。
     image_paths = {os.path.abspath(movie.poster_file), os.path.abspath(movie.fanart_file)}
     if generate_folder_cover and os.path.abspath(folder_cover) not in image_paths:
-        with fanart_cropped.convert("RGB") as thumbnail:
-            thumbnail.thumbnail((300, 450), Image.Resampling.LANCZOS)
-            thumbnail.save(folder_cover, format="JPEG")
+        with fanart_cropped.convert("RGB") as folder_image:
+            folder_image.save(folder_cover, format="JPEG", quality=95, subsampling=0)

@@ -9,7 +9,14 @@ from lxml import etree
 
 from javsp.datatype import Movie, filemove_logger
 from javsp.publish.image import valid_pic
-from javsp.publish.media import download_cover, download_extra_fanarts, process_poster
+from javsp.publish.media import (
+    actor_image_path,
+    dmm_cover_candidates,
+    download_actor,
+    download_cover,
+    download_extra_fanarts,
+    process_poster,
+)
 from javsp.publish.naming import validate_output_paths
 from javsp.publish.nfo import write_nfo
 from javsp.publish.planner import OutputPlan, _file_operations, _snapshot, _validate_targets
@@ -73,7 +80,17 @@ class OutputExecutor:
         folder_target = os.path.join(movie.save_dir, "folder.jpg")
         generate_folder = _key(folder_target) not in {_key(movie.fanart_file), _key(movie.poster_file)}
         folder = tx.temp(folder_target, ".jpg") if generate_folder else None
-        process_poster(staged_movie, self.cfg, folder, generate_folder)
+        portrait_path = None
+        dmm = dmm_cover_candidates(plan.movie.info.covers, plan.movie.info.big_covers)
+        if dmm and self.cfg.summarizer.cover.highres:
+            portrait = tx.temp(movie.poster_file, ".jpg")
+            portrait_result = download_cover([], portrait, [dmm[3]], movie_id=movie.dvdid or movie.cid,
+                                             cfg=self.cfg, resources=self.resources, optional=True)
+            if portrait_result[0]:
+                portrait_path = portrait_result[1]
+            else:
+                warnings.append("竖版原图不可用，已从横版封面裁剪海报")
+        process_poster(staged_movie, self.cfg, folder, generate_folder, portrait_path=portrait_path)
         artifacts.append((staged_movie.poster_file, movie.poster_file))
         if folder:
             artifacts.append((folder, folder_target))
@@ -87,6 +104,19 @@ class OutputExecutor:
             ))
             artifacts.extend((str(path), os.path.join(movie.save_dir, "extrafanart", path.name))
                              for path in sorted(Path(extra).iterdir()))
+        for name in movie.info.actress or []:
+            url = (movie.info.actress_pics or {}).get(name)
+            if not url:
+                continue
+            target = actor_image_path(movie.save_dir, name)
+            staged = tx.temp(target, ".jpg")
+            try:
+                download_actor(url, staged, cfg=self.cfg, resources=self.resources)
+            except Exception as error:
+                warnings.append(f"女优头像不可用: {name} ({type(error).__name__})")
+                continue
+            artifacts.append((staged, target))
+            movie.info.actress_pics[name] = os.path.relpath(target, movie.save_dir)
         nfo = tx.temp(movie.nfo_file, ".nfo")
         write_nfo(movie.info, nfo, self.cfg)
         artifacts.append((nfo, movie.nfo_file))
@@ -101,6 +131,10 @@ class OutputExecutor:
                 raise ValueError(f"产物目标不是普通文件: {target}")
         # 保留下载获胜封面的实际来源。
         source = movie.info._cover_sources.get(movie.info.cover)
+        if not source and dmm:
+            source = next((plan.movie.info._cover_sources.get(url) for url in
+                           [*(plan.movie.info.big_covers or []), *(plan.movie.info.covers or [])]
+                           if plan.movie.info._cover_sources.get(url)), None)
         if source:
             movie.info.field_sources = dict(movie.info.field_sources or {}, cover=source)
         elif movie.info.cover != plan.movie.info.cover and movie.info.field_sources:
