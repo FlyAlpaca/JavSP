@@ -106,12 +106,119 @@ def test_duplicate_entries_and_japanese_primary_precedence():
       <a jp="桃乃木かな" zh_cn="桃乃木香奈" keyword="松嶋真麻" />
       <a jp="星奈あい" zh_cn="星奈爱" keyword="旧名" />
       <a jp="星奈あい" zh_cn="星奈あい" keyword="旧名" />
+      <a jp="本庄優花" zh_cn="本庄優花" />
+      <a jp="本庄優花" zh_cn="本庄优花" />
     </actor></actor-mapping>""".encode()
     )
     assert mapping.resolve("桃乃木かな") == "桃乃木かな（桃乃木香奈）"
     assert mapping.resolve("松嶋真麻") == "松嶋真麻"
-    assert mapping.resolve("星奈あい") == "星奈あい"
+    assert mapping.resolve("星奈あい") == "星奈あい（星奈爱）"
+    assert mapping.resolve("旧名") == "星奈あい（星奈爱）"
+    assert mapping.resolve("本庄優花") == "本庄優花（本庄优花）"
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_duplicate_placeholder_does_not_hide_translation(reverse):
+    rows = [
+        '<a jp="木下ひまり" zh_cn="木下ひまり" keyword="占位条目别名" />',
+        '<a jp="木下ひまり" zh_cn="木下日葵" keyword="译名条目别名" />',
+        '<a jp="木下ひまり" zh_cn="" />',
+    ]
+    if reverse:
+        rows.reverse()
+    mapping = ActorMapping.from_xml(('<actor-mapping>' + ''.join(rows) + '</actor-mapping>').encode())
+    expected = "木下ひまり（木下日葵）"
+    for name in ("木下ひまり", "木下日葵", "占位条目别名", "译名条目别名", expected):
+        assert mapping.resolve(name) == expected
+    assert mapping.resolve("占位条目别名", normalize_aliases=False) == "占位条目别名（木下日葵）"
+
+
+@pytest.mark.parametrize(
+    ("cn", "tw", "expected"),
+    [
+        ("东云みれい", "東雲美玲", "東雲みれい（東雲美玲）"),
+        ("东云ﾐﾚｲ", "東雲美玲", "東雲みれい（東雲美玲）"),
+        ("Mirei Shinonome", "東雲美玲", "東雲みれい（東雲美玲）"),
+        ("東雲みれい", "東雲みれい", "東雲みれい"),
+        ("东云美玲", "東雲美玲", "東雲みれい（东云美玲）"),
+    ],
+)
+def test_chinese_fields_must_contain_chinese_without_kana(cn, tw, expected):
+    mapping = ActorMapping.from_xml(
+        f'<actor-mapping><a jp="東雲みれい" zh_cn="{cn}" zh_tw="{tw}" /></actor-mapping>'.encode()
+    )
+    assert mapping.resolve("東雲みれい") == expected
+    assert mapping.resolve(expected) == expected
+
+
+def test_conflicting_translations_and_shared_aliases_still_preserve_input():
+    mapping = ActorMapping.from_xml(b'''<actor-mapping>
+      <a jp="actor" zh_cn="" keyword="shared" />
+      <a jp="other" zh_cn="" keyword="shared" />
+    </actor-mapping>''')
+    assert mapping.resolve("shared") == "shared"
+    mapping = ActorMapping.from_xml('''<actor-mapping>
+      <a jp="和登こころ" zh_cn="和登心" keyword="旧名" />
+      <a jp="和登こころ" zh_cn="小柳結衣" keyword="旧名" />
+      <a jp="和登こころ" zh_cn="和登こころ" />
+    </actor-mapping>'''.encode())
+    assert mapping.resolve("和登こころ") == "和登こころ"
     assert mapping.resolve("旧名") == "旧名"
+
+
+def test_missing_chinese_does_not_treat_japanese_kanji_as_translation():
+    mapping = ActorMapping.from_xml(
+        '<actor-mapping><a jp="日本原名" keyword="旧艺名" /></actor-mapping>'.encode()
+    )
+    assert mapping.resolve("旧艺名") == "日本原名"
+    assert mapping.resolve("旧艺名", normalize_aliases=False) == "旧艺名"
+
+
+@pytest.mark.parametrize(
+    ("cn", "keywords", "expected"),
+    [
+        ("雛形みくる", "小島優花,雏形美久琉,雛形美久琉", "雛形みくる（雏形美久琉）"),
+        ("雛形みくる", "小島優花,雛形美久琉", "雛形みくる（雛形美久琉）"),
+        ("雛形みくる", "小島優花", "雛形みくる"),
+        ("上游新译名", "雏形美久琉", "雛形みくる（上游新译名）"),
+    ],
+)
+def test_verified_chinese_alias_requires_upstream_evidence(cn, keywords, expected):
+    mapping = ActorMapping.from_xml(
+        f'<actor-mapping><a jp="雛形みくる" zh_cn="{cn}" keyword="{keywords}" /></actor-mapping>'.encode()
+    )
+    assert mapping.resolve("雛形みくる") == expected
+    assert mapping.resolve(expected) == expected
+
+
+@pytest.mark.parametrize("other", [
+    '<a jp="別人" keyword="雏形美久琉" />',
+    '<a jp="別人" zh_cn="雏形美久琉" />',
+    '<a jp="雏形美久琉" />',
+])
+def test_verified_chinese_alias_cannot_belong_to_another_actor(other):
+    mapping = ActorMapping.from_xml(f'''<actor-mapping>
+      <a jp="雛形みくる" keyword="雏形美久琉" />
+      {other}
+    </actor-mapping>'''.encode())
+    assert mapping.resolve("雛形みくる") == "雛形みくる"
+
+
+def test_reported_actor_names_and_portraits_are_merged_consistently():
+    mapping = ActorMapping.from_xml('''<actor-mapping>
+      <a jp="本真ゆり" zh_cn="本真友里" keyword="桐生さや" />
+      <a jp="本真ゆり" zh_cn="本真ゆり" keyword="桐生さや" />
+      <a jp="雛形みくる" zh_cn="雛形みくる" zh_tw="雛形みくる"
+         keyword="雛形みくる,小島優花,雏形美久琉,Mikuru Hinagata,雛形美久琉" />
+    </actor-mapping>'''.encode())
+    movie = Movie("ABC-123")
+    source = MovieInfo(movie, title="title", cover="cover", actress=["本真ゆり", "雛形みくる"],
+                       actress_pics={"本真ゆり": "portrait1", "雛形みくる": "portrait2"})
+    result = CrawlResult({"r18dev": source}, [], movie.dvdid, None, "normal")
+    merged = MetadataMerger(load_config(), aliases=mapping).merge(movie, result)
+    assert merged.actress == ["本真ゆり（本真友里）", "雛形みくる（雏形美久琉）"]
+    assert merged.actress_pics == {"本真ゆり（本真友里）": "portrait1", "雛形みくる（雏形美久琉）": "portrait2"}
+    assert source.actress == ["本真ゆり", "雛形みくる"]
 
 
 @pytest.mark.parametrize(
@@ -315,7 +422,9 @@ def test_alias_helper_and_merger_use_explicit_snapshot():
 @pytest.mark.parametrize("normalize", [True, False])
 def test_merged_names_consistent_in_paths_nfo_and_thumbnails(tmp_path, normalize):
     cfg = load_config().model_copy(deep=True)
-    mapping = ActorMapping.from_xml(XML)
+    mapping = ActorMapping.from_xml(XML.replace(
+        b"</actor>", '<a jp="新ありな" zh_cn="新ありな" keyword="橋本ありな" /></actor>'.encode()
+    ))
     cfg = cfg.model_copy(update={"r18dev": cfg.r18dev.model_copy(update={"normalize_actress_name": normalize})})
     movie = Movie("ABC-123")
     movie.files = [str(tmp_path / "ABC-123.mp4")]
