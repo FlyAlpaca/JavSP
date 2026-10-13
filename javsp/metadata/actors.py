@@ -22,8 +22,9 @@ MAPPING_PART_SIZE = 1024 * 1024
 DOWNLOAD_ATTEMPTS = 3
 _KANA = re.compile(r"[\u3041-\u3096\u309d-\u309f\u30a1-\u30fa\u30fc-\u30ff\u31f0-\u31ff\uff66-\uff9f]")
 _HAN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\U00020000-\U000323af]")
-# 上游中文字段为日文占位，但 keyword 已收录的中文译名。
-# 只允许经核实的条目，且运行时仍须确认别名唯一属于该原名，不能任取汉字别名（可能是旧艺名）。
+# 已核实的汉字姓名简体写法，来源见 README「女优名称与别名」。仅补空或替代原名占位。
+_VERIFIED_CHINESE_NAMES = {"二階堂麗": "二阶堂丽", "彩月七緒": "彩月七绪", "蒼山愛奈": "苍山爱奈"}
+# 上游中文字段为日文占位，但 keyword 已收录的中文译名；运行时仍校验唯一归属。
 _VERIFIED_CHINESE_ALIASES = {"雛形みくる": ("雏形美久琉", "雛形美久琉")}
 
 
@@ -87,33 +88,54 @@ class ActorMapping:
         except OSError as error:
             raise ActorMappingError(f"无法读取演员映射缓存 {path}: {error}") from error
 
-    def resolve(self, name: str, *, normalize_aliases=True) -> str:
-        key = name.strip()
+    def _lookup(self, key: str):
         for index in (self._japanese, self._primary, self._aliases):
             candidates = index.get(key)
             if candidates:
-                originals = {jp for jp, _ in candidates}
-                if len(originals) != 1:
-                    return name
-                jp = next(iter(originals))
-                # 同一原名的占位记录不应遮住有效译名；所有入口复用相同的译名选择。
-                translations = {cn for _, cn in self._japanese[jp] if cn and cn != jp}
-                if len(translations) > 1:
-                    return name
-                chinese = next(iter(translations), jp if (jp, jp) in self._japanese[jp] else "")
-                if not chinese:
-                    for alias in _VERIFIED_CHINESE_ALIASES.get(jp, ()):
-                        owners = {
-                            owner
-                            for names in (self._japanese, self._primary, self._aliases)
-                            for owner, _ in names.get(alias, ())
-                        }
-                        if alias in self._aliases and owners == {jp}:
-                            chinese = alias
-                            break
-                original = key if index is self._aliases and not normalize_aliases else jp
-                return f"{original}（{chinese}）" if chinese and chinese != original else original
-        return name
+                return {jp for jp, _ in candidates}, index is self._aliases
+        return set(), False
+
+    def _translation(self, jp: str) -> str | None:
+        # 同一原名的占位记录不应遮住有效译名；冲突译名保持未决。
+        translations = {cn for _, cn in self._japanese[jp] if cn and cn != jp}
+        if len(translations) > 1:
+            return None
+        chinese = next(iter(translations), jp if (jp, jp) in self._japanese[jp] else "")
+        if not chinese or chinese == jp:
+            chinese = _VERIFIED_CHINESE_NAMES.get(jp, chinese)
+        if not chinese:
+            for alias in _VERIFIED_CHINESE_ALIASES.get(jp, ()):
+                owners = {
+                    owner
+                    for names in (self._japanese, self._primary, self._aliases)
+                    for owner, _ in names.get(alias, ())
+                }
+                if alias in self._aliases and owners == {jp}:
+                    return alias
+        return chinese
+
+    def resolve(self, name: str, *, normalize_aliases=True) -> str:
+        key = name.strip()
+        originals, is_alias = self._lookup(key)
+        if not originals:
+            # 仅拆分一对完整括号；两侧必须各自唯一命中同一演员，不能忽略未知或冲突部分。
+            compound = re.fullmatch(r"([^()（）]+)(?:（([^()（）]+)）|\(([^()（）]+)\))", key)
+            if not compound:
+                return name
+            left, right = compound[1].strip(), (compound[2] or compound[3]).strip()
+            originals, is_alias = self._lookup(left)
+            other, _ = self._lookup(right)
+            if len(originals) != 1 or originals != other:
+                return name
+            key = left
+        if len(originals) != 1:
+            return name
+        jp = next(iter(originals))
+        chinese = self._translation(jp)
+        if chinese is None:
+            return name
+        original = key if is_alias and not normalize_aliases else jp
+        return f"{original}（{chinese}）" if chinese and chinese != original else original
 
 
 def _atomic_write(path: Path, content: bytes):
