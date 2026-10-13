@@ -39,13 +39,8 @@ def test_folder_cover_is_jpeg_and_keeps_aspect_ratio(tmp_path, poster_config, si
     with Image.open(movie.poster_file) as poster, Image.open(tmp_path / "folder.jpg") as folder:
         assert folder.format == "JPEG"
         assert folder.mode == "RGB"
-        assert folder.width <= min(300, poster.width)
-        assert folder.height <= min(450, poster.height)
+        assert folder.size == poster.size
         assert abs(folder.width / folder.height - poster.width / poster.height) < 0.01
-        if poster.width <= 300 and poster.height <= 450:
-            assert folder.size == poster.size
-        else:
-            assert folder.width == 300 or folder.height == 450
     assert (tmp_path / "fanart.png").read_bytes() == original
 
 

@@ -55,6 +55,12 @@ SCHEMA = {
 }
 
 
+def test_relative_actress_image_uses_actjpgs_directory():
+    assert r18dev._actress_url("satuki_mei3.jpg") == "https://pics.dmm.co.jp/mono/actjpgs/satuki_mei3.jpg"
+    assert r18dev._actress_url("null") is None
+    assert r18dev._actress_url("https://example.test/actor.jpg") == "https://example.test/actor.jpg"
+
+
 def dump(title="本地标题", *, duplicate=False, broken=False, blank_preview=False, videos=()):
     rows = {table: [] for table in TABLES}
     video = [

@@ -378,6 +378,14 @@ def _url(value):
     return "https://pics.dmm.co.jp/" + value
 
 
+def _actress_url(value):
+    if not value or value.lower() == "null":
+        return None
+    if value.startswith(("http://", "https://")) or "/" in value:
+        return _url(value)
+    return _url("mono/actjpgs/" + value)
+
+
 def _gallery(first, last):
     if not first:
         return None
@@ -475,9 +483,12 @@ def lookup(path: Path, movie):
         info.big_cover = _url(row["jacket_full_url"])
         info.genre = [(item[0] or item[1]) for item in category_rows if item[0] or item[1]] or None
         info.actress = actresses or None
-        info.actress_pics = {
-            (item[0] or item[1]): _url(item[2]) for item in actress_rows if (item[0] or item[1]) and item[2]
-        } or None
+        pictures = {}
+        for item in actress_rows:
+            name, url = item[0] or item[1], _actress_url(item[2])
+            if name and url:
+                pictures[name] = url
+        info.actress_pics = pictures or None
         info.director = next((item[0] or item[1] for item in director_rows if item[0] or item[1]), None)
         info.duration = str(row["runtime_mins"]) if row["runtime_mins"] else None
         info.publish_date = row["release_date"]
