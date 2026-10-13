@@ -117,17 +117,6 @@ class ActorMapping:
     def resolve(self, name: str, *, normalize_aliases=True) -> str:
         key = name.strip()
         originals, is_alias = self._lookup(key)
-        if not originals:
-            # 仅拆分一对完整括号；两侧必须各自唯一命中同一演员，不能忽略未知或冲突部分。
-            compound = re.fullmatch(r"([^()（）]+)(?:（([^()（）]+)）|\(([^()（）]+)\))", key)
-            if not compound:
-                return name
-            left, right = compound[1].strip(), (compound[2] or compound[3]).strip()
-            originals, is_alias = self._lookup(left)
-            other, _ = self._lookup(right)
-            if len(originals) != 1 or originals != other:
-                return name
-            key = left
         if len(originals) != 1:
             return name
         jp = next(iter(originals))
