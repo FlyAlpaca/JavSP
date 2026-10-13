@@ -20,6 +20,16 @@ MAX_MAPPING_SIZE = 32 * 1024 * 1024
 DOWNLOAD_DEADLINE = 600
 MAPPING_PART_SIZE = 1024 * 1024
 DOWNLOAD_ATTEMPTS = 3
+_KANA = re.compile(r"[\u3041-\u3096\u309d-\u309f\u30a1-\u30fa\u30fc-\u30ff\u31f0-\u31ff\uff66-\uff9f]")
+_HAN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\U00020000-\U000323af]")
+# 上游中文字段为日文占位，但 keyword 已收录的中文译名。
+# 只允许经核实的条目，且运行时仍须确认别名唯一属于该原名，不能任取汉字别名（可能是旧艺名）。
+_VERIFIED_CHINESE_ALIASES = {"雛形みくる": ("雏形美久琉", "雛形美久琉")}
+
+
+def _chinese_name(*names: str) -> str:
+    """中文字段可能只是日文或罗马音占位；仅从有效字段中按顺序取值。"""
+    return next((name for name in names if _HAN.search(name) and not _KANA.search(name)), "")
 
 
 class ActorMappingError(Exception):
@@ -53,7 +63,7 @@ class ActorMapping:
                 continue
             cn = (row.get("zh_cn") or "").strip()
             tw = (row.get("zh_tw") or "").strip()
-            chinese = cn or tw
+            chinese = _chinese_name(cn, tw)
             display = f"{jp}（{chinese}）" if chinese and chinese != jp else jp
             actor = (jp, chinese)
             mapping._japanese.setdefault(jp, set()).add(actor)
@@ -82,9 +92,25 @@ class ActorMapping:
         for index in (self._japanese, self._primary, self._aliases):
             candidates = index.get(key)
             if candidates:
-                if len(candidates) != 1:
+                originals = {jp for jp, _ in candidates}
+                if len(originals) != 1:
                     return name
-                jp, chinese = next(iter(candidates))
+                jp = next(iter(originals))
+                # 同一原名的占位记录不应遮住有效译名；所有入口复用相同的译名选择。
+                translations = {cn for _, cn in self._japanese[jp] if cn and cn != jp}
+                if len(translations) > 1:
+                    return name
+                chinese = next(iter(translations), jp if (jp, jp) in self._japanese[jp] else "")
+                if not chinese:
+                    for alias in _VERIFIED_CHINESE_ALIASES.get(jp, ()):
+                        owners = {
+                            owner
+                            for names in (self._japanese, self._primary, self._aliases)
+                            for owner, _ in names.get(alias, ())
+                        }
+                        if alias in self._aliases and owners == {jp}:
+                            chinese = alias
+                            break
                 original = key if index is self._aliases and not normalize_aliases else jp
                 return f"{original}（{chinese}）" if chinese and chinese != original else original
         return name
