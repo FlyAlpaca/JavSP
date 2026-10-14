@@ -98,7 +98,7 @@ def write_nfo(info: MovieInfo, nfo_file, cfg):
 
     # TODO: fileinfo 字段，看起来可以给定字幕语言和类型，留待开发
 
-    # 写入演员名。Kodi支持用thumb显示演员头像，如果能获取到演员头像也一并写入
+    # 写入演员名及来源提供的头像地址，由媒体中心获取头像。
     if info.actress:
         for i in info.actress:
             if (info.actress_pics) and (i in info.actress_pics):

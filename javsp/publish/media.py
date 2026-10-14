@@ -49,27 +49,6 @@ def dmm_cover_candidates(covers, big_covers):
     return None
 
 
-def actor_image_path(save_dir, name):
-    return os.path.join(save_dir, ".actors", hashlib.sha256(name.encode("utf-8")).hexdigest()[:16] + ".jpg")
-
-
-def download_actor(url, target, *, cfg, resources=None):
-    """下载并校验头像；DMM 返回的 200 占位图不能作为演员照片。"""
-    if resources:
-        resources.check()
-    download(url, target, network=cfg.network)
-    if resources:
-        resources.check()
-    if not valid_pic(target):
-        raise ValueError("头像图片无效")
-    if "dmm.co.jp/" in url:
-        with open(target, "rb") as image_file:
-            if hashlib.file_digest(image_file, "sha256").hexdigest() == _DMM_PLACEHOLDER:
-                raise ValueError("头像是 DMM 占位图")
-    with Image.open(target) as image:
-        image.convert("RGB").save(target, format="JPEG")
-
-
 def download_cover(covers, fanart_path, big_covers=None, movie_id="", *, cfg, resources=None, optional=False):
     """使用批次图片额度（独立调用最多三线程），高清全部失败后才尝试普通封面。"""
     dmm = dmm_cover_candidates(covers, big_covers) if big_covers else None

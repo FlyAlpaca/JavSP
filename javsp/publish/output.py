@@ -10,9 +10,7 @@ from lxml import etree
 from javsp.datatype import Movie, filemove_logger
 from javsp.publish.image import valid_pic
 from javsp.publish.media import (
-    actor_image_path,
     dmm_cover_candidates,
-    download_actor,
     download_cover,
     download_extra_fanarts,
     process_poster,
@@ -104,21 +102,6 @@ class OutputExecutor:
             ))
             artifacts.extend((str(path), os.path.join(movie.save_dir, "extrafanart", path.name))
                              for path in sorted(Path(extra).iterdir()))
-        for name in movie.info.actress or []:
-            url = (movie.info.actress_pics or {}).get(name)
-            if not url:
-                continue
-            target = actor_image_path(movie.save_dir, name)
-            staged = tx.temp(target, ".jpg")
-            try:
-                download_actor(url, staged, cfg=self.cfg, resources=self.resources)
-            except Exception as error:
-                warnings.append(f"女优头像不可用: {name} ({type(error).__name__})")
-                continue
-            artifacts.append((staged, target))
-            # 绿联影视中心通过 thumb URL 下载头像，不能用本地缓存路径覆盖远程地址。
-            if not url.lower().startswith(("http://", "https://")):
-                movie.info.actress_pics[name] = os.path.relpath(target, movie.save_dir).replace(os.sep, "/")
         nfo = tx.temp(movie.nfo_file, ".nfo")
         write_nfo(movie.info, nfo, self.cfg)
         artifacts.append((nfo, movie.nfo_file))

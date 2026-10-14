@@ -61,24 +61,6 @@ def test_dmm_cover_stops_at_highest_valid_image(tmp_path, monkeypatch, cover_con
     assert calls == [high]
 
 
-def test_actor_placeholder_is_rejected(tmp_path, monkeypatch, cover_config):
-    placeholder = tmp_path / "placeholder.jpg"
-    # 即使 HTTP 200 且图片格式有效，命中占位图哈希时也不能发布头像。
-    monkeypatch.setattr(media, "_DMM_PLACEHOLDER", "dummy")
-
-    def download(url, path, **kwargs):
-        Image.new("RGB", (90, 122), "gray").save(path, format="JPEG")
-        return {}
-
-    monkeypatch.setattr(media, "download", download)
-    download("unused", placeholder)
-    import hashlib
-
-    monkeypatch.setattr(media, "_DMM_PLACEHOLDER", hashlib.sha256(placeholder.read_bytes()).hexdigest())
-    with pytest.raises(ValueError, match="占位图"):
-        media.download_actor("https://pics.dmm.co.jp/mono/actjpgs/missing.jpg", tmp_path / "actor.jpg", cfg=cover_config)
-
-
 @pytest.mark.parametrize("highres", [True, False])
 @pytest.mark.parametrize("shared_pool", [False, True])
 def test_fast_cover_waits_for_slow_request_and_loser_cannot_overwrite(tmp_path, monkeypatch, cover_config, highres, shared_pool):
