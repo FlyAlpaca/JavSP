@@ -97,9 +97,29 @@ def test_dmm_original_images_and_local_actor_are_committed(scene, tmp_path, monk
     with Image.open(tmp_path / "out" / "folder.jpg") as image:
         assert image.size == (1032, 1468)
     thumb = etree.parse(result.movie.nfo_file).xpath("/movie/actor/thumb/text()")[0]
-    assert thumb.startswith(".actors/")
-    assert (tmp_path / "out" / thumb).is_file()
+    assert thumb == actor
+    local_actor = Path(media.actor_image_path(result.movie.save_dir, info.actress[0]))
+    assert str(local_actor) in result.artifacts
+    with Image.open(local_actor) as image:
+        assert image.size == (125, 125)
+    assert info.actress_pics == {"さつき芽衣": actor}
+    assert result.movie.info.actress_pics == info.actress_pics
     assert calls == [high, portrait, actor]
+
+
+def test_local_actor_source_uses_portable_nfo_path(scene, tmp_path):
+    from lxml import etree
+
+    movie, info, cfg = scene
+    actor = tmp_path / "actor.jpg"
+    Image.new("RGB", (125, 125), "red").save(actor)
+    info.actress = ["女優"]
+    info.actress_pics = {"女優": str(actor)}
+    result = OutputExecutor(cfg).execute(OutputPlanner(cfg).plan(movie, info))
+    thumb = etree.parse(result.movie.nfo_file).xpath("/movie/actor/thumb/text()")[0]
+    assert thumb.startswith(".actors/")
+    assert (Path(result.movie.save_dir) / thumb).is_file()
+    assert info.actress_pics == {"女優": str(actor)}
 
 
 def test_missing_dmm_portrait_falls_back_to_cropped_cover(scene, monkeypatch):

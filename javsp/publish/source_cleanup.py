@@ -37,7 +37,7 @@ class SourceCleanup:
         self.cfg = cfg
         self.extensions = set(cfg.scanner.filename_extensions)
         patterns = cfg.scanner.ignored_folder_name_pattern
-        self.ignored = re.compile("|".join(patterns)) if patterns else None
+        self.ignored = [re.compile(pattern) for pattern in patterns]
         # skip_nfo_dir 和过小文件属于扫描筛选，不是清理排除规则。
         self.protected = set()
         self.trees = {}
@@ -85,6 +85,11 @@ class SourceCleanup:
         return (path.suffix.lower() in self.extensions and stamp[3] >= self.cfg.scanner.minimum_size
                 and bool(get_cid(str(path)) or get_id(str(path), self.cfg)))
 
+    def _ignored_directory(self, path):
+        # 头像残留只豁免默认隐藏目录规则；用户显式排除仍生效。
+        return any(pattern.match(path.name) for pattern in self.ignored
+                   if not (path.name in (".actor", ".actors") and pattern.pattern == r"^\."))
+
     def _snapshot(self, directory):
         stamp = _stamp(directory)
         if stamp is None or not stat.S_ISDIR(stamp[2]):
@@ -103,7 +108,7 @@ class SourceCleanup:
                 stamp = _stamp(path)
                 if (stamp and stat.S_ISDIR(stamp[2]) and stamp[0] == self.root_stamp[0]
                         and not path.is_mount() and not path.name.startswith(".javsp-")
-                        and not (self.ignored and self.ignored.match(path.name))):
+                        and not self._ignored_directory(path)):
                     self._snapshot(path)
                 else:
                     self.protected.add(path)
@@ -141,7 +146,7 @@ class SourceCleanup:
                 raise _UnsafeCleanup(f"目录已消失或不是普通目录: {parent}")
             if stamp[0] != root_stamp[0] or parent.is_mount():
                 raise _UnsafeCleanup(f"目录位于其他挂载点: {parent}")
-            if parent.name.startswith(".javsp-") or (self.ignored and self.ignored.match(parent.name)):
+            if parent.name.startswith(".javsp-") or self._ignored_directory(parent):
                 raise _UnsafeCleanup(f"目录属于恢复材料或扫描排除目录: {parent}")
             expected = (directories or {}).get(parent, self.directory_stamps.get(parent))
             if expected is not None and stamp[:3] != expected:
@@ -165,7 +170,7 @@ class SourceCleanup:
                 raise _UnsafeCleanup(f"目录已变化: {directory}")
             if stamp[0] != root_stamp[0] or directory.is_mount():
                 raise _UnsafeCleanup(f"目录位于其他挂载点: {directory}")
-            if directory.name.startswith(".javsp-") or (self.ignored and self.ignored.match(directory.name)):
+            if directory.name.startswith(".javsp-") or self._ignored_directory(directory):
                 raise _UnsafeCleanup(f"保留恢复材料或扫描排除目录: {directory}")
             directories[directory] = stamp[:3]
             with os.scandir(directory) as entries:
