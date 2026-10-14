@@ -77,7 +77,7 @@ class Session:
         ("橋本ありな", "新ありな（新有菜）"),
         ("葵つかさ", "葵つかさ（葵司）"),
         ("JULIA", "JULIA"),
-        ("波多野結衣", "波多野結衣"),
+        ("波多野結衣", "波多野結衣（波多野结衣）"),
         ("缺少原名", "缺少原名"),
         ("共用别名", "共用别名"),
         ("未知女优", "未知女优"),
@@ -178,12 +178,12 @@ def test_missing_chinese_does_not_treat_japanese_kanji_as_translation():
     ("cn", "keywords", "expected"),
     [
         ("雛形みくる", "小島優花,雏形美久琉,雛形美久琉", "雛形みくる（雏形美久琉）"),
-        ("雛形みくる", "小島優花,雛形美久琉", "雛形みくる（雛形美久琉）"),
+        ("雛形みくる", "小島優花,雛形美久琉", "雛形みくる（雏形美久琉）"),
         ("雛形みくる", "小島優花", "雛形みくる"),
         ("上游新译名", "雏形美久琉", "雛形みくる（上游新译名）"),
     ],
 )
-def test_verified_chinese_alias_requires_upstream_evidence(cn, keywords, expected):
+def test_chinese_alias_fallback_requires_upstream_evidence(cn, keywords, expected):
     mapping = ActorMapping.from_xml(
         f'<actor-mapping><a jp="雛形みくる" zh_cn="{cn}" keyword="{keywords}" /></actor-mapping>'.encode()
     )
@@ -196,7 +196,7 @@ def test_verified_chinese_alias_requires_upstream_evidence(cn, keywords, expecte
     '<a jp="別人" zh_cn="雏形美久琉" />',
     '<a jp="雏形美久琉" />',
 ])
-def test_verified_chinese_alias_cannot_belong_to_another_actor(other):
+def test_chinese_alias_fallback_cannot_belong_to_another_actor(other):
     mapping = ActorMapping.from_xml(f'''<actor-mapping>
       <a jp="雛形みくる" keyword="雏形美久琉" />
       {other}

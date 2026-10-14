@@ -11,6 +11,7 @@ from pathlib import Path
 
 import requests
 from lxml import etree
+from opencc import OpenCC
 
 from javsp.download import DownloadError, DownloadSpec, ObjectChanged, clear_parts, download_file
 
@@ -22,12 +23,6 @@ MAPPING_PART_SIZE = 1024 * 1024
 DOWNLOAD_ATTEMPTS = 3
 _KANA = re.compile(r"[\u3041-\u3096\u309d-\u309f\u30a1-\u30fa\u30fc-\u30ff\u31f0-\u31ff\uff66-\uff9f]")
 _HAN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\U00020000-\U000323af]")
-# 已核实的中文姓名，来源见 README「女优名称与别名」。仅补空或替代原名占位。
-_VERIFIED_CHINESE_NAMES = {
-    "二階堂麗": "二阶堂丽", "彩月七緒": "彩月七绪", "蒼山愛奈": "苍山爱奈", "神宮寺ナオ": "神宫寺奈绪",
-}
-# 上游中文字段为日文占位，但 keyword 已收录的中文译名；运行时仍校验唯一归属。
-_VERIFIED_CHINESE_ALIASES = {"雛形みくる": ("雏形美久琉", "雛形美久琉")}
 
 
 def _chinese_name(*names: str) -> str:
@@ -46,6 +41,7 @@ class ActorMapping:
         self._japanese: dict[str, set[tuple[str, str]]] = {}
         self._primary: dict[str, set[tuple[str, str]]] = {}
         self._aliases: dict[str, set[tuple[str, str]]] = {}
+        self._fallback_chinese: dict[str, str] = {}
         self.row_count = 0
 
     @classmethod
@@ -79,7 +75,48 @@ class ActorMapping:
             mapping.row_count += 1
         if not mapping.row_count:
             raise ActorMappingError("演员映射没有包含原名的有效条目")
+        mapping._build_chinese_fallbacks()
         return mapping
+
+    def _build_chinese_fallbacks(self):
+        """按汉字片段匹配上游别名；简繁等价候选合并，跨演员归属冲突不补全。"""
+        converter = OpenCC("t2s")
+        normalized: dict[str, str] = {}
+        owners: dict[str, set[str]] = {}
+        for index in (self._japanese, self._primary, self._aliases):
+            for name, actors in index.items():
+                if not all(_HAN.fullmatch(char) for char in name):
+                    continue
+                if name not in normalized:
+                    normalized[name] = converter.convert(name)
+                owners.setdefault(normalized[name], set()).update(jp for jp, _ in actors)
+
+        keywords: dict[str, set[str]] = {}
+        for name, actors in self._aliases.items():
+            if name in normalized:
+                for jp, _ in actors:
+                    keywords.setdefault(jp, set()).add(normalized[name])
+
+        for jp, actors in self._japanese.items():
+            # 纯汉字原名须有同名中文字段或简繁等价别名作为依据。
+            if jp in normalized:
+                chinese = normalized[jp]
+                if (jp, jp) not in actors and chinese not in keywords.get(jp, ()):
+                    continue
+            else:
+                name = converter.convert(jp)
+                # 至少两个汉字作为匹配依据；标点、拉丁字母及纯假名不推断。
+                if len(_HAN.findall(name)) < 2 or not _KANA.search(name):
+                    continue
+                if not all(_HAN.fullmatch(char) or _KANA.fullmatch(char) for char in name):
+                    continue
+                pattern = re.sub(f"{_KANA.pattern}+", ".+", name)
+                candidates = {alias for alias in keywords.get(jp, ()) if re.fullmatch(pattern, alias)}
+                if len(candidates) != 1:
+                    continue
+                chinese = candidates.pop()
+            if owners[chinese] == {jp}:
+                self._fallback_chinese[jp] = chinese
 
     @classmethod
     def from_file(cls, path: Path):
@@ -104,16 +141,7 @@ class ActorMapping:
             return None
         chinese = next(iter(translations), jp if (jp, jp) in self._japanese[jp] else "")
         if not chinese or chinese == jp:
-            chinese = _VERIFIED_CHINESE_NAMES.get(jp, chinese)
-        if not chinese:
-            for alias in _VERIFIED_CHINESE_ALIASES.get(jp, ()):
-                owners = {
-                    owner
-                    for names in (self._japanese, self._primary, self._aliases)
-                    for owner, _ in names.get(alias, ())
-                }
-                if alias in self._aliases and owners == {jp}:
-                    return alias
+            chinese = self._fallback_chinese.get(jp, chinese)
         return chinese
 
     def resolve(self, name: str, *, normalize_aliases=True) -> str:
