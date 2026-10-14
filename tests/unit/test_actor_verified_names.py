@@ -11,6 +11,7 @@ XML = '''<actor-mapping>
   <a jp="彩月七緒" zh_cn="彩月七緒" />
   <a jp="蒼山愛奈" zh_cn="蒼山愛奈" />
   <a jp="雛形みくる" zh_cn="雛形みくる" keyword="雏形美久琉" />
+  <a jp="神宮寺ナオ" zh_cn="神宮寺ナオ" zh_tw="神宮寺ナオ" keyword="松岡芽郁,池田充希,神宮寺奈緒" />
 </actor-mapping>'''.encode()
 
 
@@ -21,6 +22,8 @@ XML = '''<actor-mapping>
     ('彩月七緒', '彩月七緒（彩月七绪）', '彩月七緒（彩月七绪）'),
     ('蒼山愛奈', '蒼山愛奈（苍山爱奈）', '蒼山愛奈（苍山爱奈）'),
     ('雛形みくる', '雛形みくる（雏形美久琉）', '雛形みくる（雏形美久琉）'),
+    ('神宮寺ナオ', '神宮寺ナオ（神宫寺奈绪）', '神宮寺ナオ（神宫寺奈绪）'),
+    ('神宮寺奈緒', '神宮寺ナオ（神宫寺奈绪）', '神宮寺奈緒（神宫寺奈绪）'),
     ('サンディー・雛・パークス', 'サンディー・雛・パークス', 'サンディー・雛・パークス'),
 ])
 def test_reported_names(name, expected, alias_off):
@@ -43,3 +46,15 @@ def test_unmatched_full_name_is_preserved(name):
 def test_verified_spelling_does_not_override_new_upstream_translation():
     mapping = ActorMapping.from_xml(XML.replace('zh_cn="彩月七緒"'.encode(), 'zh_cn="新译名"'.encode()))
     assert mapping.resolve('彩月七緒') == '彩月七緒（新译名）'
+
+
+@pytest.mark.parametrize(('rows', 'expected'), [
+    ('<a jp="神宮寺ナオ" />', '神宮寺ナオ（神宫寺奈绪）'),
+    ('<a jp="神宮寺ナオ" zh_cn="上游译名" />', '神宮寺ナオ（上游译名）'),
+    ('<a jp="神宮寺ナオ" zh_cn="神宮寺ナオ" zh_tw="神宮寺奈緒" />', '神宮寺ナオ（神宮寺奈緒）'),
+    ('<a jp="神宮寺ナオ" zh_cn="译名甲" /><a jp="神宮寺ナオ" zh_cn="译名乙" />', '神宮寺ナオ'),
+    ('<a jp="其他原名" />', '神宮寺ナオ'),
+])
+def test_jinguji_verified_translation_respects_upstream(rows, expected):
+    mapping = ActorMapping.from_xml(f'<actor-mapping>{rows}</actor-mapping>'.encode())
+    assert mapping.resolve('神宮寺ナオ') == expected
