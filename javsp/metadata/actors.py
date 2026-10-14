@@ -22,8 +22,10 @@ MAPPING_PART_SIZE = 1024 * 1024
 DOWNLOAD_ATTEMPTS = 3
 _KANA = re.compile(r"[\u3041-\u3096\u309d-\u309f\u30a1-\u30fa\u30fc-\u30ff\u31f0-\u31ff\uff66-\uff9f]")
 _HAN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\U00020000-\U000323af]")
-# 已核实的汉字姓名简体写法，来源见 README「女优名称与别名」。仅补空或替代原名占位。
-_VERIFIED_CHINESE_NAMES = {"二階堂麗": "二阶堂丽", "彩月七緒": "彩月七绪", "蒼山愛奈": "苍山爱奈"}
+# 已核实的中文姓名，来源见 README「女优名称与别名」。仅补空或替代原名占位。
+_VERIFIED_CHINESE_NAMES = {
+    "二階堂麗": "二阶堂丽", "彩月七緒": "彩月七绪", "蒼山愛奈": "苍山爱奈", "神宮寺ナオ": "神宫寺奈绪",
+}
 # 上游中文字段为日文占位，但 keyword 已收录的中文译名；运行时仍校验唯一归属。
 _VERIFIED_CHINESE_ALIASES = {"雛形みくる": ("雏形美久琉", "雛形美久琉")}
 
