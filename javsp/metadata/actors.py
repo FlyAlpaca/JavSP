@@ -7,6 +7,8 @@ import os
 import re
 import tempfile
 import time
+import unicodedata
+from importlib.resources import files
 from pathlib import Path
 
 import requests
@@ -23,11 +25,54 @@ MAPPING_PART_SIZE = 1024 * 1024
 DOWNLOAD_ATTEMPTS = 3
 _KANA = re.compile(r"[\u3041-\u3096\u309d-\u309f\u30a1-\u30fa\u30fc-\u30ff\u31f0-\u31ff\uff66-\uff9f]")
 _HAN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\U00020000-\U000323af]")
+_COMPOSITE = re.compile(r"([^()（）]+)[(（]([^()（）]+)[)）]")
 
 
 def _chinese_name(*names: str) -> str:
     """中文字段可能只是日文或罗马音占位；仅从有效字段中按顺序取值。"""
-    return next((name for name in names if _HAN.search(name) and not _KANA.search(name)), "")
+    return next((name for name in names if _HAN.search(name) and not _KANA.search(name) and "々" not in name), "")
+
+
+class _NameNormalizer:
+    """通用日文异体字、重复符号及简繁归一；不包含演员姓名。"""
+
+    def __init__(self):
+        self._converter = OpenCC("t2s")
+        variants = {}
+        data = files("javsp.metadata").joinpath("data/kanji-variants.tsv").read_text(encoding="utf-8")
+        for line in data.splitlines():
+            if not line or line.startswith("#"):
+                continue
+            key, values = line.split("\t")
+            candidates = {self._converter.convert(value) for value in values.split()}
+            if len(candidates) == 1:
+                variants[ord(key)] = candidates.pop()
+        self._variants = variants
+        self._cache: dict[str, str] = {}
+
+    def __call__(self, name):
+        if name not in self._cache:
+            expanded = []
+            for char in unicodedata.normalize("NFKC", name).strip():
+                if char == "々" and expanded and _HAN.fullmatch(expanded[-1]):
+                    char = expanded[-1]
+                expanded.append(char)
+            chinese = self._converter.convert("".join(expanded))
+            self._cache[name] = self._converter.convert(chinese.translate(self._variants))
+        return self._cache[name]
+
+
+def _mapping_root(content):
+    if len(content) > MAX_MAPPING_SIZE:
+        raise ActorMappingError("演员映射文件过大")
+    try:
+        parser = etree.XMLParser(resolve_entities=False, load_dtd=False, no_network=True)
+        root = etree.fromstring(content, parser)
+    except etree.XMLSyntaxError as error:
+        raise ActorMappingError(f"演员映射 XML 无效: {error}") from error
+    if root.tag != "actor-mapping" or root.getroottree().docinfo.doctype:
+        raise ActorMappingError("演员映射根节点无效或含有 DTD")
+    return root
 
 
 class ActorMappingError(Exception):
@@ -42,54 +87,77 @@ class ActorMapping:
         self._primary: dict[str, set[tuple[str, str]]] = {}
         self._aliases: dict[str, set[tuple[str, str]]] = {}
         self._fallback_chinese: dict[str, str] = {}
+        self._named_chinese: dict[tuple[str, str], set[str]] = {}
+        self._normalized_names: dict[str, set[str]] = {}
+        self._normalize = _NameNormalizer()
         self.row_count = 0
 
     @classmethod
-    def from_xml(cls, content: bytes):
-        if len(content) > MAX_MAPPING_SIZE:
-            raise ActorMappingError("演员映射文件过大")
-        try:
-            parser = etree.XMLParser(resolve_entities=False, load_dtd=False, no_network=True)
-            root = etree.fromstring(content, parser)
-        except etree.XMLSyntaxError as error:
-            raise ActorMappingError(f"演员映射 XML 无效: {error}") from error
-        if root.tag != "actor-mapping" or root.getroottree().docinfo.doctype:
-            raise ActorMappingError("演员映射根节点无效或含有 DTD")
+    def from_xml(cls, content: bytes, *, supplement: bytes | None = None):
+        root = _mapping_root(content)
         mapping = cls()
         for row in root.findall(".//a"):
-            jp = (row.get("jp") or "").strip()
-            if not jp:
-                continue
-            cn = (row.get("zh_cn") or "").strip()
-            tw = (row.get("zh_tw") or "").strip()
-            chinese = _chinese_name(cn, tw)
-            display = f"{jp}（{chinese}）" if chinese and chinese != jp else jp
-            actor = (jp, chinese)
-            mapping._japanese.setdefault(jp, set()).add(actor)
-            for name in (cn, tw, display):
-                if name:
-                    mapping._primary.setdefault(name, set()).add(actor)
-            for name in (row.get("keyword") or "").split(","):
-                if name.strip():
-                    mapping._aliases.setdefault(name.strip(), set()).add(actor)
-            mapping.row_count += 1
+            if mapping._add_row(row):
+                mapping.row_count += 1
         if not mapping.row_count:
             raise ActorMappingError("演员映射没有包含原名的有效条目")
+        if supplement is not None:
+            for row in _mapping_root(supplement).findall(".//a"):
+                mapping._add_row(row, supplemental=True)
+        for index in (mapping._japanese, mapping._primary, mapping._aliases):
+            for name, actors in index.items():
+                mapping._normalized_names.setdefault(mapping._normalize(name), set()).update(jp for jp, _ in actors)
         mapping._build_chinese_fallbacks()
         return mapping
 
+    def _add_row(self, row, *, supplemental=False):
+        jp = (row.get("jp") or "").strip()
+        if not jp:
+            return False
+        cn, tw = ((row.get(key) or "").strip() for key in ("zh_cn", "zh_tw"))
+        chinese = _chinese_name(*(name for name in (cn, tw) if name != jp)) or _chinese_name(cn, tw)
+        existing = self._japanese.get(jp, set())
+        add_main = True
+        if supplemental:
+            if not row.get("source"):
+                raise ActorMappingError("补充演员映射缺少来源")
+            # 上游身份及有效译名优先；无主名译名的补充行只能扩展已有演员的别名。
+            if not existing and (not chinese or self._lookup(jp)[0]):
+                return False
+            add_main = not any(value and value != jp for _, value in existing)
+            if not chinese and existing:
+                add_main = False
+        actor = (jp, chinese)
+        if add_main:
+            self._japanese.setdefault(jp, set()).add(actor)
+            display = f"{jp}（{chinese}）" if chinese and chinese != jp else jp
+            for name in (cn, tw, display):
+                if name:
+                    self._primary.setdefault(name, set()).add(actor)
+            for name in (row.get("keyword") or "").split(","):
+                if name.strip():
+                    self._aliases.setdefault(name.strip(), set()).add(actor)
+        for alias in row.findall("alias"):
+            name = (alias.get("jp") or "").strip()
+            value = _chinese_name(*((alias.get(key) or "").strip() for key in ("zh_cn", "zh_tw")))
+            if not name or not value:
+                raise ActorMappingError("演员别名专属译名无效")
+            pair = (jp, name)
+            if supplemental and pair in self._named_chinese:
+                continue
+            self._named_chinese.setdefault(pair, set()).add(value)
+            self._aliases.setdefault(name, set()).add(actor)
+            self._primary.setdefault(value, set()).add(actor)
+        return True
+
     def _build_chinese_fallbacks(self):
         """按汉字片段匹配上游别名；简繁等价候选合并，跨演员归属冲突不补全。"""
-        converter = OpenCC("t2s")
         normalized: dict[str, str] = {}
-        owners: dict[str, set[str]] = {}
         for index in (self._japanese, self._primary, self._aliases):
             for name, actors in index.items():
-                if not all(_HAN.fullmatch(char) for char in name):
-                    continue
-                if name not in normalized:
-                    normalized[name] = converter.convert(name)
-                owners.setdefault(normalized[name], set()).update(jp for jp, _ in actors)
+                value = self._normalize(name)
+                if all(_HAN.fullmatch(char) for char in value):
+                    normalized[name] = value
 
         keywords: dict[str, set[str]] = {}
         for name, actors in self._aliases.items():
@@ -104,9 +172,9 @@ class ActorMapping:
                 if (jp, jp) not in actors and chinese not in keywords.get(jp, ()):
                     continue
             else:
-                name = converter.convert(jp)
-                # 至少两个汉字作为匹配依据；标点、拉丁字母及纯假名不推断。
-                if len(_HAN.findall(name)) < 2 or not _KANA.search(name):
+                name = self._normalize(jp)
+                # 至少保留一个汉字锚点；候选仍须唯一且无跨演员归属冲突。
+                if not _HAN.search(name) or not _KANA.search(name):
                     continue
                 if not all(_HAN.fullmatch(char) or _KANA.fullmatch(char) for char in name):
                     continue
@@ -115,7 +183,7 @@ class ActorMapping:
                 if len(candidates) != 1:
                     continue
                 chinese = candidates.pop()
-            if owners[chinese] == {jp}:
+            if self._normalized_names[chinese] == {jp}:
                 self._fallback_chinese[jp] = chinese
 
     @classmethod
@@ -132,9 +200,16 @@ class ActorMapping:
             candidates = index.get(key)
             if candidates:
                 return {jp for jp, _ in candidates}, index is self._aliases
-        return set(), False
+        originals = self._normalized_names.get(self._normalize(key), set())
+        is_alias = len(originals) == 1 and self._normalize(key) != self._normalize(next(iter(originals)))
+        return originals, is_alias
 
-    def _translation(self, jp: str) -> str | None:
+    def _translation(self, jp: str, name: str | None = None) -> str | None:
+        if name is not None and (translations := self._named_chinese.get((jp, name))):
+            if len(translations) != 1 or self._normalized_names.get(self._normalize(name)) != {jp}:
+                return None
+            # 显式对应关系由父条目确定身份；不同演员允许拥有相同中文名。
+            return next(iter(translations))
         # 同一原名的占位记录不应遮住有效译名；冲突译名保持未决。
         translations = {cn for _, cn in self._japanese[jp] if cn and cn != jp}
         if len(translations) > 1:
@@ -147,13 +222,20 @@ class ActorMapping:
     def resolve(self, name: str, *, normalize_aliases=True) -> str:
         key = name.strip()
         originals, is_alias = self._lookup(key)
+        composite = None
+        if not originals and (match := _COMPOSITE.fullmatch(key)):
+            first, second = (part.strip() for part in match.groups())
+            originals, _ = self._lookup(first)
+            if len(originals) != 1 or self._lookup(second)[0] != originals:
+                return name
+            composite = first
         if len(originals) != 1:
             return name
         jp = next(iter(originals))
-        chinese = self._translation(jp)
+        original = composite or (key if is_alias and not normalize_aliases else jp)
+        chinese = self._translation(jp, original)
         if chinese is None:
             return name
-        original = key if is_alias and not normalize_aliases else jp
         return f"{original}（{chinese}）" if chinese and chinese != original else original
 
 
@@ -258,6 +340,10 @@ def _read_mapping_response(response):
 
 def prepare_actor_mapping(path: Path, *, session=requests, proxy=None) -> ActorMapping:
     """每次调用检查更新；只有完整、可解析的新表才能替换缓存。"""
+    try:
+        supplement = files("javsp.metadata").joinpath("data/actor-supplement.xml").read_bytes()
+    except OSError as error:
+        raise ActorMappingError(f"无法读取随包演员补充数据: {error}") from error
     cached = None
     cached_content = b""
     metadata_path = path.with_suffix(".json")
@@ -266,7 +352,7 @@ def prepare_actor_mapping(path: Path, *, session=requests, proxy=None) -> ActorM
         if path.stat().st_size > MAX_MAPPING_SIZE:
             raise ActorMappingError("演员映射文件过大")
         cached_content = path.read_bytes()
-        cached = ActorMapping.from_xml(cached_content)
+        cached = ActorMapping.from_xml(cached_content, supplement=supplement)
     except (OSError, ActorMappingError) as error:
         logger.info("演员映射缓存不可用，将从 GitHub 获取: %s", error)
     if cached is not None:
@@ -297,7 +383,7 @@ def prepare_actor_mapping(path: Path, *, session=requests, proxy=None) -> ActorM
                 logger.debug("演员映射没有更新，复用缓存（%s 条）", cached.row_count)
                 return cached
             raise ActorMappingError("演员映射返回 304 但没有对应有效缓存")
-        updated = ActorMapping.from_xml(content)
+        updated = ActorMapping.from_xml(content, supplement=supplement)
         if cached is None or content != cached_content:
             _atomic_write(path, content)
     except (requests.RequestException, DownloadError, ActorMappingError, OSError, ValueError) as error:

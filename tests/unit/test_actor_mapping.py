@@ -89,6 +89,20 @@ def test_names_and_fallbacks(name, expected):
     assert mapping.resolve(expected) == expected
 
 
+def test_prepared_mapping_keeps_supplement_when_reusing_or_falling_back_to_cache(tmp_path):
+    path = tmp_path / 'actor-mapping.xml'
+    mapping = prepare_actor_mapping(path, session=Session())
+    assert mapping.resolve('和香なつき') == '和香なつき（和香夏月）'
+    assert mapping.row_count == 4
+    assert path.read_bytes() == XML
+    cached = prepare_actor_mapping(path, session=Session())
+    assert cached.resolve('和香なつき') == '和香なつき（和香夏月）'
+    assert path.read_bytes() == XML
+    offline = prepare_actor_mapping(path, session=Session(error=requests.ConnectionError('offline')))
+    assert offline.resolve('和香なつき') == '和香なつき（和香夏月）'
+    assert path.read_bytes() == XML
+
+
 def test_alias_switch_preserves_alias_but_keeps_name_format():
     mapping = ActorMapping.from_xml(XML)
     assert mapping.resolve("新ありな", normalize_aliases=False) == "新ありな（新有菜）"
