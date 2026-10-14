@@ -48,6 +48,60 @@ def committed_batch(movie, destination):
     return BatchResult(1, jobs=[JobResult(movie, OutputResult(movie, moved))])
 
 
+@pytest.mark.parametrize("name", [".actor", ".actors"])
+@pytest.mark.parametrize("historical", [False, True])
+def test_cleans_actor_residual_directory_after_move_or_empty_batch(scene, tmp_path, name, historical):
+    cfg, root, folder, movie = scene
+    actors = folder / name
+    actors.mkdir()
+    (actors / "portrait.jpg").write_bytes(b"avatar")
+    if historical:
+        for file in folder.iterdir():
+            if file.is_file():
+                file.unlink()
+    cleanup = SourceCleanup(root, cfg, ScanResult(movies=[] if historical else [movie]))
+    batch = BatchResult(0) if historical else committed_batch(movie, tmp_path / "out")
+    cleanup.run(batch)
+    assert not folder.exists()
+    assert root.is_dir() and not batch.warnings
+    assert not list(root.glob(".javsp-*"))
+    if not historical:
+        assert Path(movie.files[0]).read_bytes() == b"video"
+
+
+@pytest.mark.parametrize("protection", ["unprocessed_video", "failed_movie", "output", "explicit_ignore", "hidden", "recovery"])
+def test_actor_directory_still_respects_protection_boundaries(scene, tmp_path, protection):
+    cfg, root, folder, movie = scene
+    actors = folder / ".actors"
+    actors.mkdir()
+    avatar = actors / "portrait.jpg"
+    avatar.write_bytes(b"keep avatar")
+    if protection == "unprocessed_video":
+        (folder / "ABC-124.mp4").write_bytes(b"video")
+    elif protection == "explicit_ignore":
+        scanner = cfg.scanner.model_copy(update={"ignored_folder_name_pattern": [r"^\.", r"^\.actors$"]})
+        cfg = cfg.model_copy(update={"scanner": scanner})
+    elif protection in ("hidden", "recovery"):
+        nested = actors / (".private" if protection == "hidden" else ".javsp-recovery")
+        nested.mkdir()
+        avatar = nested / "portrait.jpg"
+        avatar.write_bytes(b"keep avatar")
+    cleanup = SourceCleanup(root, cfg, ScanResult(movies=[movie]))
+    if protection == "failed_movie":
+        from javsp.workflow.models import JobError
+
+        batch = BatchResult(1, jobs=[JobResult(movie, error=JobError("ABC-123", Stage.CRAWL, OSError("failed")))])
+    else:
+        batch = committed_batch(movie, folder / "result" if protection == "output" else tmp_path / "out")
+        if protection == "output":
+            avatar = Path(movie.save_dir) / ".actors" / "portrait.jpg"
+            avatar.parent.mkdir()
+            avatar.write_bytes(b"keep avatar")
+    cleanup.run(batch)
+    assert avatar.read_bytes() == b"keep avatar"
+    assert folder.is_dir()
+
+
 def test_removes_residual_files_and_nested_directories_but_keeps_root(scene, tmp_path):
     cfg, root, folder, movie = scene
     nested = folder / "disc"
@@ -171,9 +225,12 @@ def test_changed_files_or_directories_prevent_cleanup(scene, tmp_path, change):
 @pytest.mark.parametrize("failure", ["staging", "cancel", "rollback", "new_video"])
 def test_staging_failure_restores_residuals_and_stops_on_incomplete_recovery(scene, tmp_path, monkeypatch, failure):
     cfg, root, folder, movie = scene
+    actors = folder / ".actors"
+    actors.mkdir()
+    (actors / "portrait.jpg").write_bytes(b"avatar")
     cleanup = SourceCleanup(root, cfg, ScanResult(movies=[movie]))
     batch = committed_batch(movie, tmp_path / "out")
-    originals = {path: path.read_bytes() for path in folder.iterdir()}
+    originals = {path: path.read_bytes() for path in folder.rglob("*") if path.is_file()}
     move = transaction.FileTransaction.move
     calls = []
 

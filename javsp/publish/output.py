@@ -116,7 +116,9 @@ class OutputExecutor:
                 warnings.append(f"女优头像不可用: {name} ({type(error).__name__})")
                 continue
             artifacts.append((staged, target))
-            movie.info.actress_pics[name] = os.path.relpath(target, movie.save_dir)
+            # 绿联影视中心通过 thumb URL 下载头像，不能用本地缓存路径覆盖远程地址。
+            if not url.lower().startswith(("http://", "https://")):
+                movie.info.actress_pics[name] = os.path.relpath(target, movie.save_dir).replace(os.sep, "/")
         nfo = tx.temp(movie.nfo_file, ".nfo")
         write_nfo(movie.info, nfo, self.cfg)
         artifacts.append((nfo, movie.nfo_file))
