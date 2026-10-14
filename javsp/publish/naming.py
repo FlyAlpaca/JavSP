@@ -5,7 +5,6 @@ import os
 from pathlib import Path
 
 from javsp.datatype import Movie
-from javsp.publish.media import actor_image_path
 from javsp.scan.file import replace_illegal_chars
 
 logger = logging.getLogger(__name__)
@@ -92,8 +91,6 @@ def generate_names(movie: Movie, cfg, *, base_dir=None):
             "poster_file": os.path.join(save_dir, cfg.summarizer.cover.basename_pattern.format(**values) + ".jpg"),
         }
         paths = [names["nfo_file"], os.path.join(save_dir, "folder.jpg")]
-        if any((info.actress_pics or {}).get(name) for name in (info.actress or [])):
-            paths.append(actor_image_path(save_dir, "path-budget"))
         # 实际图片格式在下载后才确定，为 .webp/.tiff 等扩展名预留五个字符。
         paths.extend(os.path.splitext(names[key])[0] + ".tiff" for key in ("fanart_file", "poster_file"))
         if cfg.summarizer.move_files:
