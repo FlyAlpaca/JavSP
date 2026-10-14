@@ -34,6 +34,7 @@ def check_archive(artifact):
         str(path.relative_to(ROOT).as_posix())
         for folder in ('image',) for path in (ROOT / folder).iterdir() if path.is_file()
     )
+    required.update(path.relative_to(ROOT).as_posix() for path in (ROOT / 'javsp/metadata/data').iterdir() if path.is_file())
     missing = required - names
     prohibited = sorted(name for name in names if forbidden(name))
     if missing or prohibited:

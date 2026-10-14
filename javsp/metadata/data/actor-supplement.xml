@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<actor-mapping>
+  <!-- 上游缺失条目；这里只补演员姓名，不补影片元数据。 -->
+  <a jp="和香なつき" zh_cn="和香夏月" source="https://www.renwujidian.com/profile/waka-natsuki"
+     corroboration="https://www.theidolbase.com/actress/waka-natsuki" />
+  <!-- 中文字段为旧艺名时，用显式别名对应关系区分新旧名。父条目须存在。 -->
+  <a jp="藤浦めぐ" source="https://zh.wikipedia.org/wiki/惠理">
+    <alias jp="めぐり" zh_cn="惠理" />
+  </a>
+</actor-mapping>
