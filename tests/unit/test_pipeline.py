@@ -93,6 +93,36 @@ def test_offline_pipeline_end_to_end(scene, tmp_path):
     assert source.is_dir()
 
 
+@pytest.mark.parametrize("concurrent", [False, True])
+@pytest.mark.parametrize("failure", [False, True])
+def test_pipeline_logs_one_completion_or_cover_error_per_movie(scene, monkeypatch, caplog, concurrent, failure):
+    from javsp.cli import ProgressDisplay
+    from javsp.publish import media
+
+    caplog.set_level("INFO")
+    cfg, source, _ = scene
+    if concurrent:
+        cfg = concurrent_config(cfg)
+    if failure:
+        def failed_download(*args, **kwargs):
+            raise OSError("download unavailable")
+        monkeypatch.setattr(media, "download", failed_download)
+    display = ProgressDisplay()
+    display.terminal = False
+    batch = run_in_id_order(Pipeline(cfg, display.on_event, translator=object()), source)
+    records = [record.message for record in caplog.records if record.name.startswith("javsp.")]
+    for job in batch.jobs:
+        identity = job.movie.dvdid
+        if failure:
+            assert not job.success and "download unavailable" in str(job.error)
+            errors = [message for message in records if identity in message and "下载封面图片失败" in message]
+            assert len(errors) == 1 and "整理失败" in errors[0]
+        else:
+            assert job.success
+            completions = [message for message in records if identity in message and "整理完成" in message]
+            assert len(completions) == 1 and job.movie.save_dir in completions[0]
+
+
 def test_local_translation_updates_nfo_and_directory_name(scene, tmp_path, monkeypatch):
     cfg, source, _ = scene
     path_cfg = cfg.summarizer.path.model_copy(update={"output_folder_pattern": str(tmp_path / "out" / "{num} {title}")})
