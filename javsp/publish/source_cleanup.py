@@ -36,7 +36,8 @@ class SourceCleanup:
         self.enabled = cfg.summarizer.move_files and not cfg.summarizer.path.hard_link
         self.cfg = cfg
         self.extensions = set(cfg.scanner.filename_extensions)
-        patterns = cfg.scanner.ignored_folder_name_pattern
+        # 默认隐藏目录规则仅用于扫描；清理仍遵循其余显式目录排除。
+        patterns = [pattern for pattern in cfg.scanner.ignored_folder_name_pattern if pattern != r"^\."]
         self.ignored = re.compile("|".join(patterns)) if patterns else None
         # skip_nfo_dir 和过小文件属于扫描筛选，不是清理排除规则。
         self.protected = set()

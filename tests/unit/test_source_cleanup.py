@@ -50,9 +50,10 @@ def committed_batch(movie, destination):
 
 @pytest.mark.parametrize("name", [".actor", ".actors", ".private"])
 @pytest.mark.parametrize("historical", [False, True])
-def test_hidden_directories_are_preserved_after_move_or_empty_batch(scene, tmp_path, name, historical):
+@pytest.mark.parametrize("at_root", [False, True])
+def test_hidden_directories_are_cleaned_after_move_or_empty_batch(scene, tmp_path, name, historical, at_root):
     cfg, root, folder, movie = scene
-    hidden = folder / name
+    hidden = (root if at_root else folder) / name
     hidden.mkdir()
     avatar = hidden / "portrait.jpg"
     avatar.write_bytes(b"existing avatar")
@@ -63,27 +64,33 @@ def test_hidden_directories_are_preserved_after_move_or_empty_batch(scene, tmp_p
     cleanup = SourceCleanup(root, cfg, ScanResult(movies=[] if historical else [movie]))
     batch = BatchResult(0) if historical else committed_batch(movie, tmp_path / "out")
     cleanup.run(batch)
-    assert avatar.read_bytes() == b"existing avatar"
-    assert folder.is_dir() and root.is_dir()
+    assert not hidden.exists() and not folder.exists()
+    assert root.is_dir() and not batch.warnings
     assert not list(root.glob(".javsp-*"))
     if not historical:
         assert Path(movie.files[0]).read_bytes() == b"video"
 
 
-@pytest.mark.parametrize("protection", ["unprocessed_video", "failed_movie", "output", "explicit_ignore", "hidden", "recovery"])
-def test_residual_subdirectory_respects_protection_boundaries(scene, tmp_path, protection):
+@pytest.mark.parametrize(
+    "protection", ["unprocessed_video", "failed_movie", "output", "explicit_ignore", "explicit_hidden_ignore", "recovery"]
+)
+@pytest.mark.parametrize("name", ["artwork", ".artwork"])
+def test_residual_subdirectory_respects_protection_boundaries(scene, tmp_path, protection, name):
     cfg, root, folder, movie = scene
-    actors = folder / "artwork"
+    actors = folder / name
     actors.mkdir()
     avatar = actors / "portrait.jpg"
     avatar.write_bytes(b"keep avatar")
     if protection == "unprocessed_video":
-        (folder / "ABC-124.mp4").write_bytes(b"video")
+        (actors / "ABC-124.mp4").write_bytes(b"video")
     elif protection == "explicit_ignore":
-        scanner = cfg.scanner.model_copy(update={"ignored_folder_name_pattern": [r"^\.", r"^artwork$"]})
+        scanner = cfg.scanner.model_copy(update={"ignored_folder_name_pattern": [r"^\.", r"^\.?artwork$"]})
         cfg = cfg.model_copy(update={"scanner": scanner})
-    elif protection in ("hidden", "recovery"):
-        nested = actors / (".private" if protection == "hidden" else ".javsp-recovery")
+    elif protection in ("explicit_hidden_ignore", "recovery"):
+        if protection == "explicit_hidden_ignore":
+            scanner = cfg.scanner.model_copy(update={"ignored_folder_name_pattern": [r"^\.", r"^\.private$"]})
+            cfg = cfg.model_copy(update={"scanner": scanner})
+        nested = actors / (".private" if protection == "explicit_hidden_ignore" else ".javsp-recovery")
         nested.mkdir()
         avatar = nested / "portrait.jpg"
         avatar.write_bytes(b"keep avatar")
@@ -95,7 +102,7 @@ def test_residual_subdirectory_respects_protection_boundaries(scene, tmp_path, p
     else:
         batch = committed_batch(movie, folder / "result" if protection == "output" else tmp_path / "out")
         if protection == "output":
-            avatar = Path(movie.save_dir) / "artwork" / "portrait.jpg"
+            avatar = Path(movie.save_dir) / name / "portrait.jpg"
             avatar.parent.mkdir()
             avatar.write_bytes(b"keep avatar")
     cleanup.run(batch)
@@ -224,9 +231,10 @@ def test_changed_files_or_directories_prevent_cleanup(scene, tmp_path, change):
 
 
 @pytest.mark.parametrize("failure", ["staging", "cancel", "rollback", "new_video"])
-def test_staging_failure_restores_residuals_and_stops_on_incomplete_recovery(scene, tmp_path, monkeypatch, failure):
+@pytest.mark.parametrize("name", ["artwork", ".artwork"])
+def test_staging_failure_restores_residuals_and_stops_on_incomplete_recovery(scene, tmp_path, monkeypatch, failure, name):
     cfg, root, folder, movie = scene
-    actors = folder / "artwork"
+    actors = folder / name
     actors.mkdir()
     (actors / "portrait.jpg").write_bytes(b"avatar")
     cleanup = SourceCleanup(root, cfg, ScanResult(movies=[movie]))
