@@ -6,7 +6,11 @@ import subprocess
 import sys
 from types import SimpleNamespace
 
+import pytest
+
 from javsp import datatype
+from javsp.cli import ProgressDisplay
+from javsp.workflow.models import Stage, StageEvent
 
 
 def test_console_logging_respects_debug_and_is_idempotent():
@@ -46,3 +50,22 @@ def test_filemove_details_do_not_repeat_on_console(tmp_path, monkeypatch, caplog
         for handler in logger.handlers[:]:
             logger.removeHandler(handler)
             handler.close()
+
+
+@pytest.mark.parametrize("debug", [False, True])
+@pytest.mark.parametrize("task_id", ["", "7"])
+def test_nonterminal_progress_keeps_start_and_debug_stages(debug, task_id, caplog):
+    display = ProgressDisplay()
+    display.terminal = False
+    events = [StageEvent("ABC-123", stage, task_id=task_id) for stage in (
+        Stage.CRAWL, Stage.MERGE, Stage.TRANSLATE, Stage.PLAN, Stage.PREPARE, Stage.COMMIT, Stage.DONE,
+    )]
+    with caplog.at_level(logging.DEBUG if debug else logging.INFO):
+        for event in events:
+            display.on_event(event)
+    assert [record.message for record in caplog.records if record.levelno == logging.INFO] == [
+        ("任务 7 " if task_id else "") + "[ABC-123] 开始整理",
+    ]
+    assert ("提交产物" in caplog.text) == debug
+    assert ("整理完成" in caplog.text) == debug
+    assert not display.active

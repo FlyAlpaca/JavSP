@@ -4,6 +4,7 @@ import contextlib
 import logging
 import os
 import shutil
+import sys
 import time
 
 import requests
@@ -101,7 +102,11 @@ def download(url, output_path, desc=None, *, network):
     referrer = headers.copy()
     slash_pos = url.find("/", 8)
     referrer["referer"] = url[: slash_pos + 1] if slash_pos != -1 else url + "/"
-    with DownloadProgressBar(unit="B", unit_scale=True, miniters=1, desc=desc, leave=False) as t:
+    show_progress = logger.isEnabledFor(logging.DEBUG) and bool(sys.stderr and sys.stderr.isatty())
+    start_time = time.monotonic()
+    with DownloadProgressBar(unit="B", unit_scale=True, miniters=1, desc=desc, leave=False, disable=not show_progress) as t:
         urlretrieve(url, filename=output_path, reporthook=t.update_to, extra_headers=referrer, network=network)
-        info = {k: t.format_dict[k] for k in ("total", "elapsed", "rate")}
-        return info
+    # 禁用 tqdm 时其计数和计时不更新；下载统计独立计算，供封面和剧照日志使用。
+    elapsed = max(time.monotonic() - start_time, 1e-9)
+    filesize = os.path.getsize(output_path)
+    return {"total": filesize, "elapsed": elapsed, "rate": filesize / elapsed}

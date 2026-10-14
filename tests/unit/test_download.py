@@ -1,5 +1,6 @@
 """离线验证流式下载、准确进度及响应资源回收。"""
 
+import logging
 from datetime import timedelta
 from types import SimpleNamespace
 
@@ -128,3 +129,30 @@ def test_normal_get_keeps_non_streaming_default(monkeypatch, network_config):
     calls = install_response(monkeypatch, response)
     assert base.Request(network_config).get("https://example.test/page") is response
     assert calls[0][1]["stream"] is False
+
+
+@pytest.mark.parametrize("debug,terminal,visible", [(False, False, False), (False, True, False),
+                                                   (True, False, False), (True, True, True)])
+@pytest.mark.parametrize("size", [4, None])
+def test_image_progress_requires_debug_terminal_and_keeps_statistics(
+    tmp_path, monkeypatch, network_config, caplog, capsys, debug, terminal, visible, size,
+):
+    response = StreamingResponse([b"data"], size=size)
+    install_response(monkeypatch, response)
+    monkeypatch.setattr(base.sys, "stderr", SimpleNamespace(isatty=lambda: terminal, write=lambda _: None, flush=lambda: None))
+    states = []
+    original = base.DownloadProgressBar
+
+    def progress(**kwargs):
+        states.append(not kwargs["disable"])
+        return original(**kwargs)
+
+    monkeypatch.setattr(base, "DownloadProgressBar", progress)
+    with caplog.at_level(logging.DEBUG if debug else logging.INFO, logger="javsp.network"):
+        info = base.download("https://example.test/cover.jpg", tmp_path / "cover.jpg", network=network_config)
+    assert states == [visible]
+    assert info["total"] == 4
+    assert info["elapsed"] > 0 and info["rate"] > 0
+    assert response.closed
+    output = capsys.readouterr()
+    assert output.out == output.err == ""

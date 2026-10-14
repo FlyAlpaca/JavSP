@@ -101,7 +101,7 @@ class JobRunner:
             movie.__dict__.update(output.movie.__dict__)
             output.movie = movie
             emit(Stage.DONE)
-            logger.info(f"整理完成，相关文件已保存到: {movie.save_dir}\n")
+            self._log_success(movie)
             return JobResult(movie, output)
         except BaseException as cause:
             return self._failure(movie, cause, stage, executing, working.dvdid or working.cid)
@@ -112,10 +112,14 @@ class JobRunner:
             prepared.movie.__dict__.update(output.movie.__dict__)
             output.movie = prepared.movie
             self._event(StageEvent(output.movie.dvdid or output.movie.cid or "未知番号", Stage.DONE))
-            logger.info("整理完成，相关文件已保存到: %s", output.movie.save_dir)
+            self._log_success(output.movie)
             return JobResult(prepared.movie, output)
         except BaseException as cause:
             return self._failure(prepared.movie, cause, Stage.COMMIT, True)
+
+    def _log_success(self, movie):
+        task = f"任务 {self.task_id} " if self.task_id else ""
+        logger.info("%s[%s] 整理完成: %s", task, movie.dvdid or movie.cid or "未知番号", movie.save_dir)
 
     def _failure(self, movie, cause, stage, executing, identity=None):
         committed = getattr(self.executor, "committed_result", None) if executing else None

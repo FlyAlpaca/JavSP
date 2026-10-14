@@ -2,6 +2,7 @@ from javsp.config import load_config
 
 """离线验证剧照并发、统一限速、编号及失败处理。"""
 
+import logging
 import threading
 import time
 from pathlib import Path
@@ -119,7 +120,9 @@ def test_single_image_has_no_trailing_sleep(tmp_path, monkeypatch):
     assert (tmp_path / "extrafanart" / "0.png").exists()
 
 
-def test_failed_and_invalid_images_do_not_block_others_or_replace_existing_files(tmp_path, monkeypatch, caplog):
+@pytest.mark.parametrize("debug", [False, True])
+def test_failed_and_invalid_images_do_not_block_others_or_replace_existing_files(tmp_path, monkeypatch, caplog, debug):
+    caplog.set_level(logging.DEBUG if debug else logging.WARNING, logger="javsp.publish.media")
     destination = tmp_path / "extrafanart"
     destination.mkdir()
     (destination / "0.png").write_bytes(b"existing")
@@ -134,12 +137,20 @@ def test_failed_and_invalid_images_do_not_block_others_or_replace_existing_files
         return save_image(path, 2)
 
     monkeypatch.setattr(media, "download", download)
-    media.download_extra_fanarts(movie_for(tmp_path, ["failed", "invalid", "good"]), 0, cfg=load_config())
+    movie = movie_for(tmp_path, ["failed", "invalid", "good"])
+    movie.dvdid = "ABC-123"
+    warnings = media.download_extra_fanarts(movie, 0, cfg=load_config())
     assert (destination / "0.png").read_bytes() == b"existing"
     assert not (destination / "1.png").exists()
     assert (destination / "2.png").exists()
-    assert "下载剧照0失败" in caplog.text
-    assert "下载剧照1失败" in caplog.text
+    assert len(warnings) == 2
+    assert any("下载剧照0失败" in warning and "timeout" in warning for warning in warnings)
+    assert any("下载剧照1失败" in warning and "图片无效" in warning for warning in warnings)
+    assert [record.message for record in caplog.records if record.levelno >= logging.WARNING] == [
+        "[ABC-123] 剧照下载失败 2/3 张，完整原因见 DEBUG 日志",
+    ]
+    assert ("下载剧照0失败" in caplog.text) == debug
+    assert ("下载剧照1失败" in caplog.text) == debug
     assert not list(destination.glob(".javsp-fanart-*"))
 
 

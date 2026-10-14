@@ -188,7 +188,8 @@ def download_cover(covers, fanart_path, big_covers=None, movie_id="", *, cfg, re
         return result
     reason_detail = "; ".join(failed_reasons) if failed_reasons else "无可用封面地址"
     if not optional:
-        logger.error(f"下载封面图片失败: {movie_id}: {reason_detail}")
+        # 调用方将完整原因作为任务错误输出，避免在这里重复记录。
+        logger.debug("下载封面图片失败: %s: %s", movie_id, reason_detail)
     return None, reason_detail
 
 
@@ -197,6 +198,7 @@ def download_extra_fanarts(movie: Movie, scrape_interval: float, tqdm_bar=None, 
     warnings = []
     if not movie.info.preview_pics:
         return warnings
+    identity = getattr(movie, "dvdid", None) or getattr(movie, "cid", None) or "未知番号"
     destination_dir = destination_dir or os.path.join(movie.save_dir, "extrafanart")
     os.makedirs(destination_dir, exist_ok=True)
     start_lock = threading.Lock()
@@ -224,7 +226,7 @@ def download_extra_fanarts(movie: Movie, scrape_interval: float, tqdm_bar=None, 
             if not valid_pic(temp_path):
                 warning = f"下载剧照{idx}失败: {url}: 图片无效或已损坏"
                 warnings.append(warning)
-                logger.warning(warning)
+                logger.debug("[%s] %s", identity, warning)
                 return
             filesize = get_fmt_size(temp_path)
             width, height = get_pic_size(temp_path)
@@ -236,7 +238,7 @@ def download_extra_fanarts(movie: Movie, scrape_interval: float, tqdm_bar=None, 
         except Exception as e:
             warning = f"下载剧照{idx}失败: {url}, {e}"
             warnings.append(warning)
-            logger.warning(warning)
+            logger.debug("[%s] %s", identity, warning)
         finally:
             if temp_path is not None:
                 try:
@@ -274,6 +276,8 @@ def download_extra_fanarts(movie: Movie, scrape_interval: float, tqdm_bar=None, 
         else:
             finish_executor(executor, futures)
 
+    if warnings:
+        logger.warning("[%s] 剧照下载失败 %s/%s 张，完整原因见 DEBUG 日志", identity, len(warnings), len(movie.info.preview_pics))
     return warnings
 
 

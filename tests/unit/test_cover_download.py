@@ -170,7 +170,7 @@ def test_highres_failures_complete_before_ordinary_fallback(tmp_path, monkeypatc
     assert not list(tmp_path.glob(".javsp-cover-*"))
 
 
-def test_all_failed_preserves_existing_cover_and_reports_retries(tmp_path, monkeypatch, cover_config):
+def test_all_failed_preserves_existing_cover_and_reports_retries(tmp_path, monkeypatch, cover_config, caplog):
     calls = []
 
     def download(url, path, **kwargs):
@@ -187,6 +187,7 @@ def test_all_failed_preserves_existing_cover_and_reports_retries(tmp_path, monke
     assert calls == ["broken.jpg", "broken.jpg"]
     assert target.read_bytes() == b"existing cover"
     assert not list(tmp_path.glob(".javsp-cover-*"))
+    assert not caplog.records  # 错误通过返回值交给流水线记录，下载层不重复打印。
 
 
 def test_ordinary_http_error_retries(tmp_path, monkeypatch, cover_config):
